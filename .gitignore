@@ -1,0 +1,5 @@
+# Build output: disk images are published as GitHub Release downloads instead
+build/
+*.o
+*.bin
+*.elf
