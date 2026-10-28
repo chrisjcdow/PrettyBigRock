@@ -34,5 +34,7 @@ Table Mountain and saying "big rock" or "pretty rock", so he suggested **PrettyB
 - Renamed the OS everywhere: boot loader, splash, start button and menu, About, Terminal
   (prompt is now `rock>`), crash and shutdown screens, docs, disk images and launcher
 - Drew a new 16x16 pixel-art logo of Table Mountain with its tablecloth, the sun and the sea
+- Replaced the protea in the Terminal's `fetch` output with coloured text art of the mountain
+  (Chris spotted the leftover protea while test-booting before publishing)
 - Hid an Easter egg in the Terminal for Chris and his wife, at Chris's request. It isn't in `help`.
 - Kept the original FynbosOS 1.0 safe, as tag `fynbos-1.0` and as Chris's own copy

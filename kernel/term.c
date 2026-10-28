@@ -8,8 +8,8 @@
 #define T_HIST 300
 #define T_INMAX 90
 
-enum { K_NORMAL, K_GOOD, K_BAD, K_CMD, K_HEAD, K_SPUD };
-static const u32 kind_color[] = {0xd8dce6, 0x8fd18a, 0xf08a8a, 0xffffff, 0xf2a0b8, 0xd9a066};
+enum { K_NORMAL, K_GOOD, K_BAD, K_CMD, K_HEAD, K_SPUD, K_SUN, K_SEA };
+static const u32 kind_color[] = {0xd8dce6, 0x8fd18a, 0xf08a8a, 0xffffff, 0xf2a0b8, 0xd9a066, 0xffc070, 0x6fa8e8};
 
 static char lines[T_HIST][T_COLS + 1];
 static u8 kinds[T_HIST][T_COLS];
@@ -120,14 +120,24 @@ static void cmd_fetch(void) {
     rtc_time_t t;
     rtc_read(&t);
     u32 up = ticks / 100;
+    /* Table Mountain at sunset: s = sun, c = cloud, m = mountain, w = water */
     const char *art[] = {
-        "    .  *  .   ",
-        "  * \\ | / *   ",
-        "   -( @@ )-   ",
-        "  * / | \\ *   ",
-        "      |       ",
-        "    \\ | /     ",
-        "     \\|/      ",
+        "            \\|/  ",
+        "     ~~~~~~~ -o- ",
+        "  /\\/_______\\    ",
+        " /            \\  ",
+        "/              \\^",
+        "~~~~~~~~~~~~~~~~~",
+        "  ~   ~   ~   ~  ",
+    };
+    const char *paint[] = {
+        "            sss  ",
+        "     ccccccc sss ",
+        "  mmmmmmmmmmm    ",
+        " mmmmmmmmmmmmmm  ",
+        "mmmmmmmmmmmmmmmmm",
+        "wwwwwwwwwwwwwwwww",
+        "wwwwwwwwwwwwwwwww",
     };
     char info[7][64];
     ksnprintf(info[0], 64, "%s %s", OS_NAME, OS_VERSION);
@@ -138,7 +148,12 @@ static void cmd_fetch(void) {
     ksnprintf(info[5], 64, "Uptime:  %u min %u s", up / 60, up % 60);
     ksnprintf(info[6], 64, "Files:   %d in RAM", fs_count());
     for (int i = 0; i < 7; i++) {
-        t_puts(art[i], K_HEAD);
+        for (int j = 0; art[i][j]; j++) {
+            char ch[2] = {art[i][j], 0};
+            char k = paint[i][j];
+            t_puts(ch, k == 's' ? K_SUN : k == 'c' ? K_CMD : k == 'w' ? K_SEA : K_HEAD);
+        }
+        t_puts(" ", K_NORMAL);
         t_puts(info[i], i == 0 ? K_GOOD : K_NORMAL);
         t_puts("\n", K_NORMAL);
     }
