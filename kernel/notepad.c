@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - Notepad and the Files browser */
+/* PrettyBigRock - Notepad and the Files browser */
 #include "kernel.h"
 
 /* ================================================================ Notepad */

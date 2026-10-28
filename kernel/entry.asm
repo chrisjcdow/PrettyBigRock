@@ -1,6 +1,6 @@
 ; SPDX-License-Identifier: GPL-3.0-or-later
 ; Copyright (C) 2026 Christopher Cameron-Dow
-; FynbosOS kernel entry and interrupt stubs
+; PrettyBigRock kernel entry and interrupt stubs
 
 [bits 32]
 section .text.entry

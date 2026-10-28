@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - window manager, desktop, taskbar and start menu */
+/* PrettyBigRock - window manager, desktop, taskbar and start menu */
 #include "kernel.h"
 
 #define MAXWIN 16
+#define START_W 132
+#define TB_X (START_W + 16)
 
 static window_t wins[MAXWIN];
 static window_t *zord[MAXWIN];
@@ -326,16 +328,16 @@ static void draw_taskbar(void) {
     gfx_fill(0, y, SW, 1, 0x464c63);
 
     /* start button */
-    gfx_round(6, y + 5, 104, TASKBAR_H - 10, 6, menu_open ? 0xa83d5d : C_ACCENT);
-    gfx_icon(ICON_PROTEA, 12, y + 11, 1);
-    gfx_text_bold(34, y + 15, "Fynbos", 0xffffff);
+    gfx_round(6, y + 5, START_W, TASKBAR_H - 10, 6, menu_open ? 0xa83d5d : C_ACCENT);
+    gfx_icon(ICON_LOGO, 12, y + 11, 1);
+    gfx_text_bold(34, y + 15, "PrettyBigRock", 0xffffff);
 
     /* one button per open window */
-    int bx = 120;
+    int bx = TB_X;
     int bw = 160;
     int count = 0;
     for (int i = 0; i < MAXWIN; i++) if (wins[i].used) count++;
-    int avail = SW - 120 - 120;
+    int avail = SW - TB_X - 120;
     if (count && count * (bw + 6) > avail) bw = avail / count - 6;
     window_t *top = wm_top();
     for (int i = 0; i < MAXWIN; i++) {
@@ -371,11 +373,11 @@ static void draw_menu(void) {
     gfx_fill(m.x + 4, m.y + m.h - 4, MENU_BANNER - 4, 4, 0x6a2a52);
     gfx_round(m.x, m.y, 10, 10, 5, 0xd2577a);
     gfx_round(m.x, m.y + m.h - 10, 10, 10, 5, 0x6a2a52);
-    /* vertical "FYNBOS" on the banner */
-    const char *v = "FYNBOS";
+    /* the name runs up the banner */
+    const char *v = "PRETTY BIG ROCK";
     int vl = (int)strlen(v);
     for (int i = 0; i < vl; i++) gfx_char(m.x + 12, m.y + m.h - 14 - (vl - i) * 12, v[i], 0xffffff, 1);
-    gfx_icon(ICON_PROTEA, m.x + 7, m.y + 8, 1);
+    gfx_icon(ICON_LOGO, m.x + 7, m.y + 8, 1);
     for (int i = 0; i < MENU_ITEMS; i++) {
         int iy = menu_item_y(i);
         int ix = m.x + MENU_BANNER + 4;
@@ -411,8 +413,8 @@ static void render(void) {
 static void shutdown_screen(void) {
     gfx_set_clip((rect_t){0, 0, SW, SH});
     gfx_fill(0, 0, SW, SH, 0x12141c);
-    gfx_icon(ICON_PROTEA, SW / 2 - 48, SH / 2 - 120, 6);
-    const char *a = "FynbosOS has shut down.";
+    gfx_icon(ICON_LOGO, SW / 2 - 48, SH / 2 - 120, 6);
+    const char *a = "PrettyBigRock has shut down.";
     const char *b = "You can close the virtual machine window now.";
     gfx_text_scaled((SW - gfx_text_w(a) * 2) / 2, SH / 2 + 2, a, 0xffffff, 2);
     gfx_text((SW - gfx_text_w(b)) / 2, SH / 2 + 36, b, 0xa9afc2);
@@ -440,10 +442,10 @@ static void toggle_menu(void) {
 static void taskbar_click(int dbl) {
     (void)dbl;
     int y = SH - TASKBAR_H;
-    if (mx >= 6 && mx < 110 && my >= y + 5) { toggle_menu(); return; }
-    int bx = 120, bw = 160, count = 0;
+    if (mx >= 6 && mx < 6 + START_W && my >= y + 5) { toggle_menu(); return; }
+    int bx = TB_X, bw = 160, count = 0;
     for (int i = 0; i < MAXWIN; i++) if (wins[i].used) count++;
-    int avail = SW - 120 - 120;
+    int avail = SW - TB_X - 120;
     if (count && count * (bw + 6) > avail) bw = avail / count - 6;
     for (int i = 0; i < MAXWIN; i++) {
         window_t *w = &wins[i];
@@ -466,7 +468,7 @@ static void on_press(void) {
 
     if (menu_open) {
         if (rect_has(menu_rect(), mx, my)) { menu_activate(menu_hit(mx, my)); return; }
-        int on_start = my >= SH - TASKBAR_H && mx < 110;
+        int on_start = my >= SH - TASKBAR_H && mx < 6 + START_W;
         menu_open = 0;
         wm_dirty_all();
         if (on_start) return;

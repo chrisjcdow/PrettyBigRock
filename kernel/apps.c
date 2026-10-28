@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - app launcher plus Calculator, Paint, Snake and About */
+/* PrettyBigRock - app launcher plus Calculator, Paint, Snake and About */
 #include "kernel.h"
 
 const char *app_names[APP_COUNT] = {"Terminal", "Notepad", "Files", "Calculator", "Paint", "Snake", "About"};
@@ -356,10 +356,10 @@ static u32 about_last;
 static void about_draw(window_t *w, int cx, int cy, int cw, int ch) {
     (void)w;
     gfx_vgrad(cx, cy, cw, 120, 0x2f6b55, 0x1d4234);
-    gfx_icon(ICON_PROTEA, cx + 22, cy + 12, 6);
+    gfx_icon(ICON_LOGO, cx + 22, cy + 12, 6);
     gfx_text_scaled(cx + 130, cy + 30, OS_NAME, 0xffffff, 3);
     gfx_text_bold(cx + 132, cy + 66, "Version " OS_VERSION, 0xcfe8dc);
-    gfx_text(cx + 132, cy + 84, "Named for the Cape's wild heath.", 0xa9cdbd);
+    gfx_text(cx + 132, cy + 84, "Named for Table Mountain, a pretty big rock.", 0xa9cdbd);
     gfx_fill(cx, cy + 120, cw, ch - 120, 0xf5f2ec);
     char buf[64];
     u32 s = ticks / 100;
@@ -385,7 +385,7 @@ static void about_tick(window_t *w) {
 }
 
 static void about_open(void) {
-    window_t *w = wm_create("About FynbosOS", 400, 260, APP_ABOUT);
+    window_t *w = wm_create("About PrettyBigRock", 400, 260, APP_ABOUT);
     if (!w) return;
     w->draw = about_draw;
     w->tick = about_tick;

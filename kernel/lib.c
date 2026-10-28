@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - small C library: memory, strings, formatting, maths */
+/* PrettyBigRock - small C library: memory, strings, formatting, maths */
 #include "kernel.h"
 
 void *memset(void *d, int c, size_t n) {

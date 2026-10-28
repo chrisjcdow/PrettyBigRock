@@ -1,16 +1,19 @@
-# FynbosOS 1.0
+# PrettyBigRock
 
 A small 32-bit x86 operating system with a graphical desktop, written from scratch:
 boot loader, kernel, drivers, bitmap font, icons, window manager and apps.
-The wallpaper is Table Mountain at dusk, tablecloth and all, drawn procedurally at boot.
+It's named after Table Mountain, a pretty big rock, which is also its wallpaper: drawn
+procedurally at boot, at dusk, tablecloth and all.
 
-![FynbosOS desktop](screenshot.png)
+![PrettyBigRock desktop](screenshot.png)
 
 ## How this was made
 
-FynbosOS 1.0 was written by **Claude** (Anthropic's AI model) from a single prompt by Chris:
+The first version was written by **Claude** (Anthropic's AI model) from a single prompt by Chris:
 *"Could you write me an operating system that I could boot in a VM. This OS should have a GUI.
 Try not to plagiarise too much."* Claude wrote every line of code, the font and the icons.
+It was called **FynbosOS** at first; that original is kept in this repository's history under
+the tag `fynbos-1.0`, and was renamed to PrettyBigRock in version 1.1.
 From here on, Chris and Claude are developing it together, and [DEVLOG.md](DEVLOG.md)
 records who did what in each session.
 
@@ -36,9 +39,9 @@ below), and put it in a `build/` folder:
 
 | Hypervisor | File | Notes |
 |---|---|---|
-| QEMU / Proxmox | `fynbos.img` | `qemu-system-i386 -m 128 -drive file=fynbos.img,format=raw`, or on Windows double-click `run-fynbos.bat` |
-| VirtualBox | `fynbos.vdi` | New VM, type *Other*, version *Other/Unknown*, 64 MB+ RAM, attach as the hard disk |
-| VMware | `fynbos.vmdk` | New VM, guest *Other*, use an existing disk, BIOS firmware |
+| QEMU / Proxmox | `prettybigrock.img` | `qemu-system-i386 -m 128 -drive file=prettybigrock.img,format=raw`, or on Windows double-click `run-prettybigrock.bat` |
+| VirtualBox | `prettybigrock.vdi` | New VM, type *Other*, version *Other/Unknown*, 64 MB+ RAM, attach as the hard disk |
+| VMware | `prettybigrock.vmdk` | New VM, guest *Other*, use an existing disk, BIOS firmware |
 
 Requirements: **legacy BIOS boot** (not UEFI) and a **PS/2 mouse**. In VirtualBox set
 System > Pointing Device to *PS/2 Mouse*; with the default USB tablet the pointer won't move.
@@ -59,7 +62,7 @@ Needs `gcc` (with `-m32` support), `nasm`, `ld`, `objcopy` and Python 3; `qemu-i
 
 Copyright (C) 2026 Christopher Cameron-Dow
 
-FynbosOS is free software: you can redistribute it and/or modify it under the terms of the
+PrettyBigRock is free software: you can redistribute it and/or modify it under the terms of the
 GNU General Public License as published by the Free Software Foundation, either version 3
 of the License, or (at your option) any later version. It is distributed in the hope that it
 will be useful, but WITHOUT ANY WARRANTY. See [LICENSE](LICENSE) for the full text.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Christopher Cameron-Dow
-"""Generates kernel/assets.c: the FynbosOS bitmap font, icons and mouse cursor.
+"""Generates kernel/assets.c: the PrettyBigRock bitmap font, icons and mouse cursor.
 Every glyph and icon below was hand-drawn for this project."""
 import sys
 
@@ -110,6 +110,7 @@ PAL = {
  'k':0x1b1b1f,'w':0xffffff,'g':0xc8ccd2,'G':0x6b717c,'r':0xe05252,'o':0xf29a3a,
  'y':0xf5d04a,'e':0x5cc46a,'E':0x2f7d43,'b':0x4a8fe0,'B':0x2b4c7e,'p':0xe8678f,
  'P':0xa8325a,'n':0x8a5a35,'t':0x3aa6a0,'c':0xf4efe2,'s':0x2a2f3a,
+ 'm':0x5a4680,'M':0x382c58,'l':0xe0a090,'O':0xffc070,
 }
 PKEYS = list(PAL.keys())
 
@@ -233,22 +234,22 @@ ICONS = [
 "...bbbbbbbbbb...",
 ".....bbbbbb.....",
 "................"]),
-("protea", [
+("logo", [
 "................",
-"......p.p.p.....",
-".....pp.p.pp....",
-"...p.ppppppp.p..",
-"...ppppPPPpppp..",
-"....ppPPPPPpp...",
-"...pppPPyPPppp..",
-"....ppPPPPPpp...",
-".....ppPPPpp....",
-"......ppppp.....",
-".......EEE......",
-"........E.......",
-"......E.E.E.....",
-".......EEE......",
-"........E.......",
+"............OO..",
+"...........OooO.",
+"...........OooO.",
+"............OO..",
+"................",
+"....wwwwwwwww...",
+"..l.lmmmmmmmml..",
+".lmmmmmmmmmmmm..",
+".mmmmmmmmmmmmml.",
+"mmmmmmmmmmmmmmlm",
+"mmmmmmmmmmmmmmmm",
+"MMMMMMMMMMMMMMMM",
+"bbbbbbbbbOObbbbb",
+"................",
 "................"]),
 ("power", [
 "................",

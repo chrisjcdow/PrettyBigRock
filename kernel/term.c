@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - Terminal app with a small command shell */
+/* PrettyBigRock - Terminal app with a small command shell */
 #include "kernel.h"
 
 #define T_COLS 76
@@ -8,8 +8,8 @@
 #define T_HIST 300
 #define T_INMAX 90
 
-enum { K_NORMAL, K_GOOD, K_BAD, K_CMD, K_HEAD };
-static const u32 kind_color[] = {0xd8dce6, 0x8fd18a, 0xf08a8a, 0xffffff, 0xf2a0b8};
+enum { K_NORMAL, K_GOOD, K_BAD, K_CMD, K_HEAD, K_SPUD };
+static const u32 kind_color[] = {0xd8dce6, 0x8fd18a, 0xf08a8a, 0xffffff, 0xf2a0b8, 0xd9a066};
 
 static char lines[T_HIST][T_COLS + 1];
 static u8 kinds[T_HIST][T_COLS];
@@ -21,7 +21,7 @@ static char hist[16][T_INMAX + 1];
 static int nhist, hpos;
 static window_t *twin;
 
-static const char *PROMPT = "fynbos> ";
+static const char *PROMPT = "rock> ";
 
 static void t_newline(void) {
     if (nlines == T_HIST) {
@@ -87,6 +87,8 @@ static const char *fortunes[] = {
     "The south-easter clears the sky; the reset button clears the RAM.",
     "Small programs have small bugs. Mostly.",
     "When in doubt, print it out.",
+    "The mountain was here first. It can wait for your build to finish.",
+    "Big rock. Pretty rock. Pretty big rock.",
     "Interrupts are just the hardware asking for attention.",
 };
 
@@ -94,7 +96,7 @@ static void cmd_help(void) {
     t_puts("Commands:\n", K_HEAD);
     t_puts("  help              this list\n"
            "  clear             clear the screen\n"
-           "  about             about FynbosOS\n"
+           "  about             about PrettyBigRock\n"
            "  fetch             system summary\n"
            "  time | date       show the clock\n"
            "  tz <hours>        set the clock offset from the hardware time\n"
@@ -216,6 +218,15 @@ static void run(char *line) {
         for (int i = 0; i < APP_COUNT; i++)
             if (ieq_prefix(what, app_names[i])) { app_open(i); return; }
         t_puts("Unknown app. Try: notepad, files, calculator, paint, snake, about\n", K_BAD);
+    } else if (!strcmp(cmd, "potato")) {
+        /* not listed in 'help': you have to know about it */
+        t_puts("        .-~~~~-.\n"
+               "      .'  .     '.\n"
+               "     /  .    .    \\\n"
+               "    |      .    .  |\n"
+               "     \\  .     .   /\n"
+               "      '-.______.-'\n", K_SPUD);
+        t_puts("Hello, potato. <3\n", K_GOOD);
     } else if (!strcmp(cmd, "fortune")) {
         t_printf(K_HEAD, "%s\n", fortunes[krand() % (sizeof fortunes / sizeof *fortunes)]);
     } else if (!strcmp(cmd, "reboot")) reboot();

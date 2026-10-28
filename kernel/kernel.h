@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - shared kernel header */
+/* PrettyBigRock - shared kernel header */
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
@@ -13,8 +13,8 @@ typedef int8_t i8;
 typedef int32_t i32;
 typedef uint64_t u64;
 
-#define OS_NAME    "FynbosOS"
-#define OS_VERSION "1.0"
+#define OS_NAME    "PrettyBigRock"
+#define OS_VERSION "1.1"
 
 /* ---------------------------------------------------------------- port I/O */
 static inline void outb(u16 p, u8 v) { __asm__ volatile("outb %0,%1" ::"a"(v), "Nd"(p)); }
@@ -119,7 +119,7 @@ extern const u8 icon_data[][256];
 extern const char *cursor_data[17];
 
 enum { ICON_TERMINAL, ICON_NOTEPAD, ICON_FILES, ICON_CALC, ICON_PAINT, ICON_SNAKE,
-       ICON_ABOUT, ICON_PROTEA, ICON_POWER, ICON_RESTART };
+       ICON_ABOUT, ICON_LOGO, ICON_POWER, ICON_RESTART };
 
 /* ---------------------------------------------------------------- window manager */
 #define TITLE_H 26

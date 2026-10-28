@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - kernel entry point */
+/* PrettyBigRock - kernel entry point */
 #include "kernel.h"
 
 static void boot_splash(void) {
     gfx_fill(0, 0, SW, SH, 0x12141c);
-    gfx_icon(ICON_PROTEA, SW / 2 - 48, SH / 2 - 110, 6);
+    gfx_icon(ICON_LOGO, SW / 2 - 48, SH / 2 - 110, 6);
     gfx_text_scaled(SW / 2 - gfx_text_w(OS_NAME) * 3 / 2, SH / 2 + 6, OS_NAME, 0xffffff, 3);
     gfx_present((rect_t){0, 0, SW, SH});
 }

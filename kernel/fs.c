@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - a tiny RAM filesystem (flat, no directories) */
+/* PrettyBigRock - a tiny RAM filesystem (flat, no directories) */
 #include "kernel.h"
 
 typedef struct { int used, size; char name[FS_NAME_LEN]; char *data; } file_t;
@@ -15,9 +15,9 @@ static void seed(const char *name, const char *text) {
 void fs_init(void) {
     for (int i = 0; i < FS_MAX_FILES; i++) files[i].data = kmalloc(FS_MAX_SIZE + 1);
     seed("readme.txt",
-         "Welcome to FynbosOS!\n"
+         "Welcome to PrettyBigRock!\n"
          "\n"
-         "FynbosOS is a small hobby operating system written from\n"
+         "PrettyBigRock is a small hobby operating system written from\n"
          "scratch: its own boot loader, kernel, drivers, font,\n"
          "window manager and apps.\n"
          "\n"
@@ -32,7 +32,7 @@ void fs_init(void) {
     seed("shortcuts.txt",
          "Keyboard shortcuts\n"
          "------------------\n"
-         "Windows key or Ctrl+Esc   open the Fynbos menu\n"
+         "Windows key or Ctrl+Esc   open the start menu\n"
          "Ctrl+W                    close the active window\n"
          "Ctrl+S (Notepad)          save the file\n"
          "Up / Down (Terminal)      command history\n"

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - 2D graphics on a double-buffered linear framebuffer */
+/* PrettyBigRock - 2D graphics on a double-buffered linear framebuffer */
 #include "kernel.h"
 
 struct bootinfo { u32 fb; u16 w, h, pitch; u8 bpp; } __attribute__((packed));

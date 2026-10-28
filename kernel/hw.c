@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Christopher Cameron-Dow */
-/* FynbosOS - hardware: interrupts, timer, keyboard, mouse, clock, power */
+/* PrettyBigRock - hardware: interrupts, timer, keyboard, mouse, clock, power */
 #include "kernel.h"
 
 /* ---------------------------------------------------------------- IDT */
@@ -23,8 +23,8 @@ static void panic(struct regs *r) {
     char buf[96];
     gfx_set_clip((rect_t){0, 0, SW, SH});
     gfx_fill(0, 0, SW, SH, 0x6b1d2a);
-    gfx_icon(ICON_PROTEA, 40, 40, 4);
-    gfx_text_scaled(120, 48, "FynbosOS stopped unexpectedly", 0xffffff, 2);
+    gfx_icon(ICON_LOGO, 40, 40, 4);
+    gfx_text_scaled(120, 48, "PrettyBigRock stopped unexpectedly", 0xffffff, 2);
     ksnprintf(buf, sizeof buf, "%s (exception %u)", r->int_no < 20 ? exc_names[r->int_no] : "Reserved", r->int_no);
     gfx_text_scaled(120, 80, buf, 0xffd7de, 1);
     ksnprintf(buf, sizeof buf, "EIP=%08x  ERR=%08x  EAX=%08x  ESP=%08x", r->eip, r->err, r->eax, r->esp);

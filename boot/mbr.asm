@@ -1,6 +1,6 @@
 ; SPDX-License-Identifier: GPL-3.0-or-later
 ; Copyright (C) 2026 Christopher Cameron-Dow
-; FynbosOS - stage 1 boot sector
+; PrettyBigRock - stage 1 boot sector
 ; Loads stage 2 to 0x7E00 and the kernel to 0x10000 using BIOS LBA reads,
 ; then hands over to stage 2.
 
@@ -83,7 +83,7 @@ print:
 .end:
     ret
 
-msg_hello db "FynbosOS loader", 0
+msg_hello db "PrettyBigRock loader", 0
 msg_dot   db ".", 0
 msg_err   db 13, 10, "Disk read failed.", 0
 

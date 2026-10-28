@@ -1,6 +1,6 @@
 ; SPDX-License-Identifier: GPL-3.0-or-later
 ; Copyright (C) 2026 Christopher Cameron-Dow
-; FynbosOS - stage 2
+; PrettyBigRock - stage 2
 ; Picks the best VESA linear-framebuffer mode, enables A20,
 ; switches to 32-bit protected mode and jumps to the kernel at 0x10000.
 ;
