@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[alias]
+# `cargo xtask build`, `cargo xtask test`, `cargo xtask ci` ... see xtask/src/main.rs
+xtask = "run --quiet --package xtask --"

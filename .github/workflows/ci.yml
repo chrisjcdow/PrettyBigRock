@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Builds and tests PrettyBigRock on every push and pull request. Everything it runs is in the
+# build tool (xtask/src/main.rs), so the same checks can be run locally with `cargo xtask ci`.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  prettybigrock-2:
+    name: PrettyBigRock 2 (x86-64 and ARM64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show
+      - name: Check, test and build
+        run: cargo xtask ci
+      - name: Keep the kernels
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernels
+          path: build/*/*/kernel.elf
+
+  classic:
+    name: PrettyBigRock 1.x (classic)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the C build tools
+        run: sudo apt-get update && sudo apt-get install -y nasm gcc-multilib qemu-utils
+      - name: Install the pinned Rust toolchain (for the build tool)
+        run: rustup toolchain install && rustup show
+      - name: Build and cross-check
+        run: cargo xtask classic
+      - name: Keep the disk images
+        uses: actions/upload-artifact@v4
+        with:
+          name: classic-images
+          path: classic/build/prettybigrock.*

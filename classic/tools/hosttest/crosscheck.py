@@ -9,7 +9,7 @@ import subprocess
 import sys
 import zlib
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'tools'))
 import rockfs  # noqa: E402
 
 host, work = sys.argv[1], sys.argv[2]

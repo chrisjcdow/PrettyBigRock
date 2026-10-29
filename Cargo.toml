@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+#
+# The PrettyBigRock 2 workspace. See docs/design/0001-repository-layout.md.
+# The 1.x system (C) lives in classic/ and is built with classic/build.sh.
+
+[workspace]
+resolver = "3"
+members = ["kernel", "lib/bootinfo", "xtask"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+authors = ["Christopher Cameron-Dow", "Claude (Anthropic)"]
+repository = "https://github.com/chrisjcdow/PrettyBigRock"
+publish = false
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+debug = true

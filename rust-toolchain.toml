@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The exact Rust version PrettyBigRock is built with. Change it only on purpose, in its own
+# commit, and say why in the DEVLOG. See docs/design/0002-coding-rules.md.
+[toolchain]
+channel = "1.97.0"
+components = ["rust-src", "rustfmt", "clippy"]
+targets = ["x86_64-unknown-none", "aarch64-unknown-none-softfloat"]
+profile = "minimal"

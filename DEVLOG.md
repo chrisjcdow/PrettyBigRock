@@ -108,3 +108,31 @@ the two of them settled the design:
 
 **Claude** wrote it all up as `docs/DESIGN.md` (the decisions, the reasons, and the open
 questions) and `docs/ROADMAP.md` (the milestones, from an empty kernel to real hardware).
+
+## Session 5, continued: milestone M0
+
+**Chris** settled the open questions: a linking exception for the app libraries, so that
+proprietary apps are possible; 1.x moving into `classic/`; the browser player staying on
+1.x; and PrettyBigRock being general purpose. As a desktop that means web browsing, media,
+personal documents, software development and music production; as a server, running what
+Roxy runs today. He also asked for support for several screens.
+
+**Claude:**
+- Added those to the design (draft 2). The uses brought in real-time scheduling, room for
+  virtual machines (for running Linux server software such as Docker), GPU-ready display
+  buffers, and porting large software as a goal of the POSIX layer. They also extended the
+  roadmap to M15.
+- Moved the C system into `classic/`. It still builds a byte-identical image, and the
+  cross-checks still pass.
+- Started PrettyBigRock 2:
+  - a Rust workspace, pinned to Rust 1.97.0;
+  - the kernel with its architecture layer, building for x86-64 and ARM64;
+  - `lib/bootinfo`, the boot information as code, with its layout checked at compile time;
+  - `xtask`, the build tool (`build`, `check`, `test`, `ci`, `classic`, `doctor`);
+  - a GitHub Actions workflow.
+- Wrote the first design notes: the repository layout (0001), coding rules (0002), and the
+  boot information with the machine's state at the kernel's entry point (0003).
+- Claude's workspace can't download Rust's ready-built targets (static.rust-lang.org is
+  blocked), so the build tool can also build Rust's core library from source. It used the
+  `library/` folder at the exact 1.97.0 commit, from GitHub. Elsewhere, rustup's normal
+  targets are used.

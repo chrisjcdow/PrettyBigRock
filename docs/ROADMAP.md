@@ -23,6 +23,9 @@ PrettyBigRock 1.x stays available throughout as the playable version.
 
 **Done when:** an empty Rust kernel builds for x86-64 and ARM64 on every change.
 
+**Status: done** (29 October 2026), apart from the first real run on GitHub, which happens
+when this is pushed. Notes 0001 to 0003 are in `docs/design/`.
+
 ## M1: Booting, on both architectures
 - A UEFI loader (x86-64 and ARM64), a BIOS loader (x86-64), and the shared boot information.
 - The architecture layer's first pieces: early start-up, a serial port, the memory map.
