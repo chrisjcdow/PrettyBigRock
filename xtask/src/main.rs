@@ -297,6 +297,15 @@ fn build_artifact(
         cmd.arg("--release");
     }
     cmd.args(&extra).envs(envs.iter().copied());
+    // UEFI programs are Windows-style executables. Their debug information goes in a separate
+    // file whose details (and the timestamp) end up inside them, so leave it out and ask the
+    // linker for a timestamp derived from the contents: then they're repeatable too.
+    let pe = if target.ends_with("-uefi") {
+        "-C debuginfo=0 -C link-arg=/Brepro -C link-arg=/DEBUG:NONE"
+    } else {
+        ""
+    };
+    cmd.env("RUSTFLAGS", repeatable_flags(root, pe));
     status(&mut cmd)?;
     let profile = if release { "release" } else { "debug" };
     let built = root.join("target").join(target).join(profile).join(bin);
@@ -367,6 +376,15 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<PathBuf> {
     write_out(root, &format!("build/{profile}/prettybigrock.img"), &img)
 }
 
+/// Compiler flags that keep the folder the repository is in out of what's built, so the same
+/// source gives the same image wherever it's built.
+fn repeatable_flags(root: &Path, extra: &str) -> String {
+    let home = env::var("CARGO_HOME")
+        .or_else(|_| env::var("HOME").map(|h| format!("{h}/.cargo")))
+        .unwrap_or_default();
+    format!("--remap-path-prefix={}=/pbr --remap-path-prefix={home}=/cargo {extra}", root.display())
+}
+
 /// The BIOS loader: its first stage (for the MBR, with where to find the rest filled in) and
 /// what goes in the BIOS boot partition (the rest of the loader, then the payload).
 fn bios_loader(
@@ -394,7 +412,7 @@ fn bios_loader(
         cmd.arg("--release");
     }
     cmd.args(&extra).envs(envs.iter().copied());
-    cmd.env("RUSTFLAGS", "-C code-model=small -C relocation-model=static");
+    cmd.env("RUSTFLAGS", repeatable_flags(root, "-C code-model=small -C relocation-model=static"));
     status(&mut cmd)?;
     let profile = if release { "release" } else { "debug" };
     let path = root.join("target/bios").join(BIOS_TARGET).join(profile).join("pbr-boot-bios");
@@ -489,7 +507,10 @@ fn check(root: &Path, tc: &Toolchain) -> Result {
             ])
             .args(&extra)
             .envs(envs.iter().copied())
-            .env("RUSTFLAGS", "-C code-model=small -C relocation-model=static")
+            .env(
+                "RUSTFLAGS",
+                repeatable_flags(root, "-C code-model=small -C relocation-model=static"),
+            )
             .args(["--", "-D", "warnings"]),
     )?;
     for arch in ARCHES {
@@ -502,6 +523,17 @@ fn check(root: &Path, tc: &Toolchain) -> Result {
                     .args(["clippy", "--package", package, "--target", target])
                     .args(&extra)
                     .envs(envs.iter().copied())
+                    .env(
+                        "RUSTFLAGS",
+                        repeatable_flags(
+                            root,
+                            if target.ends_with("-uefi") {
+                                "-C debuginfo=0 -C link-arg=/Brepro -C link-arg=/DEBUG:NONE"
+                            } else {
+                                ""
+                            },
+                        ),
+                    )
                     .args(["--", "-D", "warnings"]),
             )?;
         }
