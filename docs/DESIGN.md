@@ -347,6 +347,19 @@ Each of these gets its own design note before it's built.
   - each window is a shared buffer the app draws into;
   - the compositor puts the screen together;
   - it understands high-resolution screens (scale factors) from the start;
+  - **several screens from the start**:
+    - the desktop is one coordinate space with each screen placed in it;
+    - each screen has its own resolution, scale factor, refresh rate and rotation;
+    - a window moving between screens of different sharpness is redrawn at the right
+      scale;
+    - screens can be plugged in and removed at any time, with windows moved off a screen
+      that disappears;
+    - mirroring (the same picture on two screens, as with a projector);
+    - a touch screen is tied to its own screen;
+    - more than one graphics card;
+  - the firmware's framebuffer usually drives only one screen, so real multi-screen
+    support arrives with display drivers. virtio-gpu in QEMU can drive several screens,
+    so the design is tested there from the beginning;
   - buffers are memory objects with fences (signals saying "drawing is finished"), so that a
     GPU can draw into them later without changing the interface;
   - the protocol is designed so that a Wayland-compatible front end (the protocol that most
@@ -588,3 +601,4 @@ Settled on 29 October 2026: Q1 (became D16), Q2 (D17), Q3 (D18) and Q4 (D19, sec
   machines, GPU-ready display buffers, headless use, porting as a goal of the POSIX layer,
   a clarification that D13 covers the OS rather than ported apps, and open questions Q7
   and Q8.
+- 29 October 2026: added support for several screens to the display server design.

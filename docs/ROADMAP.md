@@ -71,6 +71,7 @@ its files intact.
 ## M6: The desktop (2.0 alpha)
 - The display server and compositor, the input service, and the window toolkit in the native
   library.
+- Several screens from the start, tested with virtio-gpu driving two or more screens in QEMU.
 - The file picker, the clipboard, and the permissions viewer.
 - Rewrites of the 1.x apps for the new system: Files, Notepad, Paint, Terminal, Snake and the
   rest. The potato stays.
