@@ -14,7 +14,7 @@ typedef int32_t i32;
 typedef uint64_t u64;
 
 #define OS_NAME    "PrettyBigRock"
-#define OS_VERSION "1.1"
+#define OS_VERSION "1.2"
 
 /* ---------------------------------------------------------------- port I/O */
 static inline void outb(u16 p, u8 v) { __asm__ volatile("outb %0,%1" ::"a"(v), "Nd"(p)); }
@@ -58,6 +58,11 @@ void idt_init(void);
 int kbd_pop(u8 *sc);
 int mouse_pop(int *dx, int *dy, int *buttons);
 void mouse_init(void);
+/* Absolute pointer through the VMware "backdoor" port, supported by QEMU, VMware and
+   the v86 browser emulator. x and y run from 0 to 65535 across the screen. */
+int vmmouse_init(void);
+int vmmouse_active(void);
+int vmmouse_poll(int *x, int *y, int *buttons, int *wheel);
 
 #define KEY_UP     0x100
 #define KEY_DOWN   0x101

@@ -150,6 +150,65 @@ void mouse_init(void) {
     while (inb(0x64) & 1) inb(0x60);
 }
 
+/* ---------------------------------------------------------------- absolute pointer (VMware backdoor) */
+#define VMW_MAGIC        0x564D5868u
+#define VMW_PORT         0x5658
+#define VMW_GETVERSION   10
+#define VMW_ABS_DATA     39
+#define VMW_ABS_STATUS   40
+#define VMW_ABS_COMMAND  41
+#define VMW_CMD_ENABLE   0x45414552u
+#define VMW_CMD_DISABLE  0x000000F5u
+#define VMW_CMD_ABSOLUTE 0x53424152u
+#define VMW_VERSION_ID   0x3442554Au
+#define VMW_ERROR        0xFFFF0000u
+#define VMW_RELATIVE     0x00010000u
+
+typedef struct { u32 a, b, c, d; } vmw_regs_t;
+static int vmm_on;
+
+static vmw_regs_t vmw_call(u32 cmd, u32 arg) {
+    vmw_regs_t r = {VMW_MAGIC, arg, cmd, VMW_PORT};
+    __asm__ volatile("inl %%dx, %%eax" : "+a"(r.a), "+b"(r.b), "+c"(r.c), "+d"(r.d) : : "memory");
+    return r;
+}
+
+int vmmouse_init(void) {
+    /* On real hardware nothing answers this port, so the check below fails safely. */
+    vmw_regs_t r = vmw_call(VMW_GETVERSION, ~VMW_MAGIC);
+    if (r.b != VMW_MAGIC || r.a == 0xFFFFFFFFu) return 0;
+    vmw_call(VMW_ABS_COMMAND, VMW_CMD_ENABLE);
+    r = vmw_call(VMW_ABS_STATUS, 0);
+    if ((r.a & VMW_ERROR) == VMW_ERROR || (r.a & 0xFFFF) == 0) return 0;
+    r = vmw_call(VMW_ABS_DATA, 1);
+    if (r.a != VMW_VERSION_ID) { vmw_call(VMW_ABS_COMMAND, VMW_CMD_DISABLE); return 0; }
+    vmw_call(VMW_ABS_COMMAND, VMW_CMD_ABSOLUTE);
+    vmm_on = 1;
+    return 1;
+}
+
+int vmmouse_active(void) { return vmm_on; }
+
+/* Returns 1 and fills in one event if one is waiting. */
+int vmmouse_poll(int *x, int *y, int *buttons, int *wheel) {
+    if (!vmm_on) return 0;
+    vmw_regs_t r = vmw_call(VMW_ABS_STATUS, 0);
+    if ((r.a & VMW_ERROR) == VMW_ERROR) {
+        /* the host reset the device: start again, or fall back to the PS/2 mouse */
+        vmm_on = 0;
+        vmmouse_init();
+        return 0;
+    }
+    if ((r.a & 0xFFFF) < 4) return 0;
+    r = vmw_call(VMW_ABS_DATA, 4);
+    if (r.a & VMW_RELATIVE) return 0; /* only absolute packets are expected */
+    *x = (int)(r.b & 0xFFFF);
+    *y = (int)(r.c & 0xFFFF);
+    *wheel = (int)(i8)(r.d & 0xFF);
+    *buttons = ((r.a & 0x20) ? 1 : 0) | ((r.a & 0x10) ? 2 : 0) | ((r.a & 0x08) ? 4 : 0);
+    return 1;
+}
+
 /* ---------------------------------------------------------------- keyboard (scan code set 1, US layout) */
 static const char km_lo[] = "\0\x1b" "1234567890-=\b" "\tqwertyuiop[]\n" "\0" "asdfghjkl;'`" "\0"
                             "\\zxcvbnm,./" "\0" "*\0 ";

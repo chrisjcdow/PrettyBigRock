@@ -23,6 +23,7 @@ void kmain(void) {
     idt_init();
     splash_progress(1, 5);
     mouse_init();
+    vmmouse_init();
     splash_progress(2, 5);
     fs_init();
     splash_progress(3, 5);

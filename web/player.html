@@ -1,0 +1,415 @@
+<title>PrettyBigRock</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@600&display=swap">
+<style>
+/* Layout: the guest screen fills the space above a strip of keycaps; everything else is the night sky behind Table Mountain. */
+:root {
+  --sky: #12141c;
+  --sky-2: #1b1f2c;
+  --cap: #2a2e3d;
+  --cap-edge: #3b4157;
+  --cap-text: #e9ebf2;
+  --muted: #9aa0b4;
+  --protea: #d2577a;
+  --sun: #ffc070;
+  --font-ui: "Atkinson Hyperlegible", system-ui, sans-serif;
+  --font-cap: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--sky);
+  color: var(--cap-text);
+  font-family: var(--font-ui);
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#app {
+  position: fixed;
+  left: 0; right: 0; top: 0;
+  height: var(--vvh, 100%);
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  box-sizing: border-box;
+  background: radial-gradient(120% 80% at 50% 0%, var(--sky-2), var(--sky) 70%);
+}
+#stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding-block: 10px;
+}
+#screen {
+  position: relative;
+  width: var(--w, 1024px);
+  height: var(--h, 768px);
+  background: #000;
+  box-shadow: 0 0 0 1px var(--cap-edge), 0 18px 50px rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+  overflow: hidden;
+  touch-action: none;
+  cursor: default;
+}
+#screen canvas {
+  width: var(--w, 1024px) !important;
+  height: var(--h, 768px) !important;
+  image-rendering: pixelated;
+  display: block;
+}
+#screen > div.text {
+  white-space: pre;
+  font: 14px/14px var(--font-cap);
+  color: #c8ccd2;
+  padding: 8px;
+}
+#status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  text-align: center;
+  background: var(--sky);
+  color: var(--muted);
+  font-size: 15px;
+  pointer-events: none;
+}
+#status strong { color: var(--cap-text); font-size: 22px; letter-spacing: 0.02em; }
+#status .bar { width: 220px; height: 6px; border-radius: 3px; background: var(--cap); overflow: hidden; margin: 0 auto; }
+#status .bar i { display: block; height: 100%; width: 30%; background: var(--protea); border-radius: 3px; animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { #status .bar i { animation: none; width: 100%; } }
+
+#keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding-block: 8px 10px;
+  touch-action: none;
+}
+.group { display: flex; gap: 6px; }
+.cap {
+  min-width: 44px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--cap-edge);
+  border-bottom-width: 3px;
+  background: var(--cap);
+  color: var(--cap-text);
+  font: 600 13px/1 var(--font-cap);
+  letter-spacing: 0.03em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.cap:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
+.cap.down { transform: translateY(2px); border-bottom-width: 1px; }
+.cap.on { background: var(--protea); border-color: #e7819c; color: #fff; }
+.cap.wide { min-width: 64px; }
+.cap svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.spacer { flex: 0 0 8px; }
+
+#sink {
+  position: fixed;
+  left: 0; bottom: 0;
+  width: 1px; height: 1px;
+  opacity: 0;
+  font-size: 16px; /* stops mobile browsers zooming in when it gains focus */
+  border: 0; padding: 0; resize: none;
+}
+#credits {
+  text-align: center;
+  padding-bottom: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+#credits a { color: inherit; }
+@media (max-height: 520px) { #credits { display: none; } }
+</style>
+
+<div id="app">
+  <div id="stage">
+    <div id="screen" aria-label="PrettyBigRock screen">
+      <div class="text"></div>
+      <canvas></canvas>
+      <div id="status"><strong>PrettyBigRock</strong><span id="status-text">Starting the virtual machine...</span><div class="bar"><i></i></div></div>
+    </div>
+  </div>
+  <div id="keys" aria-label="Extra keys">
+    <div class="group">
+      <button class="cap wide" id="k-kbd" type="button" aria-pressed="false" title="Show or hide the on-screen keyboard">
+        <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M7 14h10"/></svg>Keys
+      </button>
+      <button class="cap" data-key="esc" type="button">Esc</button>
+      <button class="cap" data-key="tab" type="button">Tab</button>
+      <button class="cap" id="k-ctrl" type="button" aria-pressed="false" title="Ctrl: tap, then the next key">Ctrl</button>
+      <button class="cap" data-key="menu" type="button" title="Start menu">
+        <svg viewBox="0 0 24 24"><path d="M3 18 8 9l3 4 3-6 7 11z"/></svg>Menu
+      </button>
+    </div>
+    <div class="group">
+      <button class="cap" data-key="left" type="button" aria-label="Left">&larr;</button>
+      <button class="cap" data-key="up" type="button" aria-label="Up">&uarr;</button>
+      <button class="cap" data-key="down" type="button" aria-label="Down">&darr;</button>
+      <button class="cap" data-key="right" type="button" aria-label="Right">&rarr;</button>
+    </div>
+    <div class="group">
+      <button class="cap" data-key="backspace" type="button" aria-label="Backspace">&#9003;</button>
+      <button class="cap wide" data-key="enter" type="button">Enter</button>
+      <span class="spacer"></span>
+      <button class="cap" id="k-full" type="button" title="Full screen" aria-label="Full screen" hidden>
+        <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+      <button class="cap" id="k-restart" type="button" title="Restart the virtual machine" aria-label="Restart">
+        <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
+      </button>
+    </div>
+  </div>
+  <div id="credits">Runs in <a href="https://github.com/copy/v86" target="_blank" rel="noopener">v86</a> with SeaBIOS &middot; <a href="https://github.com/chrisjcdow/PrettyBigRock" target="_blank" rel="noopener">source</a></div>
+  <textarea id="sink" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Keyboard input"></textarea>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/v86@0.5.470/build/libv86.js"></script>
+<script src="data.js"></script>
+<script>
+(function () {
+  "use strict";
+  const GUEST_W = 1024, GUEST_H = 768;
+  const screenEl = document.getElementById("screen");
+  const canvas = screenEl.querySelector("canvas");
+  const statusEl = document.getElementById("status");
+  const statusText = document.getElementById("status-text");
+  const sink = document.getElementById("sink");
+  const kbdBtn = document.getElementById("k-kbd");
+  const ctrlBtn = document.getElementById("k-ctrl");
+  const keysBar = document.getElementById("keys");
+
+  function b64(s) {
+    const bin = atob(s), out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  /* ---- fit the guest screen into whatever space is left ---- */
+  function layout() {
+    const vv = window.visualViewport;
+    const vh = vv ? vv.height : window.innerHeight;
+    document.documentElement.style.setProperty("--vvh", vh + "px");
+    const stage = document.getElementById("stage");
+    const r = stage.getBoundingClientRect();
+    const availW = r.width, availH = r.height - 20;
+    const w = canvas.width || GUEST_W, h = canvas.height || GUEST_H;
+    const s = Math.max(0.1, Math.min(availW / w, availH / h));
+    document.documentElement.style.setProperty("--w", Math.floor(w * s) + "px");
+    document.documentElement.style.setProperty("--h", Math.floor(h * s) + "px");
+  }
+  window.addEventListener("resize", layout);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", layout);
+    window.visualViewport.addEventListener("scroll", () => window.scrollTo(0, 0));
+  }
+  layout();
+
+  if (typeof V86 === "undefined" || typeof PBR_DATA === "undefined") {
+    statusText.textContent = "Couldn't load the emulator. Check your connection and reload the page.";
+    return;
+  }
+
+  const disk = new Uint8Array(4 * 1024 * 1024);
+  disk.set(b64(PBR_DATA.image));
+
+  const emu = new V86({
+    wasm_path: "v86.wasm",
+    memory_size: 128 * 1024 * 1024,
+    vga_memory_size: 8 * 1024 * 1024,
+    screen_container: screenEl,
+    bios: { buffer: b64(PBR_DATA.seabios).buffer },
+    vga_bios: { buffer: b64(PBR_DATA.vgabios).buffer },
+    hda: { buffer: disk.buffer },
+    acpi: true,
+    disable_speaker: true,
+    autostart: true,
+  });
+  window.prettybigrock = emu;
+
+  emu.add_listener("emulator-ready", () => { statusText.textContent = "Booting..."; });
+  emu.add_listener("screen-set-size", (args) => {
+    if (args && args[2] === 0) return; /* text mode during BIOS start-up */
+    statusEl.hidden = true;
+    setTimeout(layout, 0);
+  });
+  setTimeout(() => { statusEl.hidden = true; }, 8000);
+
+  /* ---- keyboard helpers (scan code set 1) ---- */
+  const SC = {
+    esc: [0x01], tab: [0x0f], enter: [0x1c], backspace: [0x0e], ctrl: [0x1d],
+    left: [0xe0, 0x4b], right: [0xe0, 0x4d], up: [0xe0, 0x48], down: [0xe0, 0x50],
+    home: [0xe0, 0x47], end: [0xe0, 0x4f], del: [0xe0, 0x53], pgup: [0xe0, 0x49], pgdn: [0xe0, 0x51],
+    menu: [0xe0, 0x5b],
+  };
+  function release(codes) { return codes.length === 2 ? [codes[0], codes[1] | 0x80] : [codes[0] | 0x80]; }
+  function press(name) { const c = SC[name]; emu.keyboard_send_scancodes(c.concat(release(c))); }
+
+  let ctrlLatched = false;
+  function setCtrl(on) {
+    ctrlLatched = on;
+    ctrlBtn.classList.toggle("on", on);
+    ctrlBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  function withCtrl(fn) {
+    if (!ctrlLatched) { fn(); return; }
+    emu.keyboard_send_scancodes(SC.ctrl);
+    fn();
+    emu.keyboard_send_scancodes(release(SC.ctrl));
+    setCtrl(false);
+  }
+  function typeChar(ch) {
+    if (ch === "\n") { withCtrl(() => press("enter")); return; }
+    if (ch === "\t") { withCtrl(() => press("tab")); return; }
+    if (ch < " " || ch > "~") return; /* the guest has a US keyboard and ASCII font */
+    withCtrl(() => emu.keyboard_send_text(ch));
+  }
+
+  /* ---- on-screen keyboard: a hidden text box we watch for changes ----
+     Phone keyboards with word prediction don't report single key presses, so instead we
+     compare the box's text before and after each change and replay the difference. */
+  let prev = "", composing = false;
+  sink.addEventListener("compositionstart", () => { composing = true; });
+  sink.addEventListener("compositionend", () => { composing = false; tidy(); });
+  sink.addEventListener("input", () => {
+    const v = sink.value;
+    let i = 0;
+    while (i < prev.length && i < v.length && prev[i] === v[i]) i++;
+    for (let k = prev.length - i; k > 0; k--) withCtrl(() => press("backspace"));
+    for (const ch of v.slice(i)) typeChar(ch);
+    prev = v;
+    tidy();
+  });
+  function tidy() {
+    if (!composing && (sink.value.length > 48 || sink.value.endsWith("\n"))) { sink.value = ""; prev = ""; }
+  }
+  const KEYMAP = {
+    Escape: "esc", Tab: "tab", ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down",
+    Home: "home", End: "end", Delete: "del", PageUp: "pgup", PageDown: "pgdn",
+  };
+  sink.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    const name = KEYMAP[e.key];
+    if (name) { e.preventDefault(); withCtrl(() => press(name)); return; }
+    if (e.key === "Backspace" && sink.value === "") { e.preventDefault(); withCtrl(() => press("backspace")); return; }
+    if (e.key === "Enter" && sink.value === "") { e.preventDefault(); withCtrl(() => press("enter")); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.length === 1) {
+      e.preventDefault();
+      emu.keyboard_send_scancodes(SC.ctrl);
+      emu.keyboard_send_text(e.key.toLowerCase());
+      emu.keyboard_send_scancodes(release(SC.ctrl));
+    }
+  });
+  function setKbd(on) {
+    kbdBtn.classList.toggle("on", on);
+    kbdBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  sink.addEventListener("focus", () => setKbd(true));
+  sink.addEventListener("blur", () => setKbd(false));
+
+  /* ---- extra keys ---- */
+  function bindCap(el, action) {
+    /* act on release, and never take focus, so the on-screen keyboard stays open */
+    el.addEventListener("pointerdown", (e) => { e.preventDefault(); el.classList.add("down"); });
+    el.addEventListener("pointerleave", () => el.classList.remove("down"));
+    el.addEventListener("pointerup", (e) => {
+      e.preventDefault();
+      el.classList.remove("down");
+      action();
+    });
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); action(); } });
+  }
+  keysBar.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+  document.querySelectorAll(".cap[data-key]").forEach((el) => {
+    const name = el.dataset.key;
+    bindCap(el, () => name === "menu" ? press("menu") : withCtrl(() => press(name)));
+  });
+  bindCap(ctrlBtn, () => setCtrl(!ctrlLatched));
+  bindCap(kbdBtn, () => {
+    if (document.activeElement === sink) sink.blur();
+    else { sink.value = ""; prev = ""; sink.focus(); }
+  });
+  bindCap(document.getElementById("k-restart"), () => {
+    statusEl.hidden = false;
+    statusText.textContent = "Restarting...";
+    emu.restart();
+  });
+  const fullBtn = document.getElementById("k-full");
+  if (document.fullscreenEnabled) {
+    fullBtn.hidden = false;
+    bindCap(fullBtn, () => {
+      const p = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+      if (p && p.catch) p.catch(() => {});
+    });
+  }
+
+  /* ---- touch: your finger is the mouse ----
+     PrettyBigRock 1.2 understands an absolute pointer, so a touch goes straight to where the
+     finger is: touching presses the button, dragging moves with it held, lifting releases it. */
+  let touchId = null;
+  function sendPoint(t) {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.min(Math.max(t.clientX - r.left, 0), r.width - 1);
+    const y = Math.min(Math.max(t.clientY - r.top, 0), r.height - 1);
+    emu.bus.send("mouse-absolute", [x, y, r.width, r.height]);
+  }
+  function findTouch(list) {
+    for (const t of list) if (t.identifier === touchId) return t;
+    return null;
+  }
+  screenEl.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (touchId !== null) return; /* ignore extra fingers */
+    const t = e.changedTouches[0];
+    touchId = t.identifier;
+    sendPoint(t);
+    emu.bus.send("mouse-click", [true, false, false]);
+    requestWakeLock();
+  }, { passive: false });
+  screenEl.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const t = findTouch(e.changedTouches);
+    if (t) sendPoint(t);
+  }, { passive: false });
+  function touchEnd(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const t = findTouch(e.changedTouches);
+    if (!t) return;
+    sendPoint(t);
+    emu.bus.send("mouse-click", [false, false, false]);
+    touchId = null;
+  }
+  screenEl.addEventListener("touchend", touchEnd, { passive: false });
+  screenEl.addEventListener("touchcancel", touchEnd, { passive: false });
+
+  /* keep a tablet's screen on while PrettyBigRock is open */
+  let wakeLock = null;
+  function requestWakeLock() {
+    if (wakeLock || !navigator.wakeLock) return;
+    navigator.wakeLock.request("screen").then((l) => {
+      wakeLock = l;
+      l.addEventListener("release", () => { wakeLock = null; });
+    }).catch(() => {});
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wakeLock = null; });
+})();
+</script>

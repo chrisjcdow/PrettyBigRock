@@ -38,3 +38,21 @@ Table Mountain and saying "big rock" or "pretty rock", so he suggested **PrettyB
   (Chris spotted the leftover protea while test-booting before publishing)
 - Hid an Easter egg in the Terminal for Chris and his wife, at Chris's request. It isn't in `help`.
 - Kept the original FynbosOS 1.0 safe, as tag `fynbos-1.0` and as Chris's own copy
+
+## Session 3: 28-29 October 2026, publishing, RockFS design, and PrettyBigRock on a tablet (1.2)
+
+**Chris** published the repository on GitHub with releases for FynbosOS 1.0 and PrettyBigRock 1.1.
+He chose to build PrettyBigRock's own filesystem, RockFS, rather than use FAT, and reviewed the
+design with Claude over three drafts, asking what we might regret in the long run. His points led
+to feature flags, 255-character names, safe saving, recorded name rules, a growable inode table,
+partition support, 64-bit extents, and a clean failure when there isn't room to save safely.
+Then he asked to run PrettyBigRock on Isaac, his Galaxy Tab S10+.
+
+**Claude:**
+- Wrote the RockFS spec (`docs/ROCKFS.md`, draft 3). It is not implemented yet.
+- Added an absolute pointer driver (the VMware mouse protocol, supported by QEMU, VMware and
+  the v86 emulator), with automatic fallback to the PS/2 mouse. QEMU no longer needs to capture
+  the mouse, and on a touch screen your finger goes straight to where you touch.
+- Built a browser player (`web/player.html`, `tools/mkweb.py`) that runs PrettyBigRock in the v86
+  emulator, with touch as the mouse, an on-screen keyboard that copes with predictive text, and
+  a row of extra keys. Tested on a simulated tablet; Chris confirmed it works on Isaac.

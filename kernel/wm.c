@@ -460,7 +460,7 @@ static void taskbar_click(int dbl) {
 }
 
 static void on_press(void) {
-    int dbl = (ticks - last_click_t) < 45 && ABS(mx - last_click_x) < 5 && ABS(my - last_click_y) < 5;
+    int dbl = (ticks - last_click_t) < 45 && ABS(mx - last_click_x) < 8 && ABS(my - last_click_y) < 8;
     last_click_t = ticks;
     last_click_x = mx;
     last_click_y = my;
@@ -509,14 +509,12 @@ static void on_release(void) {
     }
 }
 
-static void on_mouse(int dx, int dy, int b) {
-    /* gentle acceleration for fast movements */
-    if (ABS(dx) > 6) dx = dx * 3 / 2;
-    if (ABS(dy) > 6) dy = dy * 3 / 2;
+/* Moves the pointer to (nx, ny) with buttons b, from either kind of mouse. */
+static void on_pointer(int nx, int ny, int b) {
     int ox = mx, oy = my;
     mark(cursor_rect());
-    mx = MIN(MAX(mx + dx, 0), SW - 1);
-    my = MIN(MAX(my + dy, 0), SH - 1);
+    mx = MIN(MAX(nx, 0), SW - 1);
+    my = MIN(MAX(ny, 0), SH - 1);
     mark(cursor_rect());
     if (mx != ox || my != oy) {
         if (drag_win) {
@@ -536,6 +534,14 @@ static void on_mouse(int dx, int dy, int b) {
     mbtn = b;
     if (pressed) on_press();
     if (released) on_release();
+}
+
+/* A relative movement from the PS/2 mouse. */
+static void on_mouse(int dx, int dy, int b) {
+    /* gentle acceleration for fast movements */
+    if (ABS(dx) > 6) dx = dx * 3 / 2;
+    if (ABS(dy) > 6) dy = dy * 3 / 2;
+    on_pointer(mx + dx, my + dy, b);
 }
 
 static void on_key(int k) {
@@ -570,7 +576,11 @@ void wm_run(void) {
             if (k >= 0) on_key(k);
         }
         int dx, dy, b;
-        while (mouse_pop(&dx, &dy, &b)) on_mouse(dx, dy, b);
+        while (mouse_pop(&dx, &dy, &b))
+            if (!vmmouse_active()) on_mouse(dx, dy, b); /* the absolute pointer takes over */
+        int ax, ay, wheel;
+        while (vmmouse_poll(&ax, &ay, &b, &wheel))
+            on_pointer((int)((u32)ax * (u32)SW / 65536u), (int)((u32)ay * (u32)SH / 65536u), b);
         if (ticks != last_tick) {
             last_tick = ticks;
             for (int i = 0; i < MAXWIN; i++)
