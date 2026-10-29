@@ -1,6 +1,6 @@
 # PrettyBigRock 2: design
 
-Status: **draft 1**, 29 October 2026. These decisions were agreed between Christopher
+Status: **draft 2**, 29 October 2026. These decisions were agreed between Christopher
 Cameron-Dow and Claude. The plan for building it is in [ROADMAP.md](ROADMAP.md).
 
 PrettyBigRock 1.x began as a quick experiment: a 32-bit kernel in C where every app is part of
@@ -27,12 +27,49 @@ note (like [ROCKFS.md](ROCKFS.md)) before it's built.
    lose the disk.
 6. **Documented.** Design notes come before code and are kept up to date as it changes.
 
+7. **General purpose.** As a desktop and as a home server, PrettyBigRock should do what Chris
+   uses computers for today (section 1.1).
+
+### 1.1 What it's for
+
+The aim is everyday use, not a demo. This table shows what each use needs from the
+system, which decides what the design must leave room for now.
+
+| Use | What it needs from PrettyBigRock |
+|-----|----------------------------------|
+| Web browsing | A modern browser engine: porting one, which needs a very complete POSIX layer and C++, plus networking, TLS, fonts and text shaping, and eventually GPU acceleration. |
+| Media: music, video, photos | Audio, video decoding (and later hardware-accelerated decoding), and a capable compositor. |
+| Personal documents | A word processor and spreadsheet, either ported (an office suite) or our own. Fonts, printing, PDF. |
+| Software development | Editors, `git`, compilers. Eventually PrettyBigRock builds itself on PrettyBigRock (self-hosting), which means porting LLVM and Rust. |
+| Music production and notation | Low-latency audio with real-time scheduling, MIDI, USB audio devices, and ported apps such as MuseScore (which needs Qt). |
+| Recording and editing video | Cameras, USB capture devices (including for digitising VHS), and video encoding. |
+| A home server like Roxy | Running without a screen, background services, a web server, file sharing, remote administration (SSH), mirrored disks, and the Linux server software Roxy runs today: Docker containers, Plex, Jellyfin, Nextcloud. |
+| Distributed computing | Porting BOINC (C++). |
+| Notes and knowledge (an Obsidian vault) | Plain Markdown files work anywhere; the Obsidian app itself is Electron, which effectively means porting Chromium. |
+| Emulators and retro computing | Ported emulators (DOSBox, QEMU), usually through SDL. |
+| Local AI | GPU compute: the hardest item on this list, since the major GPU vendors' compute stacks are tied to Windows and Linux. |
+
+What follows from the table:
+- **Most of these come from porting existing software, not rewriting it.** No project can
+  write a browser, an office suite and a music production app as well. So the POSIX layer
+  has to be good enough to port large programs, and porting the common toolkits
+  (SDL, then Qt) unlocks hundreds of apps at once.
+- **The "write everything ourselves" rule (D13) applies to the operating system itself.**
+  Applications ported from elsewhere are welcome. They're software that runs on
+  PrettyBigRock, not parts of it. They live in a separate ports collection, each under its
+  own licence.
+- **Running unmodified Linux programs** becomes a real need (Docker, Plex), rather than a
+  non-goal. See open question Q7.
+- **GPU support** can't stay "long-term" for ever: browsers, video and AI all need it. The
+  graphics interface is designed from the start so GPU drivers can be added later
+  (section 8).
+- **Real-time audio** is a requirement, not a nice-to-have (section 6.1).
+
 ### Non-goals
 
 - **Being Linux, or a Unix clone.** Linux already exists and is great. PrettyBigRock has its
   own design and offers Unix compatibility as a layer on top (section 9).
-- **Running Windows or Linux programs unchanged.** Unix software is ported by recompiling it
-  against the POSIX layer.
+- **Running Windows programs.**
 - **Supporting all hardware.** We support chosen machines well and add more over time
   (section 11).
 
@@ -75,9 +112,13 @@ These settle arguments when a design question comes up.
 | D10 | **Multiple filesystems** behind one file layer; RockFS is native | USB sticks, SD cards and CDs use FAT, exFAT and ISO 9660. |
 | D11 | **The GUI is a program, not part of the kernel** | Boots to the desktop by default; also boots text-only for recovery, new hardware or a headless Pi. |
 | D12 | **Real hardware**, on chosen target machines | "Usable" means real machines. |
-| D13 | **Write everything ourselves**; anything borrowed is temporary | Control over the whole system; no dependence on outside code. |
+| D13 | **Write the OS ourselves**; anything borrowed is temporary. Ported apps are welcome (section 1.1) | Control over the whole system; no dependence on outside code. |
 | D14 | **Documentation first** | Every major part has a design note before code. These notes are the project's memory between sessions. |
-| D15 | **GPL-3.0-or-later**, copyright Christopher Cameron-Dow | Stays open source. (See open question Q1 about apps.) |
+| D15 | **GPL-3.0-or-later**, copyright Christopher Cameron-Dow | Stays open source. |
+| D16 | **A linking exception for app libraries** (section 9.1) | So that anyone, including companies making proprietary software, can write apps for PrettyBigRock. The kernel and system services stay plain GPL. |
+| D17 | **The 1.x C system moves to `classic/`** and stays buildable and releasable | One repo and one history; the playable version stays available while 2.x is built. |
+| D18 | **The browser player stays on 1.x** | v86 only emulates 32-bit x86. A 64-bit browser version can come later. |
+| D19 | **General purpose**: desktop and home server (section 1.1) | Chris wants to use it for what he uses computers for today. |
 
 ---
 
@@ -149,6 +190,13 @@ unpacks.
 - **Interrupts**: delivered to the driver that holds the capability for them.
 - **Timers and time**: a 64-bit monotonic clock in nanoseconds; wall-clock time in UTC.
   Time zones are handled outside the kernel.
+- **Real-time scheduling**: a scheduling class with guaranteed time slices for threads that
+  can't afford to be late, such as audio for music production. It's designed in from the
+  start because scheduling is very hard to change later.
+- **Room for virtual machines**: a kernel object for a virtual CPU, using the processor's
+  virtualisation features (Intel VT-x, AMD-V, ARM EL2), so that PrettyBigRock can later run
+  other operating systems as guests (open question Q7). Not built early, but the kernel's
+  object and scheduling design must allow it.
 - **Starting the other cores.**
 
 ### 6.2 What the kernel doesn't do
@@ -298,7 +346,17 @@ Each of these gets its own design note before it's built.
 - **Display server and compositor**:
   - each window is a shared buffer the app draws into;
   - the compositor puts the screen together;
-  - it understands high-resolution screens (scale factors) from the start.
+  - it understands high-resolution screens (scale factors) from the start;
+  - buffers are memory objects with fences (signals saying "drawing is finished"), so that a
+    GPU can draw into them later without changing the interface;
+  - the protocol is designed so that a Wayland-compatible front end (the protocol that most
+    Linux desktop toolkits now speak) can be added, which would make porting GUI apps much
+    easier (open question Q8).
+- **Graphics acceleration**: GPU drivers come later, but the interface for them is planned
+  with the display server. The first likely targets are GPUs with open documentation (Intel
+  and AMD) and virtio-gpu in VMs.
+- **Server and headless use**: starting services without a desktop, restarting them when they
+  fail, logging, and remote administration.
 - **Input**: keyboard layouts, mouse, touch, and later tablets and pens.
 - **Audio**: mixing and low-latency playback and recording.
 - **Sandbox manager, file picker, clipboard**: see section 7.
@@ -336,6 +394,34 @@ The bitmap font from 1.x stays for the early text console.
 - **Programs are ELF files**, the usual format for programs on Unix-like systems. A
   PrettyBigRock note inside each one marks it as ours and says which interface version it
   needs.
+- **Porting large software** is a first-class goal of the POSIX layer. Its success is
+  measured by what it can port: SDL, then Qt, then a browser engine. C++ support and its
+  runtime library are part of the porting work.
+
+### 9.1 Licences for apps (D16)
+
+Apps link against the native library and the C library, and include code generated from
+interface files. If all of that were plain GPL, every app would have to be GPL too, and
+nobody would write proprietary software for PrettyBigRock.
+
+So these app-facing parts carry the GPL **plus a linking exception**: an app may use them,
+including linking them statically, under any licence it likes. Changes to the libraries
+themselves stay GPL.
+
+Covered by the exception:
+- the native library;
+- the C library and POSIX layer;
+- the interface files and the code generated from them;
+- the start-up code linked into every program.
+
+Not covered: the kernel and the system services. Apps talk to those through messages, not by
+linking, so the GPL doesn't reach the apps anyway, in the same way that programs on Linux
+aren't covered by the kernel's GPL.
+
+The exact wording will be settled before the native library is first published (milestone
+M3). We'll prefer an existing, well-known exception over writing our own, since a recognised
+text is better understood by developers and lawyers. Chris holds the copyright, so he can
+grant the exception. (This is a plan, not legal advice.)
 
 ---
 
@@ -435,6 +521,10 @@ The rule is to write everything ourselves. Anything borrowed:
 
 Nothing borrowed is part of PrettyBigRock 2 itself yet.
 
+**Ported software** (applications and toolkits such as SDL, Qt, LLVM, a browser engine, or a
+Linux guest in a virtual machine) isn't borrowed OS code. It goes in a separate ports
+collection with its own list of licences, and the OS never depends on it.
+
 ---
 
 ## 15. How we work
@@ -463,26 +553,38 @@ Nothing borrowed is part of PrettyBigRock 2 itself yet.
 
 ## 16. Open questions
 
-- **Q1. Licence for apps.** The GPL requires programs that link GPL code to be GPL too.
-  Linux avoids this for apps through its system call boundary, and most C libraries use the
-  LGPL. Should the native library and C library carry a linking exception, so people can
-  write apps under other licences? (Claude's suggestion: yes, a linking exception on the
-  user-space libraries only; the kernel and services stay plain GPL.)
-- **Q2. Where 1.x lives in the repo.** Suggestion: move the C system into `classic/`, keep
-  it building and releasable, and put PrettyBigRock 2 at the top level.
-- **Q3. The browser player.** v86 only emulates 32-bit x86, so it can't run PrettyBigRock 2.
-  Options: keep the browser for 1.x; find or write a 64-bit browser emulator later; or
-  accept that 2.x needs a real VM.
-- **Q4. What "real tasks" means for 2.0 and beyond.** For example: writing and saving
-  documents, managing files on a USB stick, viewing pictures, playing music, simple web
-  pages. A short list would let the roadmap aim at it.
+Settled on 29 October 2026: Q1 (became D16), Q2 (D17), Q3 (D18) and Q4 (D19, section 1.1).
+
 - **Q5. Cryptography.** TLS and disk encryption need cryptography. Writing our own is
   possible but risky to get wrong. The plan is to write it carefully against published test
   vectors and treat it as high-stakes code, with outside review if anyone offers.
 - **Q6. A name for the kernel**, if it should have its own.
+- **Q7. Running Linux programs unchanged.** Docker, Plex and other Linux-only software need
+  it. There are two routes, and they aren't exclusive:
+  - **A Linux compatibility layer**, translating Linux system calls into PrettyBigRock ones,
+    as FreeBSD and the first version of WSL do. A microkernel can run it as a service. It's
+    fast and integrated, but it has to chase Linux's very large interface, and Docker would
+    also need Linux's container features.
+  - **A virtual machine**: running a small Linux inside PrettyBigRock, as WSL 2 does. It's
+    far more compatible (Docker just works), at the cost of being less integrated.
+
+  Claude's suggestion: start with the virtual machine for server software, because it's the
+  surest way to run Roxy's workload, and consider the compatibility layer later for
+  individual desktop programs. Either way, the kernel leaves room for it now (section 6.1).
+  Note that a Linux guest would be borrowed software running *on* PrettyBigRock, like any
+  ported app, not part of the OS.
+- **Q8. A Wayland-compatible front end for the display server.** It would make porting
+  Linux GUI apps far easier, but it means following a protocol we didn't design. It's
+  decided when the display server is designed (milestone M6).
 
 ---
 
 ## 17. Changes to this document
 
 - 29 October 2026: draft 1.
+- 29 October 2026: draft 2. Settled Q1 to Q4: the linking exception for app libraries (D16),
+  `classic/` for 1.x (D17), the browser player staying on 1.x (D18), and general-purpose
+  use (D19, section 1.1). From the uses, added: real-time scheduling, room for virtual
+  machines, GPU-ready display buffers, headless use, porting as a goal of the POSIX layer,
+  a clarification that D13 covers the OS rather than ported apps, and open questions Q7
+  and Q8.

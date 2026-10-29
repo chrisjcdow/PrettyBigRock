@@ -1,6 +1,6 @@
 # PrettyBigRock 2: roadmap
 
-Status: **draft 1**, 29 October 2026. This file goes with [DESIGN.md](DESIGN.md).
+Status: **draft 2**, 29 October 2026. This file goes with [DESIGN.md](DESIGN.md).
 
 The roadmap is a series of milestones. Each one ends with something that can be shown working
 and tested automatically. The order is chosen so that the decisions that are expensive to
@@ -15,7 +15,7 @@ PrettyBigRock 1.x stays available throughout as the playable version.
 ---
 
 ## M0: Foundations
-- Reorganise the repo, with the C system moved to `classic/` (open question Q2).
+- Reorganise the repo, with the C system moved to `classic/` (D17).
 - Pin the Rust toolchain; write the build tool; produce disk images for both architectures.
 - Set up GitHub Actions to build everything and boot it in QEMU.
 - Add the `docs/design/` template and the first notes: boot information, the repo layout, and
@@ -111,16 +111,46 @@ server.
 
 **Done when:** a current PC or laptop boots to the desktop and saves files on its own disk.
 
+## M12: A platform for big software
+- C++ and its runtime library; a fuller POSIX layer (threads, signals, memory mapping, sockets,
+  terminals).
+- Ports of SDL (games and emulators), then Qt (MuseScore and many desktop apps).
+- A decision on a Wayland-compatible front end (open question Q8).
+- Fonts with text shaping, and printing to PDF.
+
+**Done when:** a Qt app, such as MuseScore, runs on PrettyBigRock.
+
+## M13: Sound and music
+- An audio service with real-time scheduling; HD Audio (built into most PCs), USB audio,
+  and virtio sound.
+- MIDI, including USB MIDI keyboards.
+
+**Done when:** you can play a MIDI keyboard through a software instrument with no
+noticeable delay.
+
+## M14: A home server
+- Services without a desktop, SSH, a web server port, file sharing, and mirrored disks.
+- A virtual machine service running a Linux guest for Docker, Plex and Jellyfin (open
+  question Q7).
+- Reading and writing ext4, so existing data disks can be used.
+
+**Done when:** Roxy's current workload runs on PrettyBigRock.
+
+## M15: The web and media
+- A port of a browser engine; video decoding; GPU drivers, starting with Intel.
+
+**Done when:** PrettyBigRock browses ordinary websites and plays video smoothly.
+
 ## Beyond
-These are roughly in order of usefulness, and will be refined once open question Q4 (what
-"real tasks" means) is answered:
-- audio;
-- more filesystems (exFAT, ISO 9660, NTFS and ext4 read-only);
-- text shaping;
+- self-hosting: building PrettyBigRock on PrettyBigRock (LLVM and Rust ports);
+- an office suite, ported or our own;
+- video capture and editing;
+- BOINC;
+- a Linux compatibility layer for desktop programs;
+- more filesystems (exFAT, ISO 9660, NTFS);
 - installing apps;
 - logins for several users;
 - disk encryption;
 - Wi-Fi;
 - RISC-V;
-- accelerated graphics;
-- a web browser (a very large project of its own).
+- GPU compute.
