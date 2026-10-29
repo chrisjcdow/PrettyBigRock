@@ -215,6 +215,7 @@ window_t *wm_create(const char *title, int cw, int ch, int app) {
     memset(w, 0, sizeof *w);
     w->used = 1;
     w->app = app;
+    w->icon = app < APP_COUNT ? app_icons[app] : ICON_ABOUT;
     w->w = cw + 2;
     w->h = ch + TITLE_H + 1;
     int slot = nz % 6;
@@ -284,7 +285,7 @@ static void draw_window(window_t *w, int focused) {
     else gfx_vgrad(w->x, w->y, w->w, TITLE_H, C_TITLE_IA, C_TITLE_IB);
     gfx_fill(w->x + 1, w->y + 1, w->w - 2, 1, focused ? 0x4b8a72 : 0xc4c7cd);
     gfx_rect(w->x, w->y, w->w, w->h, focused ? 0x1d3b30 : 0x80858f);
-    gfx_icon(app_icons[w->app], w->x + 6, w->y + 5, 1);
+    gfx_icon(w->icon, w->x + 6, w->y + 5, 1);
 
     rect_t old = gfx_get_clip();
     gfx_set_clip(rect_isect(old, (rect_t){w->x, w->y, w->w - 50, TITLE_H}));
@@ -346,7 +347,7 @@ static void draw_taskbar(void) {
         u32 bg = w == top ? 0x48506c : (w->minimized ? 0x232633 : 0x323748);
         gfx_round(bx, y + 5, bw, TASKBAR_H - 10, 5, bg);
         if (w == top) gfx_fill(bx + 8, y + TASKBAR_H - 7, bw - 16, 2, C_ACCENT);
-        gfx_icon(app_icons[w->app], bx + 7, y + 11, 1);
+        gfx_icon(w->icon, bx + 7, y + 11, 1);
         rect_t old = gfx_get_clip();
         gfx_set_clip(rect_isect(old, (rect_t){bx, y, bw - 6, TASKBAR_H}));
         gfx_text(bx + 29, y + 15, w->title, w->minimized ? 0x8d93a6 : 0xeef0f6);

@@ -2,6 +2,7 @@
  * Copyright (C) 2026 Christopher Cameron-Dow */
 /* PrettyBigRock - app launcher plus Calculator, Paint, Snake and About */
 #include "kernel.h"
+#include "rockfs.h"
 
 const char *app_names[APP_COUNT] = {"Terminal", "Notepad", "Files", "Calculator", "Paint", "Snake", "About"};
 const int app_icons[APP_COUNT] = {ICON_TERMINAL, ICON_NOTEPAD, ICON_FILES, ICON_CALC, ICON_PAINT, ICON_SNAKE, ICON_ABOUT};
@@ -188,33 +189,166 @@ static void p_line(int x0, int y0, int x1, int y1) {
     }
 }
 
+#define PSWATCH 23
+#define CW PW
+#define CH (PH - PTOOL)
+static int ppress;
+static char ppath[256]; /* where the picture was last saved or opened from */
+static window_t *pwin;
+static const char *pbtn_label[3] = {"Open", "Save", "Clear"};
+static const int pbtn_x[3] = {436, 486, 536};
+static const int pbtn_w[3] = {46, 46, 56};
+
+static const char *p_base(const char *p) {
+    const char *b = p;
+    for (; *p; p++) if (*p == '/') b = p + 1;
+    return b;
+}
+
+static void p_title(void) {
+    char t[80];
+    ksnprintf(t, sizeof t, "%s - Paint", ppath[0] ? p_base(ppath) : "Untitled");
+    if (pwin) wm_set_title(pwin, t);
+}
+
 static void paint_draw(window_t *w, int cx, int cy, int cw, int ch) {
-    (void)w; (void)ch;
+    (void)w; (void)ch; (void)cw;
     gfx_fill(cx, cy, cw, PTOOL, 0xebe7df);
     gfx_fill(cx, cy + PTOOL - 1, cw, 1, 0xc9c4ba);
     for (int i = 0; i < NPCOL; i++) {
-        int x = cx + 8 + i * 25;
+        int x = cx + 8 + i * PSWATCH;
         if (i == pcol) gfx_round(x - 3, cy + 6, 26, 26, 5, 0x2f6b55);
         gfx_round(x, cy + 9, 20, 20, 4, 0x6b717c);
         gfx_round(x + 1, cy + 10, 18, 18, 3, pcolors[i]);
     }
-    int sx = cx + 8 + NPCOL * 25 + 14;
+    int sx = cx + 8 + NPCOL * PSWATCH + 8;
     for (int i = 0; i < 4; i++) {
-        int x = sx + i * 30;
+        int x = sx + i * 27;
         if (i == psize) gfx_round(x, cy + 6, 26, 26, 5, 0xd5d0c6);
         gfx_circle(x + 13, cy + 19, 1 + i * 2, 0x2a2e38);
     }
-    ui_button(cx + cw - 70, cy + 8, 60, 22, "Clear", 0);
-    gfx_blit(cx, cy + PTOOL, PW, PH - PTOOL, canvas, PW);
+    for (int i = 0; i < 3; i++) ui_button(cx + pbtn_x[i], cy + 8, pbtn_w[i], 22, pbtn_label[i], ppress == i + 1);
+    gfx_blit(cx, cy + PTOOL, PW, CH, canvas, PW);
+}
+
+/* ---- saving and opening Windows bitmaps (24-bit, uncompressed) ---- */
+static void put16(u8 *p, u32 v) { p[0] = v; p[1] = v >> 8; }
+static void put32(u8 *p, u32 v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
+static u32 get16(const u8 *p) { return p[0] | (p[1] << 8); }
+static u32 get32(const u8 *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((u32)p[3] << 24); }
+
+static void save_answer(int ok, const char *answer, void *ctx) {
+    (void)ctx;
+    if (!ok || !answer[0]) return;
+    char full[256];
+    if (!rfs_path_join("/Pictures", answer, full, sizeof full)) { wm_message("Paint", "That name is too long."); return; }
+    u32 row = (CW * 3 + 3) & ~3u, size = 54 + row * CH;
+    u8 *f = kmalloc(size);
+    if (!f) { wm_message("Paint", "There isn't enough memory to save the picture."); return; }
+    f[0] = 'B'; f[1] = 'M';
+    put32(f + 2, size);
+    put32(f + 10, 54);
+    put32(f + 14, 40);
+    put32(f + 18, CW);
+    put32(f + 22, CH);
+    put16(f + 26, 1);
+    put16(f + 28, 24);
+    put32(f + 34, row * CH);
+    put32(f + 38, 2835); /* 72 dots per inch */
+    put32(f + 42, 2835);
+    for (int y = 0; y < CH; y++) { /* bitmaps are stored bottom row first */
+        u8 *d = f + 54 + (u32)(CH - 1 - y) * row;
+        for (int x = 0; x < CW; x++) {
+            u32 c = canvas[y * PW + x];
+            d[x * 3] = c; d[x * 3 + 1] = c >> 8; d[x * 3 + 2] = c >> 16;
+        }
+    }
+    rfs_stat_t st;
+    if (rfs_stat("/Pictures", &st)) rfs_mkdir("/Pictures");
+    int e = rfs_write(full, f, size);
+    kfree(f);
+    if (e) {
+        char msg[200];
+        ksnprintf(msg, sizeof msg, "Couldn't save the picture. %s.", rfs_strerror(e));
+        wm_message("Paint", msg);
+        return;
+    }
+    strlcpy0(ppath, full, sizeof ppath);
+    p_title();
+}
+
+static void p_save(void) {
+    char suggestion[64];
+    if (ppath[0]) strlcpy0(suggestion, p_base(ppath), sizeof suggestion);
+    else {
+        rfs_stat_t st;
+        int n = 1;
+        do { char t[96]; ksnprintf(suggestion, sizeof suggestion, "Drawing %d.bmp", n++); ksnprintf(t, sizeof t, "/Pictures/%s", suggestion); if (rfs_stat(t, &st)) break; } while (n < 1000);
+    }
+    wm_dialog("Save picture", "Save the picture in Pictures as:", "Save", "Cancel", suggestion, save_answer, 0);
+}
+
+void paint_open_file(const char *path) {
+    rfs_stat_t st;
+    int e = rfs_stat(path, &st);
+    char msg[220];
+    if (!e && st.size > 8 * 1024 * 1024) e = RFS_ENOMEM;
+    u8 *f = e ? 0 : kmalloc((u32)st.size + 1);
+    u32 got = 0;
+    if (!e && !f) e = RFS_ENOMEM;
+    if (!e) e = rfs_read(path, f, (u32)st.size, &got);
+    if (e) {
+        ksnprintf(msg, sizeof msg, "Couldn't open %s. %s.", p_base(path), rfs_strerror(e));
+        wm_message("Paint", msg);
+        kfree(f);
+        return;
+    }
+    u32 off = got >= 54 ? get32(f + 10) : 0, bpp = got >= 54 ? get16(f + 28) : 0, comp = got >= 54 ? get32(f + 30) : 1;
+    i32 w = got >= 54 ? (i32)get32(f + 18) : 0, h = got >= 54 ? (i32)get32(f + 22) : 0;
+    int top_down = h < 0;
+    if (h < 0) h = -h;
+    u32 row = (((u32)w * (bpp / 8)) + 3) & ~3u;
+    if (got < 54 || f[0] != 'B' || f[1] != 'M' || (bpp != 24 && bpp != 32) || comp != 0 || w <= 0 || h <= 0 ||
+        off + row * (u32)h > got) {
+        ksnprintf(msg, sizeof msg, "%s isn't a picture Paint can open. It opens uncompressed 24- or 32-bit .bmp files.", p_base(path));
+        wm_message("Paint", msg);
+        kfree(f);
+        return;
+    }
+    if (!canvas) canvas = kmalloc(PW * CH * 4);
+    memset32(canvas, 0xffffff, PW * CH);
+    for (int y = 0; y < h && y < CH; y++) {
+        const u8 *src = f + off + (u32)(top_down ? y : h - 1 - y) * row;
+        for (int x = 0; x < w && x < CW; x++) {
+            const u8 *px = src + x * (bpp / 8);
+            canvas[y * PW + x] = px[0] | (px[1] << 8) | (px[2] << 16);
+        }
+    }
+    kfree(f);
+    strlcpy0(ppath, path, sizeof ppath);
+    app_open(APP_PAINT);
+    p_title();
+    if (pwin) win_invalidate(pwin);
 }
 
 static void paint_mouse(window_t *w, int ev, int x, int y, int b) {
     (void)b;
+    int hit = 0;
+    if (y >= 8 && y < 30)
+        for (int i = 0; i < 3; i++) if (x >= pbtn_x[i] && x < pbtn_x[i] + pbtn_w[i]) hit = i + 1;
     if (ev == ME_DOWN && y < PTOOL) {
-        for (int i = 0; i < NPCOL; i++) if (x >= 8 + i * 25 && x < 28 + i * 25) pcol = i;
-        int sx = 8 + NPCOL * 25 + 14;
-        for (int i = 0; i < 4; i++) if (x >= sx + i * 30 && x < sx + i * 30 + 26) psize = i;
-        if (x >= PW - 70 && x < PW - 10) memset32(canvas, 0xffffff, PW * (PH - PTOOL));
+        for (int i = 0; i < NPCOL; i++) if (x >= 8 + i * PSWATCH && x < 28 + i * PSWATCH) pcol = i;
+        int sx = 8 + NPCOL * PSWATCH + 8;
+        for (int i = 0; i < 4; i++) if (x >= sx + i * 27 && x < sx + i * 27 + 26) psize = i;
+        ppress = hit;
+    } else if (ev == ME_UP && ppress) {
+        int p = ppress;
+        ppress = 0;
+        if (p == hit) {
+            if (p == 1) files_open_at("/Pictures");
+            if (p == 2) p_save();
+            if (p == 3) { memset32(canvas, 0xffffff, PW * CH); ppath[0] = 0; p_title(); }
+        }
     } else if (ev == ME_DOWN) {
         pdown = 1;
         plx = x; ply = y - PTOOL;
@@ -226,15 +360,27 @@ static void paint_mouse(window_t *w, int ev, int x, int y, int b) {
     win_invalidate(w);
 }
 
+static void paint_key(window_t *w, int k) {
+    (void)w;
+    if (k == (KEY_CTRL | 's')) p_save();
+    if (k == (KEY_CTRL | 'o')) files_open_at("/Pictures");
+}
+
+static void paint_close(window_t *w) { (void)w; pwin = 0; }
+
 static void paint_open(void) {
     if (!canvas) {
-        canvas = kmalloc(PW * (PH - PTOOL) * 4);
-        memset32(canvas, 0xffffff, PW * (PH - PTOOL));
+        canvas = kmalloc(PW * CH * 4);
+        memset32(canvas, 0xffffff, PW * CH);
     }
     window_t *w = wm_create("Paint", PW, PH, APP_PAINT);
     if (!w) return;
+    pwin = w;
     w->draw = paint_draw;
     w->mouse = paint_mouse;
+    w->key = paint_key;
+    w->close = paint_close;
+    p_title();
 }
 
 /* ================================================================ Snake */
@@ -364,12 +510,12 @@ static void about_draw(window_t *w, int cx, int cy, int cw, int ch) {
     char buf[64];
     u32 s = ticks / 100;
     int y = cy + 136;
-    const char *labels[] = {"Display", "Memory", "Uptime", "Files"};
+    const char *labels[] = {"Display", "Memory", "Uptime", "Disk"};
     char vals[4][48];
     ksnprintf(vals[0], 48, "%d x %d, %d-bit colour", SW, SH, SBPP);
     ksnprintf(vals[1], 48, "%u MB", mem_total_mb());
     ksnprintf(vals[2], 48, "%u h %u min %u s", s / 3600, (s / 60) % 60, s % 60);
-    ksnprintf(vals[3], 48, "%d stored in RAM", fs_count());
+    storage_describe(vals[3], 48, 1);
     for (int i = 0; i < 4; i++, y += 18) {
         gfx_text_bold(cx + 24, y, labels[i], 0x2f6b55);
         gfx_text(cx + 110, y, vals[i], 0x2a2e38);

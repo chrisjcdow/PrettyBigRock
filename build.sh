@@ -17,7 +17,7 @@ for f in kernel/*.c build/assets.c; do
   gcc $CFLAGS -c "$f" -o "$o"
   OBJS="$OBJS $o"
 done
-ld -m elf_i386 --no-warn-rwx-segments -z noexecstack -T kernel/linker.ld -o build/kernel.elf $OBJS
+ld -m elf_i386 --no-warn-rwx-segments -z noexecstack -T kernel/linker.ld -o build/kernel.elf $OBJS "$(gcc -m32 -print-libgcc-file-name)"
 objcopy -O binary build/kernel.elf build/kernel.bin
 
 KSIZE=$(stat -c %s build/kernel.bin)

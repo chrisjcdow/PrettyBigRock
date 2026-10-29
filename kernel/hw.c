@@ -348,6 +348,7 @@ static void acpi_poweroff(void) {
 }
 
 void power_off(void) {
+    storage_shutdown(); /* marks the data disk as shut down cleanly */
     cli();
     acpi_poweroff();
     outw(0x604, 0x2000);  /* QEMU */
@@ -356,6 +357,7 @@ void power_off(void) {
 }
 
 void reboot(void) {
+    storage_shutdown();
     cli();
     ps2_wait_write();
     outb(0x64, 0xFE);

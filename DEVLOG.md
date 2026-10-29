@@ -56,3 +56,34 @@ Then he asked to run PrettyBigRock on Isaac, his Galaxy Tab S10+.
 - Built a browser player (`web/player.html`, `tools/mkweb.py`) that runs PrettyBigRock in the v86
   emulator, with touch as the mouse, an on-screen keyboard that copes with predictive text, and
   a row of extra keys. Tested on a simulated tablet; Chris confirmed it works on Isaac.
+
+## Session 4: 29 October 2026, RockFS (1.3)
+
+**Chris** asked Claude to build RockFS while he was at work, following the version 1 design
+they had settled together the night before.
+
+**Claude:**
+- Wrote `tools/rockfs.py` first: an independent Python implementation of the spec, which is
+  both the Windows/Linux/macOS tool for getting files in and out of a RockFS disk and a
+  reference to test the OS against. Its own tests run thousands of random operations, a
+  fragmented disk with a deep extent tree, a full disk, and 60 simulated power cuts.
+- Added a memory allocator that can free memory, an ATA (IDE) disk driver with LBA48 and cache
+  flushes, a RAM disk, and a write-through block cache.
+- Wrote RockFS in the kernel (`kernel/rockfs.c`): finding volumes on MBR, GPT or whole disks,
+  format, mount, the growable inode table, 64-bit extents and extent trees, copy-on-write
+  saving, folders, names, rename, and check-and-repair.
+- Compiled the kernel's RockFS as an ordinary program (`tools/hosttest/`) and checked it
+  against the Python version both ways, plus 40 power cuts at random moments. This found one
+  real bug: repairing a disk could overflow a buffer when it had to create `/lost+found`.
+  It also showed that the space check was too cautious about very large files.
+- Rebuilt the apps on the filesystem: Files has folders, New file, New folder, Rename and
+  Delete; Notepad has Open, Save and Save as; Paint saves and opens .bmp pictures; the
+  Terminal gained `cd`, `mkdir`, `cp`, `mv`, `disk`, `check` and `format`; small dialog boxes
+  ask for names and confirm deletes.
+- At start-up PrettyBigRock looks for a data disk. It offers to set up a blank one, checks
+  and repairs one that wasn't shut down cleanly, and otherwise keeps files in memory.
+  Shutting down or restarting marks the disk clean.
+- Tested in QEMU: formatting, saving, restarting, pulling the plug mid-copy, a full disk,
+  and swapping files with the Python tool. A picture drawn in Paint came out of the disk
+  image as an ordinary .bmp.
+- The Windows launcher now makes a 64 MB `data.img` the first time it runs.

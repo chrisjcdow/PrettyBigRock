@@ -34,6 +34,12 @@ void memcpy32(u32 *d, const u32 *s, size_t n) {
     __asm__ volatile("rep movsl" : "+D"(d), "+S"(s), "+c"(n) : : "memory");
 }
 
+int memcmp(const void *a, const void *b, size_t n) {
+    const u8 *x = a, *y = b;
+    for (; n; n--, x++, y++) if (*x != *y) return *x - *y;
+    return 0;
+}
+
 size_t strlen(const char *s) {
     size_t n = 0;
     while (s[n]) n++;
@@ -126,19 +132,69 @@ int ksnprintf(char *buf, size_t n, const char *fmt, ...) {
     return r;
 }
 
-/* ---------------------------------------------------------------- heap (bump allocator) */
+/* ---------------------------------------------------------------- heap
+   A first-fit allocator. Blocks sit one after another from HEAP_START, each with a small
+   header; freed neighbours are joined back together. */
 #define HEAP_START 0x00200000u
-static u32 heap_ptr = HEAP_START;
+#define HEAP_MAGIC 0x524F434Bu /* "ROCK" */
+typedef struct hblk { u32 size; u32 free; struct hblk *next; u32 magic; } hblk_t;
+static hblk_t *heap_head;
+static u32 heap_top, heap_limit, heap_inuse;
 
-void *kmalloc(u32 size) {
-    heap_ptr = (heap_ptr + 15) & ~15u;
-    void *p = (void *)heap_ptr;
-    heap_ptr += size;
-    memset(p, 0, size);
-    return p;
+static void heap_init(void) {
+    heap_head = 0;
+    heap_top = HEAP_START;
+    heap_limit = mem_total_mb() * 1024u * 1024u - 0x10000u;
+    if (heap_limit < HEAP_START + 0x800000u) heap_limit = HEAP_START + 0x800000u;
 }
 
-u32 heap_used(void) { return heap_ptr - HEAP_START; }
+void *kmalloc(u32 size) {
+    if (!heap_top) heap_init();
+    size = (size + 15) & ~15u;
+    hblk_t *prev = 0;
+    for (hblk_t *b = heap_head; b; prev = b, b = b->next) {
+        if (!b->free) continue;
+        while (b->next && b->next->free && (u8 *)b + sizeof(hblk_t) + b->size == (u8 *)b->next) {
+            b->size += sizeof(hblk_t) + b->next->size; /* join with a free neighbour */
+            b->next = b->next->next;
+        }
+        if (b->size < size) continue;
+        if (b->size >= size + sizeof(hblk_t) + 64) { /* split off the rest */
+            hblk_t *rest = (hblk_t *)((u8 *)b + sizeof(hblk_t) + size);
+            rest->size = b->size - size - sizeof(hblk_t);
+            rest->free = 1;
+            rest->next = b->next;
+            rest->magic = HEAP_MAGIC;
+            b->next = rest;
+            b->size = size;
+        }
+        b->free = 0;
+        heap_inuse += b->size;
+        memset(b + 1, 0, b->size);
+        return b + 1;
+    }
+    if (heap_top + sizeof(hblk_t) + size > heap_limit) return 0;
+    hblk_t *b = (hblk_t *)heap_top;
+    heap_top += sizeof(hblk_t) + size;
+    b->size = size;
+    b->free = 0;
+    b->next = 0;
+    b->magic = HEAP_MAGIC;
+    if (prev) prev->next = b; else heap_head = b;
+    heap_inuse += size;
+    memset(b + 1, 0, size);
+    return b + 1;
+}
+
+void kfree(void *p) {
+    if (!p) return;
+    hblk_t *b = (hblk_t *)p - 1;
+    if (b->magic != HEAP_MAGIC || b->free) return; /* not ours, or freed twice */
+    b->free = 1;
+    heap_inuse -= b->size;
+}
+
+u32 heap_used(void) { return heap_inuse; }
 
 /* ---------------------------------------------------------------- random */
 static u32 rnd_state = 0x1234567;

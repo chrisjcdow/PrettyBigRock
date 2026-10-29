@@ -29,8 +29,16 @@ records who did what in each session.
   blending, gradients, rounded shapes, and a hand-drawn 5x9 font.
 - **Window manager**: overlapping draggable windows with shadows, focus, minimise/close,
   taskbar with clock, start menu (Windows key or Ctrl+Esc), desktop icons.
-- **Apps**: Terminal (20-odd commands, history, scrollback), Notepad, Files, Calculator,
-  Paint, Snake and About. Files live in a RAM filesystem shared by all apps.
+- **Storage**: an ATA (IDE) disk driver and **RockFS**, PrettyBigRock's own filesystem, with
+  folders, long names, copy-on-write saving that survives power cuts, and a check-and-repair
+  routine. The design is in [docs/ROCKFS.md](docs/ROCKFS.md). Without a data disk, files are
+  kept on a RAM disk instead.
+- **Mouse**: PS/2, plus the absolute pointer used by QEMU, VMware and browser emulators, so
+  the mouse doesn't need capturing and touch screens work.
+- **Apps**: Terminal (about 30 commands, folders, history, scrollback), Notepad, Files,
+  Calculator, Paint (saves and opens .bmp pictures), Snake and About.
+- **Browser player** (`web/`): runs PrettyBigRock in a web page using the v86 emulator, with
+  touch as the mouse and an on-screen keyboard, so it works on tablets.
 
 ## Running it
 
@@ -39,9 +47,26 @@ below), and put it in a `build/` folder:
 
 | Hypervisor | File | Notes |
 |---|---|---|
-| QEMU / Proxmox | `prettybigrock.img` | `qemu-system-i386 -m 128 -drive file=prettybigrock.img,format=raw`, or on Windows double-click `run-prettybigrock.bat` |
+| QEMU / Proxmox | `prettybigrock.img` | `qemu-system-i386 -m 128 -drive file=prettybigrock.img,format=raw,index=0 -drive file=data.img,format=raw,index=1`, or on Windows double-click `run-prettybigrock.bat` |
 | VirtualBox | `prettybigrock.vdi` | New VM, type *Other*, version *Other/Unknown*, 64 MB+ RAM, attach as the hard disk |
 | VMware | `prettybigrock.vmdk` | New VM, guest *Other*, use an existing disk, BIOS firmware |
+
+**Your files** need a second, blank virtual disk; PrettyBigRock offers to set it up the first
+time it sees one. On Windows, `run-prettybigrock.bat` makes one for you (`data.img`, 64 MB).
+In VirtualBox or VMware, add a second hard disk to the VM. Without one, files are kept in
+memory and disappear when you restart.
+
+![Paint reopening a drawing saved on the data disk](docs/screenshot-rockfs.png)
+
+**Getting files in and out**: `tools/rockfs.py` reads and writes RockFS disks from Windows,
+Linux or macOS (Python 3, nothing else to install). Shut PrettyBigRock down first, then:
+
+```
+python tools/rockfs.py data.img ls -R
+python tools/rockfs.py data.img get "/Pictures/Drawing 1.bmp"
+python tools/rockfs.py data.img put notes.txt /Documents/notes.txt
+python tools/rockfs.py data.img check
+```
 
 Requirements: **legacy BIOS boot** (not UEFI) and a **PS/2 mouse**. In VirtualBox set
 System > Pointing Device to *PS/2 Mouse*; with the default USB tablet the pointer won't move.
@@ -58,6 +83,19 @@ Needs `gcc` (with `-m32` support), `nasm`, `ld`, `objcopy` and Python 3; `qemu-i
 ./build.sh
 ```
 
+## Testing
+
+`tools/test_rockfs.py` runs the Python RockFS through thousands of random operations, a
+fragmented disk, a full disk and simulated power cuts. `tools/hosttest/` builds the kernel's
+own RockFS code as an ordinary program and checks it against the Python version in both
+directions, including 40 power cuts at random moments:
+
+```
+python3 tools/test_rockfs.py
+gcc -O1 -Ikernel -include stdlib.h -o rfs_host tools/hosttest/rfs_host.c kernel/rockfs.c kernel/disk.c
+python3 tools/hosttest/crosscheck.py ./rfs_host /tmp
+```
+
 ## Licence
 
 Copyright (C) 2026 Christopher Cameron-Dow
@@ -69,5 +107,5 @@ will be useful, but WITHOUT ANY WARRANTY. See [LICENSE](LICENSE) for the full te
 
 ## Known limits
 
-Single-tasking, no disk filesystem (files vanish on restart), no networking, US keyboard layout,
-no mouse wheel.
+Single-tasking, no networking, US keyboard layout, no mouse wheel, and the apps can only type
+plain English (ASCII) text, although RockFS itself stores any Unicode name.

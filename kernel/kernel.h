@@ -14,7 +14,7 @@ typedef int32_t i32;
 typedef uint64_t u64;
 
 #define OS_NAME    "PrettyBigRock"
-#define OS_VERSION "1.2"
+#define OS_VERSION "1.3"
 
 /* ---------------------------------------------------------------- port I/O */
 static inline void outb(u16 p, u8 v) { __asm__ volatile("outb %0,%1" ::"a"(v), "Nd"(p)); }
@@ -36,6 +36,7 @@ void *memcpy(void *d, const void *s, size_t n);
 void *memmove(void *d, const void *s, size_t n);
 void memset32(u32 *d, u32 v, size_t n);
 void memcpy32(u32 *d, const u32 *s, size_t n);
+int memcmp(const void *a, const void *b, size_t n);
 size_t strlen(const char *s);
 int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, size_t n);
@@ -44,6 +45,7 @@ int ksnprintf(char *buf, size_t n, const char *fmt, ...);
 int kvsnprintf(char *buf, size_t n, const char *fmt, va_list ap);
 int katoi(const char *s);
 void *kmalloc(u32 size);
+void kfree(void *p);
 u32 heap_used(void);
 u32 krand(void);
 void ksrand(u32 s);
@@ -135,7 +137,8 @@ enum { ME_DOWN = 1, ME_UP, ME_MOVE };
 
 typedef struct window window_t;
 struct window {
-    int used, x, y, w, h, minimized, app;
+    int used, x, y, w, h, minimized, app, icon;
+    void *data; /* for the app's own use */
     char title[48];
     void (*draw)(window_t *w, int cx, int cy, int cw, int ch);
     void (*key)(window_t *w, int key);
@@ -167,25 +170,29 @@ void ui_panel(int x, int y, int w, int h);
 
 /* ---------------------------------------------------------------- apps */
 enum { APP_TERMINAL, APP_NOTEPAD, APP_FILES, APP_CALC, APP_PAINT, APP_SNAKE, APP_ABOUT, APP_COUNT };
+#define APP_DIALOG APP_COUNT
 extern const char *app_names[APP_COUNT];
 extern const int app_icons[APP_COUNT];
 void app_open(int app);
-void notepad_open_file(const char *name);
+void notepad_open_file(const char *path);
+void paint_open_file(const char *path);
+void files_open_at(const char *folder);
 void apps_init(void);
 
-/* ---------------------------------------------------------------- ram filesystem */
-#define FS_MAX_FILES 32
-#define FS_MAX_SIZE 16000
-#define FS_NAME_LEN 28
-void fs_init(void);
-int fs_find(const char *name);
-int fs_create(const char *name);
-int fs_write(int i, const char *data, int len);
-int fs_append(int i, const char *data, int len);
-int fs_delete(int i);
-int fs_valid(int i);
-const char *fs_name(int i);
-const char *fs_data(int i);
-int fs_size(int i);
-int fs_count(void);
-extern int fs_generation; /* bumps on any change, so views can refresh */
+/* ---------------------------------------------------------------- storage (RockFS on a data disk, or in RAM) */
+void storage_init(void);
+void storage_after_desktop(void);
+void storage_shutdown(void);
+int storage_is_ram(void);
+int storage_format(void);
+void storage_describe(char *buf, int n, int brief);
+void fmt_size(char *buf, int n, u64 bytes);
+extern int fs_generation;
+
+/* ---------------------------------------------------------------- dialogs */
+typedef void (*dialog_cb)(int ok, const char *text, void *ctx);
+/* A small window with a message, an optional text box (when `initial` isn't 0) and buttons.
+   cancel may be 0 for a single button. The callback runs once, after the dialog closes. */
+window_t *wm_dialog(const char *title, const char *message, const char *ok, const char *cancel,
+                    const char *initial, dialog_cb cb, void *ctx);
+void wm_message(const char *title, const char *message);

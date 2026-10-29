@@ -1,5 +1,7 @@
-# Build output: disk images are published as GitHub Release downloads instead
 build/
 *.o
 *.bin
 *.elf
+# your own files, made by run-prettybigrock.bat
+data.img
+__pycache__/

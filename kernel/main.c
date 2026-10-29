@@ -25,7 +25,7 @@ void kmain(void) {
     mouse_init();
     vmmouse_init();
     splash_progress(2, 5);
-    fs_init();
+    storage_init();
     splash_progress(3, 5);
     sti();
     wm_init();
@@ -36,5 +36,6 @@ void kmain(void) {
     t0 = ticks;
     while (ticks - t0 < 20) hlt();
     app_open(APP_ABOUT);
+    storage_after_desktop();
     wm_run();
 }

@@ -4,7 +4,8 @@ RockFS is PrettyBigRock's own filesystem. This document describes exactly how it
 on a disk, so that anyone (PrettyBigRock itself, a tool on Windows or Linux, or a curious
 reader) can read and write it.
 
-Status: **draft 3, for review**. Not yet implemented.
+Status: **version 1**. Implemented in PrettyBigRock 1.3 (`kernel/rockfs.c`) and, independently, in
+`tools/rockfs.py`.
 
 ## Goals
 
@@ -340,11 +341,12 @@ belongs to nothing. A check reclaims it.
 Copy-on-write needs room for the new version of whatever is changing, alongside the old
 version, until the change is complete. So:
 
-- **Before any change, a writer works out how many new blocks it needs**: changed contents,
-  plus any new extent blocks and folder blocks.
+- **Before any change, a writer checks that the changed contents will fit.** If more extent
+  blocks or folder blocks turn out to be needed and there isn't room for them, the writer
+  releases what it allocated and stops, before writing the inode, so nothing has changed.
 - **If there isn't room, the change fails cleanly and nothing is altered.** Apps should say
-  something like *"Not enough space to save safely. Free up some space, or save under a new
-  name."*
+  something like *"There isn't enough free space to save this safely. Delete something you
+  don't need and try again."*
 - **A reserve is kept back.** `reserve_blocks` free blocks (1% of the volume when formatted,
   at least 16 blocks) can't be used for ordinary saving. Only deleting files and folders,
   and checks, may use them. This guarantees that a full disk can always be cleaned up,
@@ -381,6 +383,12 @@ A check (in PrettyBigRock, or later with the `rockfs check` tool on Windows and 
    flags 0 and `state` = 0, then write the superblock and its backup.
 
 ## Changes to this document
+
+- **Version 1**: implemented. An app's "not enough space" message was reworded, and two rules
+  were added for checks: empty items that belong to no folder (left by an unfinished save)
+  are removed rather than moved to `/lost+found`, and a writer only needs to check that the
+  data itself fits before starting, because building the extent tree fails cleanly if the
+  tree doesn't.
 
 - **Draft 3**: 64-bit block numbers and sizes throughout. Extents replace lists of blocks.
   Copy-on-write now covers only the parts of a file that change, and applies to folders
