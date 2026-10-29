@@ -95,8 +95,15 @@ fn run(args: &[String]) -> Result {
             let img = if opts.selftest { imgs.selftest } else { imgs.normal };
             let want = opts.arch.as_deref().unwrap_or("x86_64");
             let arch = ARCHES.iter().map(|a| a.name).find(|n| *n == want).unwrap_or("x86_64");
-            let cfg =
-                qemu::Config { name: "by hand", arch, bios: opts.bios, el2: opts.el2, expect: &[] };
+            let cores = opts.cores.unwrap_or(4);
+            let cfg = qemu::Config {
+                name: "by hand",
+                arch,
+                bios: opts.bios,
+                el2: opts.el2,
+                cores,
+                expect: &[],
+            };
             qemu::run(&cfg, &img, &work_dir(&root)?)
         }
         "qemu-test" => {
@@ -129,7 +136,7 @@ const HELP: &str = "
 PrettyBigRock build tool
 
   cargo xtask build [--release]          build everything, and the boot disk image
-  cargo xtask run [--arch NAME] [--bios] [--el2] [--selftest] [--release]
+  cargo xtask run [--arch NAME] [--bios] [--el2] [--selftest] [--cores N] [--release]
                                          start PrettyBigRock in QEMU, in a window
   cargo xtask qemu-test [--release]      boot every configuration; check the kernel starts
   cargo xtask check                      formatting and lints
@@ -148,6 +155,7 @@ struct Options {
     bios: bool,
     el2: bool,
     selftest: bool,
+    cores: Option<u32>,
 }
 
 impl Options {
@@ -160,6 +168,14 @@ impl Options {
                 "--bios" => opts.bios = true,
                 "--el2" => opts.el2 = true,
                 "--selftest" => opts.selftest = true,
+                "--cores" => {
+                    let n = it.next().ok_or("--cores needs a number")?;
+                    let n: u32 = n.parse().map_err(|_| format!("`{n}` isn't a number of cores"))?;
+                    if !(1..=64).contains(&n) {
+                        return Err("--cores must be between 1 and 64".into());
+                    }
+                    opts.cores = Some(n);
+                }
                 "--arch" => {
                     let name = it.next().ok_or("--arch needs a name")?;
                     if !ARCHES.iter().any(|x| x.name == name) {
@@ -169,6 +185,9 @@ impl Options {
                 }
                 other => return Err(format!("unknown option `{other}`")),
             }
+        }
+        if opts.arch.as_deref() == Some("aarch64") && opts.cores.is_some_and(|n| n > 8) {
+            return Err("ARM64 PrettyBigRock can use at most 8 cores for now (GICv2)".into());
         }
         if opts.bios && opts.arch.as_deref() == Some("aarch64") {
             return Err("BIOS booting is for x86-64 only".into());
@@ -693,5 +712,10 @@ mod tests {
         assert!(Options::parse(&["--arch".into(), "z80".into()]).is_err());
         assert!(Options::parse(&["--nonsense".into()]).is_err());
         assert!(Options::parse(&["--arch".into(), "aarch64".into(), "--bios".into()]).is_err());
+        assert_eq!(Options::parse(&["--cores".into(), "8".into()]).unwrap().cores, Some(8));
+        assert!(Options::parse(&["--cores".into(), "0".into()]).is_err());
+        assert!(Options::parse(&["--cores".into(), "lots".into()]).is_err());
+        let arm9 = ["--arch".into(), "aarch64".into(), "--cores".into(), "9".into()];
+        assert!(Options::parse(&arm9).is_err());
     }
 }

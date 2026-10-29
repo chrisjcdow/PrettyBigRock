@@ -48,14 +48,15 @@ qemu-system-arm ovmf qemu-efi-aarch64`).
 
 ```
 cargo xtask build --release      # build/release/prettybigrock.img: kernels, loaders, disk image
-cargo xtask run                  # start it in QEMU (add --bios, --arch aarch64, --el2 or --selftest)
+cargo xtask run                  # start it in QEMU (add --bios, --arch aarch64, --el2, --selftest, --cores 8)
 cargo xtask qemu-test            # boot all four ways, with 4 cores, and run the self-test each time
 cargo xtask ci                   # formatting, lints, tests, builds and boot tests: what GitHub runs
 cargo xtask doctor               # how the toolchain was found
 ```
 
 On Windows, after building (or copying in a built image), double-click `run-prettybigrock.bat`,
-or run it with `bios` or `arm` after its name.
+or add any of `bios`, `arm`, `selftest` and a number of cores after its name, for example
+`run-prettybigrock.bat bios selftest 8`.
 
 The image is also a real boot disk: written to a USB stick, it should start a PC or an ARM64
 machine with UEFI (with Secure Boot turned off), or an older PC with a BIOS. Real hardware is

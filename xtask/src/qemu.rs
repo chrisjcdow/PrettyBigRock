@@ -23,6 +23,8 @@ pub struct Config {
     pub bios: bool,
     /// Start the ARM processor at EL2 (tests the EL2 stub).
     pub el2: bool,
+    /// How many processor cores.
+    pub cores: u32,
     /// Lines the kernel's report must contain.
     pub expect: &'static [&'static str],
 }
@@ -34,6 +36,7 @@ pub const TESTS: &[Config] = &[
         arch: "x86_64",
         bios: false,
         el2: false,
+        cores: 4,
         expect: &[
             "on x86-64, started by UEFI.",
             "Cores:         4 found, 4 running",
@@ -47,6 +50,7 @@ pub const TESTS: &[Config] = &[
         arch: "x86_64",
         bios: true,
         el2: false,
+        cores: 4,
         expect: &[
             "on x86-64, started by BIOS.",
             "Cores:         4 found, 4 running",
@@ -60,6 +64,7 @@ pub const TESTS: &[Config] = &[
         arch: "aarch64",
         bios: false,
         el2: false,
+        cores: 4,
         expect: &[
             "on ARM64, started by UEFI.",
             "exception level 1",
@@ -74,6 +79,7 @@ pub const TESTS: &[Config] = &[
         arch: "aarch64",
         bios: false,
         el2: true,
+        cores: 4,
         expect: &[
             "exception level 1",
             "Cores:         4 found, 4 running",
@@ -93,7 +99,8 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     let mut cmd;
     if cfg.arch == "x86_64" {
         cmd = Command::new("qemu-system-x86_64");
-        cmd.args(["-machine", "q35", "-m", "512", "-smp", "4"]);
+        cmd.args(["-machine", "q35", "-m", "512"]);
+        cmd.arg("-smp").arg(cfg.cores.to_string());
         if !cfg.bios {
             let code = first_existing(&[
                 "/usr/share/OVMF/OVMF_CODE_4M.fd",
@@ -120,7 +127,8 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     } else {
         cmd = Command::new("qemu-system-aarch64");
         let machine = if cfg.el2 { "virt,virtualization=on" } else { "virt" };
-        cmd.args(["-machine", machine, "-cpu", "cortex-a72", "-m", "512", "-smp", "4"]);
+        cmd.args(["-machine", machine, "-cpu", "cortex-a72", "-m", "512"]);
+        cmd.arg("-smp").arg(cfg.cores.to_string());
         let fw = first_existing(&[
             "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
             "/usr/share/AAVMF/AAVMF_CODE.fd",
