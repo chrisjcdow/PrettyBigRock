@@ -6,7 +6,7 @@
 
 [workspace]
 resolver = "3"
-members = ["kernel", "lib/bootinfo", "xtask"]
+members = ["boot/bios", "boot/common", "boot/uefi", "kernel", "lib/bootinfo", "xtask"]
 
 [workspace.package]
 version = "0.0.0"

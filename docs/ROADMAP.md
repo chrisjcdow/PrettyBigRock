@@ -34,6 +34,10 @@ when this is pushed. Notes 0001 to 0003 are in `docs/design/`.
 **Done when:** QEMU boots to "Hello from PrettyBigRock" through UEFI on both architectures and
 through BIOS on x86-64, all tested automatically.
 
+**Status: done** (29 October 2026). One disk image starts all three ways, and ARM64 also
+starts from EL2 through the EL2 stub. `cargo xtask qemu-test` boots all four and checks the
+kernel's report. Note 0004 describes the loaders and the disk.
+
 ## M2: The kernel core
 - A physical memory allocator, page tables and kernel memory.
 - Interrupts and timers; starting all cores; a scheduler with a run queue per core.

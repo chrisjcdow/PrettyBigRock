@@ -9,8 +9,9 @@
 //!
 //! The functions every architecture provides (this list grows with each milestone):
 //! - the entry point `_start`, which takes the boot information's physical address in the
-//!   first argument register and calls [`crate::kernel_main`];
-//! - [`halt_forever`]: stop this core, waiting for interrupts, never returning.
+//!   first argument register and the direct map's base in the second, and calls [`crate::kernel_main`];
+//! - [`halt_forever`]: stop this core, waiting for interrupts, never returning;
+//! - `NAME`, and `describe`, which writes a line about the processor.
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64;

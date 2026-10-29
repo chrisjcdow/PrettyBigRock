@@ -27,17 +27,33 @@ the tag `fynbos-1.0`, and was renamed to PrettyBigRock in version 1.1.
 From here on, Chris and Claude are developing it together, and [DEVLOG.md](DEVLOG.md)
 records who did what in each session. Chris directs; Claude writes the code and the documents.
 
-## PrettyBigRock 2: building it
+## PrettyBigRock 2: building and running it
 
-Needs [rustup](https://rustup.rs); the right Rust version installs itself the first time.
+![PrettyBigRock 2's first words](docs/screenshot-pbr2.png)
+
+So far (milestone M1) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on ARM64
+machines with UEFI, all from the same disk image. The kernel reports what it found, on the
+screen and on the serial port, and stops. That doesn't sound like much, but everything after
+this builds on it.
+
+Building needs [rustup](https://rustup.rs); the right Rust version installs itself the first
+time. Booting it needs QEMU, with its UEFI firmware (on Debian or Ubuntu: `qemu-system-x86
+qemu-system-arm ovmf qemu-efi-aarch64`).
 
 ```
-cargo xtask build      # the kernel, for every architecture, into build/<arch>/
-cargo xtask ci         # formatting, lints, tests and builds: what GitHub runs on every change
-cargo xtask doctor     # how the toolchain was found
+cargo xtask build --release      # build/release/prettybigrock.img: kernels, loaders, disk image
+cargo xtask run                  # start it in QEMU (add --bios, or --arch aarch64, or --el2)
+cargo xtask qemu-test            # boot all four ways and check the kernel starts each time
+cargo xtask ci                   # formatting, lints, tests, builds and boot tests: what GitHub runs
+cargo xtask doctor               # how the toolchain was found
 ```
 
-So far the kernel builds and does nothing else. Booting it is milestone M1.
+On Windows, after building (or copying in a built image), double-click `run-prettybigrock.bat`,
+or run it with `bios` or `arm` after its name.
+
+The image is also a real boot disk: written to a USB stick, it should start a PC or an ARM64
+machine with UEFI (with Secure Boot turned off), or an older PC with a BIOS. Real hardware is
+milestone M7, so expect surprises.
 
 # PrettyBigRock 1.x (classic)
 

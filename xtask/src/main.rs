@@ -4,12 +4,15 @@
 //! PrettyBigRock's build tool. Run it through Cargo:
 //!
 //! ```text
-//! cargo xtask build [--arch NAME] [--release]   build the kernel for one or all architectures
-//! cargo xtask check                             formatting and lints, everywhere
-//! cargo xtask test                              unit tests that run on this computer
-//! cargo xtask ci                                everything above, as GitHub Actions runs it
-//! cargo xtask classic                           build and test PrettyBigRock 1.x (classic/)
-//! cargo xtask doctor                            explain how the Rust toolchain was found
+//! cargo xtask build [--release]               build everything, and the boot disk image
+//! cargo xtask run [--arch NAME] [--bios] [--el2] [--release]
+//!                                             start PrettyBigRock in QEMU, in a window
+//! cargo xtask qemu-test [--release]           boot every configuration and check the kernel starts
+//! cargo xtask check                           formatting and lints, everywhere
+//! cargo xtask test                            unit tests that run on this computer
+//! cargo xtask ci                              all of the above, as GitHub Actions runs it
+//! cargo xtask classic                         build and test PrettyBigRock 1.x (classic/)
+//! cargo xtask doctor                          explain how the Rust toolchain was found
 //! ```
 //!
 //! It uses nothing outside Rust's standard library, so it builds anywhere Rust does.
@@ -18,8 +21,11 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::time::Duration;
 
 mod elf;
+mod image;
+mod qemu;
 
 /// A processor family PrettyBigRock is built for.
 struct Arch {
@@ -27,22 +33,40 @@ struct Arch {
     name: &'static str,
     /// The Rust target the kernel is built with.
     kernel_target: &'static str,
+    /// The Rust target the UEFI loader is built with.
+    uefi_target: &'static str,
+    /// The UEFI loader's file name on the EFI system partition.
+    uefi_file: &'static str,
     /// The ELF machine number the kernel must have.
     elf_machine: u16,
 }
 
 /// Every architecture. Adding one starts here (docs/design/0001-repository-layout.md).
 const ARCHES: &[Arch] = &[
-    Arch { name: "x86_64", kernel_target: "x86_64-unknown-none", elf_machine: elf::EM_X86_64 },
+    Arch {
+        name: "x86_64",
+        kernel_target: "x86_64-unknown-none",
+        uefi_target: "x86_64-unknown-uefi",
+        uefi_file: "BOOTX64.EFI",
+        elf_machine: elf::EM_X86_64,
+    },
     Arch {
         name: "aarch64",
         kernel_target: "aarch64-unknown-none-softfloat",
+        uefi_target: "aarch64-unknown-uefi",
+        uefi_file: "BOOTAA64.EFI",
         elf_machine: elf::EM_AARCH64,
     },
 ];
 
+/// The BIOS loader's Rust target (x86-64 only).
+const BIOS_TARGET: &str = "x86_64-unknown-none";
+
 /// Where the kernel is linked (see kernel/src/arch/*/linker.ld).
 const KERNEL_BASE: u64 = 0xFFFF_FFFF_8000_0000;
+
+/// How long a boot test may take. Emulating ARM on a PC is slow, so this is generous.
+const BOOT_TEST_LIMIT: Duration = Duration::from_secs(120);
 
 type Result<T = ()> = std::result::Result<T, String>;
 
@@ -65,12 +89,18 @@ fn run(args: &[String]) -> Result {
     let (command, rest) = args.split_first().map(|(c, r)| (c.as_str(), r)).unwrap_or(("help", &[]));
     let opts = Options::parse(rest)?;
     match command {
-        "build" => {
-            let tc = Toolchain::find(&root)?;
-            for arch in opts.arches()? {
-                build_kernel(&root, &tc, arch, opts.release)?;
-            }
-            Ok(())
+        "build" => build_all(&root, &Toolchain::find(&root)?, opts.release).map(|_| ()),
+        "run" => {
+            let img = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
+            let want = opts.arch.as_deref().unwrap_or("x86_64");
+            let arch = ARCHES.iter().map(|a| a.name).find(|n| *n == want).unwrap_or("x86_64");
+            let cfg =
+                qemu::Config { name: "by hand", arch, bios: opts.bios, el2: opts.el2, expect: &[] };
+            qemu::run(&cfg, &img, &work_dir(&root)?)
+        }
+        "qemu-test" => {
+            let img = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
+            qemu_test(&root, &img)
         }
         "check" => check(&root, &Toolchain::find(&root)?),
         "test" => test(&root),
@@ -78,10 +108,9 @@ fn run(args: &[String]) -> Result {
             let tc = Toolchain::find(&root)?;
             check(&root, &tc)?;
             test(&root)?;
-            for arch in ARCHES {
-                build_kernel(&root, &tc, arch, false)?;
-                build_kernel(&root, &tc, arch, true)?;
-            }
+            build_all(&root, &tc, true)?;
+            let img = build_all(&root, &tc, false)?;
+            qemu_test(&root, &img)?;
             println!("ci: all passed");
             Ok(())
         }
@@ -98,20 +127,25 @@ fn run(args: &[String]) -> Result {
 const HELP: &str = "
 PrettyBigRock build tool
 
-  cargo xtask build [--arch NAME] [--release]   build the kernel (default: every architecture)
-  cargo xtask check                             formatting and lints
-  cargo xtask test                              unit tests on this computer
-  cargo xtask ci                                check, test, and build everything
-  cargo xtask classic                           build and test PrettyBigRock 1.x
-  cargo xtask doctor                            show how the Rust toolchain was found
+  cargo xtask build [--release]          build everything, and the boot disk image
+  cargo xtask run [--arch NAME] [--bios] [--el2] [--release]
+                                         start PrettyBigRock in QEMU, in a window
+  cargo xtask qemu-test [--release]      boot every configuration; check the kernel starts
+  cargo xtask check                      formatting and lints
+  cargo xtask test                       unit tests on this computer
+  cargo xtask ci                         check, test, build and boot everything
+  cargo xtask classic                    build and test PrettyBigRock 1.x
+  cargo xtask doctor                     show how the Rust toolchain was found
 
-Architectures: x86_64, aarch64
+Architectures: x86_64 (the default for `run`), aarch64
 ";
 
 #[derive(Default)]
 struct Options {
     arch: Option<String>,
     release: bool,
+    bios: bool,
+    el2: bool,
 }
 
 impl Options {
@@ -121,25 +155,30 @@ impl Options {
         while let Some(a) = it.next() {
             match a.as_str() {
                 "--release" => opts.release = true,
+                "--bios" => opts.bios = true,
+                "--el2" => opts.el2 = true,
                 "--arch" => {
-                    opts.arch = Some(it.next().ok_or("--arch needs a name")?.clone());
+                    let name = it.next().ok_or("--arch needs a name")?;
+                    if !ARCHES.iter().any(|x| x.name == name) {
+                        return Err(format!("unknown architecture `{name}`"));
+                    }
+                    opts.arch = Some(name.clone());
                 }
                 other => return Err(format!("unknown option `{other}`")),
             }
         }
+        if opts.bios && opts.arch.as_deref() == Some("aarch64") {
+            return Err("BIOS booting is for x86-64 only".into());
+        }
         Ok(opts)
     }
+}
 
-    fn arches(&self) -> Result<Vec<&'static Arch>> {
-        match &self.arch {
-            None => Ok(ARCHES.iter().collect()),
-            Some(name) => ARCHES
-                .iter()
-                .find(|a| a.name == name)
-                .map(|a| vec![a])
-                .ok_or_else(|| format!("unknown architecture `{name}`")),
-        }
-    }
+/// Where QEMU's working files go.
+fn work_dir(root: &Path) -> Result<PathBuf> {
+    let d = root.join("build").join("qemu");
+    fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+    Ok(d)
 }
 
 /// The repository's top folder: the parent of this crate.
@@ -212,15 +251,15 @@ impl Toolchain {
     fn report(&self) {
         println!("toolchain: {}", self.version);
         println!("sysroot:   {}", self.sysroot.display());
-        for arch in ARCHES {
-            let how = if self.has_prebuilt(arch.kernel_target) {
+        for target in ARCHES.iter().flat_map(|a| [a.kernel_target, a.uefi_target]) {
+            let how = if self.has_prebuilt(target) {
                 "ready-built core library".to_string()
             } else if let Some(src) = &self.source {
                 format!("core library built from source ({}), via RUSTC_BOOTSTRAP", src.display())
             } else {
                 "MISSING: run `rustup target add`".to_string()
             };
-            println!("{:<8}   {}: {how}", arch.name, arch.kernel_target);
+            println!("  {target:<32} {how}");
         }
     }
 }
@@ -242,46 +281,183 @@ fn parse_channel(toml: &str) -> Option<String> {
 // ------------------------------------------------------------------------------------------
 // The commands
 
-fn build_kernel(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Result {
-    let (extra, envs) = tc.target_args(arch.kernel_target)?;
+/// Builds one binary for one target and returns its bytes.
+fn build_artifact(
+    root: &Path,
+    tc: &Toolchain,
+    package: &str,
+    bin: &str,
+    target: &str,
+    release: bool,
+) -> Result<Vec<u8>> {
+    let (extra, envs) = tc.target_args(target)?;
     let mut cmd = cargo(root);
-    cmd.args(["build", "--package", "pbr-kernel", "--target", arch.kernel_target]);
+    cmd.args(["build", "--package", package, "--target", target]);
     if release {
         cmd.arg("--release");
     }
     cmd.args(&extra).envs(envs.iter().copied());
     status(&mut cmd)?;
-
     let profile = if release { "release" } else { "debug" };
-    let built = root.join("target").join(arch.kernel_target).join(profile).join("kernel");
-    let bytes = fs::read(&built).map_err(|e| format!("{}: {e}", built.display()))?;
-    let header = elf::Header::parse(&bytes).map_err(|e| format!("{}: {e}", built.display()))?;
+    let built = root.join("target").join(target).join(profile).join(bin);
+    fs::read(&built).map_err(|e| format!("{}: {e}", built.display()))
+}
+
+fn build_kernel(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Result<Vec<u8>> {
+    let bytes = build_artifact(root, tc, "pbr-kernel", "kernel", arch.kernel_target, release)?;
+    let header =
+        elf::Header::parse(&bytes).map_err(|e| format!("the {} kernel: {e}", arch.name))?;
     if header.machine != arch.elf_machine {
         return Err(format!(
-            "{}: built for the wrong machine ({})",
-            built.display(),
-            header.machine
+            "the {} kernel was built for the wrong machine ({})",
+            arch.name, header.machine
         ));
     }
     if header.entry < KERNEL_BASE {
         return Err(format!(
-            "{}: entry point {:#x} isn't in the kernel's address range",
-            built.display(),
-            header.entry
+            "the {} kernel's entry point {:#x} isn't in the kernel's range",
+            arch.name, header.entry
         ));
     }
+    Ok(bytes)
+}
 
-    let out_dir = root.join("build").join(arch.name).join(profile);
-    fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-    let out = out_dir.join("kernel.elf");
-    fs::write(&out, &bytes).map_err(|e| e.to_string())?;
-    println!(
-        "built {} ({} bytes, entry {:#x})",
-        out.strip_prefix(root).unwrap_or(&out).display(),
-        bytes.len(),
-        header.entry
-    );
-    Ok(())
+fn write_out(root: &Path, rel: &str, bytes: &[u8]) -> Result<PathBuf> {
+    let out = root.join(rel);
+    if let Some(dir) = out.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+    println!("built {rel} ({} KiB)", bytes.len().div_ceil(1024));
+    Ok(out)
+}
+
+/// Builds the kernels and loaders for every architecture, and the boot disk image
+/// (docs/design/0004-loaders-and-boot-disk.md). Returns the image's path.
+fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<PathBuf> {
+    let profile = if release { "release" } else { "debug" };
+    let mut kernels = Vec::new();
+    let mut loaders = Vec::new();
+    for arch in ARCHES {
+        let k = build_kernel(root, tc, arch, release)?;
+        write_out(root, &format!("build/{}/{profile}/kernel.elf", arch.name), &k)?;
+        let l = build_artifact(
+            root,
+            tc,
+            "pbr-boot-uefi",
+            "pbr-boot-uefi.efi",
+            arch.uefi_target,
+            release,
+        )?;
+        write_out(root, &format!("build/{}/{profile}/{}", arch.name, arch.uefi_file), &l)?;
+        kernels.push(k);
+        loaders.push(l);
+    }
+    let cmdline = b"";
+    let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], cmdline)?;
+    let mut files: Vec<(String, &[u8])> = Vec::new();
+    for (i, arch) in ARCHES.iter().enumerate() {
+        files.push((format!("EFI/BOOT/{}", arch.uefi_file), &loaders[i]));
+        files.push((format!("PBR/{}/kernel.elf", arch.name), &kernels[i]));
+    }
+    files.push(("PBR/cmdline.txt".to_string(), cmdline));
+    let refs: Vec<(&str, &[u8])> = files.iter().map(|(p, d)| (p.as_str(), *d)).collect();
+    let img =
+        image::build(&image::Contents { mbr_code: &mbr, bios_partition: &bios, esp_files: &refs })?;
+    write_out(root, &format!("build/{profile}/prettybigrock.img"), &img)
+}
+
+/// The BIOS loader: its first stage (for the MBR, with where to find the rest filled in) and
+/// what goes in the BIOS boot partition (the rest of the loader, then the payload).
+fn bios_loader(
+    root: &Path,
+    tc: &Toolchain,
+    release: bool,
+    kernel: &[u8],
+    cmdline: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    // The BIOS loader lives at low addresses, so it needs the "small" code model rather than
+    // the kernel target's default. It builds in its own target folder so the different flags
+    // don't make Cargo rebuild the kernel's dependencies every time.
+    let (extra, envs) = tc.target_args(BIOS_TARGET)?;
+    let mut cmd = cargo(root);
+    cmd.args([
+        "build",
+        "--package",
+        "pbr-boot-bios",
+        "--target",
+        BIOS_TARGET,
+        "--target-dir",
+        "target/bios",
+    ]);
+    if release {
+        cmd.arg("--release");
+    }
+    cmd.args(&extra).envs(envs.iter().copied());
+    cmd.env("RUSTFLAGS", "-C code-model=small -C relocation-model=static");
+    status(&mut cmd)?;
+    let profile = if release { "release" } else { "debug" };
+    let path = root.join("target/bios").join(BIOS_TARGET).join(profile).join("pbr-boot-bios");
+    let file = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let flat = elf::flat_binary(&file, 0x7C00).map_err(|e| format!("the BIOS loader: {e}"))?;
+    if flat.len() <= 0x400 {
+        return Err("the BIOS loader has no second stage".into());
+    }
+    let rest = &flat[0x400..]; // from 0x8000
+    let sectors = rest.len().div_ceil(512);
+    let mut mbr = flat[..432.min(flat.len())].to_vec();
+    mbr.resize(440, 0);
+    mbr[432..436].copy_from_slice(&(image::BIOS_PARTITION_LBA as u32).to_le_bytes());
+    mbr[436..438].copy_from_slice(&(sectors as u16).to_le_bytes());
+
+    let mut part = rest.to_vec();
+    part.resize(sectors * 512, 0);
+    part.extend_from_slice(&payload(&[("kernel.elf", kernel), ("cmdline.txt", cmdline)]));
+    Ok((mbr, part))
+}
+
+/// The BIOS payload (note 0004): a 512-byte header listing the files, then the files, each
+/// starting on a sector.
+fn payload(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = vec![0u8; 512];
+    out[..8].copy_from_slice(b"PBRPAYLD");
+    out[8..12].copy_from_slice(&(files.len() as u32).to_le_bytes());
+    for (i, (name, data)) in files.iter().enumerate() {
+        let e = 16 + i * 48;
+        let at = (out.len() / 512) as u32;
+        out[e..e + 4].copy_from_slice(&at.to_le_bytes());
+        out[e + 4..e + 8].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        out[e + 8..e + 8 + name.len()].copy_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+        out.resize(out.len().div_ceil(512) * 512, 0);
+    }
+    let total = (out.len() / 512) as u32;
+    out[12..16].copy_from_slice(&total.to_le_bytes());
+    out
+}
+
+fn qemu_test(root: &Path, img: &Path) -> Result {
+    let work = work_dir(root)?;
+    let mut failed = Vec::new();
+    for cfg in qemu::TESTS {
+        print!("boot test: {} ... ", cfg.name);
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+        match qemu::test(cfg, img, &work, BOOT_TEST_LIMIT) {
+            Ok(_) => println!("ok"),
+            Err(e) => {
+                println!("FAILED");
+                eprintln!("{e}");
+                failed.push(cfg.name);
+            }
+        }
+    }
+    if failed.is_empty() {
+        println!("qemu-test: all {} configurations started", qemu::TESTS.len());
+        Ok(())
+    } else {
+        Err(format!("boot tests failed: {}", failed.join(", ")))
+    }
 }
 
 fn check(root: &Path, tc: &Toolchain) -> Result {
@@ -292,20 +468,43 @@ fn check(root: &Path, tc: &Toolchain) -> Result {
         "xtask",
         "--package",
         "pbr-bootinfo",
+        "--package",
+        "pbr-boot-common",
         "--all-targets",
         "--",
         "-D",
         "warnings",
     ]))?;
+    let (extra, envs) = tc.target_args(BIOS_TARGET)?;
+    status(
+        cargo(root)
+            .args([
+                "clippy",
+                "--package",
+                "pbr-boot-bios",
+                "--target",
+                BIOS_TARGET,
+                "--target-dir",
+                "target/bios",
+            ])
+            .args(&extra)
+            .envs(envs.iter().copied())
+            .env("RUSTFLAGS", "-C code-model=small -C relocation-model=static")
+            .args(["--", "-D", "warnings"]),
+    )?;
     for arch in ARCHES {
-        let (extra, envs) = tc.target_args(arch.kernel_target)?;
-        status(
-            cargo(root)
-                .args(["clippy", "--package", "pbr-kernel", "--target", arch.kernel_target])
-                .args(&extra)
-                .envs(envs.iter().copied())
-                .args(["--", "-D", "warnings"]),
-        )?;
+        for (package, target) in
+            [("pbr-kernel", arch.kernel_target), ("pbr-boot-uefi", arch.uefi_target)]
+        {
+            let (extra, envs) = tc.target_args(target)?;
+            status(
+                cargo(root)
+                    .args(["clippy", "--package", package, "--target", target])
+                    .args(&extra)
+                    .envs(envs.iter().copied())
+                    .args(["--", "-D", "warnings"]),
+            )?;
+        }
     }
     check_licence_headers(root)?;
     println!("check: all passed");
@@ -313,7 +512,15 @@ fn check(root: &Path, tc: &Toolchain) -> Result {
 }
 
 fn test(root: &Path) -> Result {
-    status(cargo(root).args(["test", "--package", "pbr-bootinfo", "--package", "xtask"]))?;
+    status(cargo(root).args([
+        "test",
+        "--package",
+        "pbr-bootinfo",
+        "--package",
+        "pbr-boot-common",
+        "--package",
+        "xtask",
+    ]))?;
     status(Command::new("python3").current_dir(root).arg("tools/test_rockfs.py"))?;
     println!("test: all passed");
     Ok(())
@@ -347,10 +554,10 @@ fn classic(root: &Path) -> Result {
 /// Every source file must start with an SPDX licence line (docs/design/0002-coding-rules.md).
 fn check_licence_headers(root: &Path) -> Result {
     let mut missing = Vec::new();
-    for dir in ["kernel", "lib", "xtask"] {
+    for dir in ["boot", "kernel", "lib", "xtask"] {
         walk(&root.join(dir), &mut |path| {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if matches!(ext, "rs" | "ld" | "toml") {
+            if matches!(ext, "rs" | "ld" | "toml" | "s") {
                 let text = fs::read_to_string(path).unwrap_or_default();
                 if !text.lines().take(3).any(|l| l.contains("SPDX-License-Identifier:")) {
                     missing.push(path.strip_prefix(root).unwrap_or(path).display().to_string());
@@ -425,9 +632,9 @@ mod tests {
     fn options() {
         let o = Options::parse(&["--arch".into(), "aarch64".into(), "--release".into()]).unwrap();
         assert!(o.release);
-        assert_eq!(o.arches().unwrap().len(), 1);
-        assert_eq!(Options::default().arches().unwrap().len(), ARCHES.len());
-        assert!(Options::parse(&["--arch".into(), "z80".into()]).unwrap().arches().is_err());
+        assert_eq!(o.arch.as_deref(), Some("aarch64"));
+        assert!(Options::parse(&["--arch".into(), "z80".into()]).is_err());
         assert!(Options::parse(&["--nonsense".into()]).is_err());
+        assert!(Options::parse(&["--arch".into(), "aarch64".into(), "--bios".into()]).is_err());
     }
 }

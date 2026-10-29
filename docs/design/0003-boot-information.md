@@ -27,7 +27,9 @@ written from this note alone must work.
      ELF program headers (code read-and-execute, read-only data read-only, data read-write,
      nothing both writable and executable);
    - a **direct map**: all physical memory in the memory map at `direct_map_base + physical
-     address`, read-write and never executable;
+     address`, read-write and never executable. The exceptions are Bad regions, and on Arm
+     also Reserved regions, which may belong to the firmware's secure world and must never
+     be touched;
    - a stack of at least 64 KiB.
 4. Fills in a `BootInfo` structure, and everything it points to, in memory marked
    `LoaderReclaimable`.
@@ -43,7 +45,8 @@ must not rely on them, and replaces the page tables early.
 - `CR0.WP` (write protection) on; `EFER.NXE` (no-execute) on.
 - Interrupts off (`RFLAGS.IF = 0`). The IDT is undefined, so the kernel loads its own before
   enabling interrupts. A GDT with a 64-bit code segment is loaded; the kernel loads its own.
-- `RDI` = the **physical** address of the `BootInfo`.
+- `RDI` = the **physical** address of the `BootInfo`; `RSI` = `direct_map_base` (so the kernel
+  can reach the `BootInfo` before it has read it).
 - `RSP` = 8 bytes below a 16-byte-aligned stack top, as if the entry point had been reached
   by a `call`, so ordinary Rust code sees the alignment it expects. The kernel's entry point
   never returns.
@@ -59,12 +62,16 @@ must not rely on them, and replaces the page tables early.
   index 2.
 - Data and instruction caches on; alignment checking off.
 - All interrupts masked (`DAIF` all set).
-- `X0` = the **physical** address of the `BootInfo`. `SP` = the top of the stack, 16-byte
-  aligned.
+- `X0` = the **physical** address of the `BootInfo`; `X1` = `direct_map_base`. `SP` = the top
+  of the stack, 16-byte aligned.
 - If the processor started at exception level 2, the loader drops to EL1 and leaves a minimal
   EL2 stub so the kernel can take over EL2 later to run virtual machines (DESIGN.md section
-  6.1). It sets `FLAG_EL2_STUB` to say so. The stub's interface gets its own note before it's
-  first used.
+  6.1). It sets `FLAG_EL2_STUB` to say so. The stub lives in a page marked Reserved in the
+  memory map. Its whole interface, for now: from EL1, `HVC #0` with `X0 = 0` and `X1` = the
+  physical address of a new EL2 vector table installs that table (`VBAR_EL2`) and returns.
+  Any other `HVC` returns without doing anything.
+- Timers: `CNTHCTL_EL2` lets EL1 use the physical counter and timer, and `CNTVOFF_EL2` is 0.
+  Floating-point instructions aren't trapped to EL2.
 - Other cores: parked by the firmware, as the device tree or ACPI tables describe (PSCI or a
   spin table).
 
@@ -177,7 +184,10 @@ table.
 ## Open questions
 
 - The start-up archive's format (before M3).
-- The EL2 stub's interface on Arm (before the first virtual-machine work).
+- A fuller EL2 stub interface on Arm, if the virtual-machine work needs one.
 
 ## Changes
 - 29 October 2026: version 1.0.
+- 29 October 2026: still 1.0, since nothing had been released. The entry point also receives
+  `direct_map_base` in a second register, and the EL2 stub's interface is defined. Both
+  were found while writing the first loaders.

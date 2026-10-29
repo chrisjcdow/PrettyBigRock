@@ -13,15 +13,22 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install QEMU and its UEFI firmware, for the boot tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install && rustup show
-      - name: Check, test and build
+      - name: Check, test, build, and boot every configuration
         run: cargo xtask ci
-      - name: Keep the kernels
+      - name: Keep the boot disk images and the boot test logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kernels
-          path: build/*/*/kernel.elf
+          name: prettybigrock-2
+          path: |
+            build/*/prettybigrock.img
+            build/qemu/serial-*.txt
 
   classic:
     name: PrettyBigRock 1.x (classic)

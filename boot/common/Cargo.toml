@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-boot-common"
+description = "What every PrettyBigRock loader shares: ELF loading, memory maps, page tables, hand-over"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pbr-bootinfo = { path = "../../lib/bootinfo" }
+
+[lints]
+workspace = true

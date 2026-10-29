@@ -39,6 +39,35 @@ impl Header {
     }
 }
 
+/// Lays out a statically linked program's loadable segments as one flat image starting at
+/// `base`, as a BIOS loads it: byte `i` of the result belongs at address `base + i`.
+pub fn flat_binary(bytes: &[u8], base: u64) -> Result<Vec<u8>, &'static str> {
+    Header::parse(bytes)?;
+    let u16_at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]) as usize;
+    let u64_at = |o: usize| -> Result<u64, &'static str> {
+        Ok(u64::from_le_bytes(bytes.get(o..o + 8).ok_or("truncated")?.try_into().unwrap()))
+    };
+    let (phoff, phentsize, phnum) = (u64_at(32)? as usize, u16_at(54), u16_at(56));
+    let mut out = Vec::new();
+    for i in 0..phnum {
+        let p = phoff + i * phentsize;
+        if bytes.get(p..p + 4) != Some(&1u32.to_le_bytes()[..]) {
+            continue; // not PT_LOAD
+        }
+        let (off, paddr, filesz) =
+            (u64_at(p + 8)? as usize, u64_at(p + 24)?, u64_at(p + 32)? as usize);
+        if filesz == 0 {
+            continue;
+        }
+        let at = paddr.checked_sub(base).ok_or("a segment is below the base address")? as usize;
+        if out.len() < at + filesz {
+            out.resize(at + filesz, 0);
+        }
+        out[at..at + filesz].copy_from_slice(bytes.get(off..off + filesz).ok_or("truncated")?);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

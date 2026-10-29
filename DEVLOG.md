@@ -136,3 +136,36 @@ Roxy runs today. He also asked for support for several screens.
   blocked), so the build tool can also build Rust's core library from source. It used the
   `library/` folder at the exact 1.97.0 commit, from GitHub. Elsewhere, rustup's normal
   targets are used.
+
+## Session 6: 29 October 2026, milestone M1 (booting)
+
+**Chris** asked Claude to carry on with M1 while he was at work.
+
+**Claude:**
+- Wrote design note 0004, on the loaders and the boot disk. Fixed two things in note 0003
+  found along the way: the kernel also gets the direct map's address in a register, and the
+  EL2 stub's interface is now defined.
+- Wrote `boot/common`, which every loader shares, with 14 tests on the host:
+  - loading the kernel's ELF file;
+  - building the memory map;
+  - page tables for x86-64 and ARM64;
+  - finding ACPI tables, and reading device trees;
+  - the hand-over to the kernel, including dropping from EL2 to EL1 on ARM.
+- Wrote the UEFI loader (`boot/uefi`), with our own definitions of the UEFI interfaces. It
+  builds for x86-64 and ARM64 and finds every screen, the ACPI, device tree and SMBIOS
+  tables, randomness, the time and the serial port.
+- Wrote the BIOS loader (`boot/bios`):
+  - a 16-bit first stage in the MBR;
+  - a second stage that sets the memory map, the graphics mode and 64-bit mode;
+  - a Rust third stage sharing everything else with the UEFI loader.
+
+  It's all assembled by Rust itself, with no NASM.
+- Gave the kernel its first output: a serial console (PL011 and 16550) and a text console on
+  the screen in the 1.x font, plus a start-up report of what the loader handed over.
+- Taught the build tool to make the boot disk image (GPT and FAT32 written by our own code,
+  with a test that reads the files back) and to boot it in QEMU:
+  - `cargo xtask run` starts it in a window;
+  - `cargo xtask qemu-test` boots it four ways (x86-64 with UEFI and with BIOS, ARM64 with
+    UEFI at EL1 and at EL2) and checks the report each time. GitHub Actions now does too.
+- All four boot configurations worked first time, in debug and release builds.
+- Added `run-prettybigrock.bat` for trying PrettyBigRock 2 in QEMU on Windows.

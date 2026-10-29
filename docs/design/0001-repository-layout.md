@@ -19,10 +19,11 @@ PrettyBigRock/
 ├── .cargo/config.toml    makes `cargo xtask` work
 ├── .github/workflows/    automatic builds and tests on GitHub
 │
-├── boot/                 loaders, one folder each (from M1)
+├── boot/                 loaders (note 0004)
+│   ├── common/             what every loader shares
 │   ├── uefi/               UEFI loader, x86-64 and ARM64
 │   ├── bios/               BIOS loader, x86-64
-│   └── pi/                 Raspberry Pi start-up stage
+│   └── pi/                 Raspberry Pi start-up stage (from M10)
 ├── kernel/               the microkernel
 │   └── src/
 │       ├── arch/<name>/    everything specific to one processor family
@@ -47,8 +48,11 @@ PrettyBigRock/
 │   ├── ROCKFS.md           the RockFS specification
 │   └── design/             design notes, like this one
 │
-├── build/                not in git: what the build produces, by architecture
-│   └── <arch>/<debug|release>/kernel.elf
+├── run-prettybigrock.bat starts PrettyBigRock 2 in QEMU on Windows
+├── build/                not in git: what the build produces
+│   ├── <debug|release>/prettybigrock.img   the boot disk image
+│   ├── <arch>/<debug|release>/             each architecture's kernel and UEFI loader
+│   └── qemu/                               the boot tests' serial logs
 └── target/               not in git: Cargo's working files
 ```
 
@@ -72,10 +76,11 @@ The checklist, kept up to date as the architecture layer grows:
    `kernel/src/arch/mod.rs`, and `kernel/src/arch/<name>/linker.ld` (copy an existing one: the
    layout is the same everywhere).
 2. Add the `cfg` lines for it in `kernel/src/arch/mod.rs`.
-3. Add it to `ARCHES` in `xtask/src/main.rs`, with its Rust target and ELF machine number.
+3. Add it to `ARCHES` in `xtask/src/main.rs`, with its Rust targets and ELF machine number,
+   and teach `boot/common` its page-table format and hand-over (`paging.rs`, `handover.rs`).
 4. Add it to `targets` in `rust-toolchain.toml`.
 5. Make at least one loader start it (`boot/`), producing the boot information (note 0003).
-6. Add it to the QEMU tests, so it's tested on every change.
+6. Add it to the boot tests (`xtask/src/qemu.rs`), so it's tested on every change.
 7. Add a row to the hardware table in DESIGN.md section 11.
 
 The build tool's own tests check steps 1 and 3 match.

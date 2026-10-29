@@ -3,6 +3,29 @@
 version = 4
 
 [[package]]
+name = "pbr-boot-bios"
+version = "0.0.0"
+dependencies = [
+ "pbr-boot-common",
+ "pbr-bootinfo",
+]
+
+[[package]]
+name = "pbr-boot-common"
+version = "0.0.0"
+dependencies = [
+ "pbr-bootinfo",
+]
+
+[[package]]
+name = "pbr-boot-uefi"
+version = "0.0.0"
+dependencies = [
+ "pbr-boot-common",
+ "pbr-bootinfo",
+]
+
+[[package]]
 name = "pbr-bootinfo"
 version = "0.0.0"
 
