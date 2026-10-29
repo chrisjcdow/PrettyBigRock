@@ -87,3 +87,24 @@ they had settled together the night before.
   and swapping files with the Python tool. A picture drawn in Paint came out of the disk
   image as an ordinary .bmp.
 - The Windows launcher now makes a 64 MB `data.img` the first time it runs.
+
+## Session 5: 29 October 2026, planning PrettyBigRock 2
+
+**Chris** said that if PrettyBigRock is to become a usable OS, it needs planning with a
+long-term view, so that future problems are avoided as early as possible. Over the afternoon
+the two of them settled the design:
+- 64-bit, on x86-64 and ARM64, with portability to other processors designed in;
+- UEFI and BIOS booting;
+- a Rust microkernel;
+- every program sandboxed with capabilities, managed by a sandbox manager (Chris's idea);
+- a native PrettyBigRock interface with a POSIX layer on top ("we don't want to just make
+  another Linux");
+- multi-core and multi-threaded from the start;
+- several filesystems;
+- the GUI as a program rather than part of the kernel;
+- real hardware;
+- everything written ourselves;
+- documentation first.
+
+**Claude** wrote it all up as `docs/DESIGN.md` (the decisions, the reasons, and the open
+questions) and `docs/ROADMAP.md` (the milestones, from an empty kernel to real hardware).

@@ -1,0 +1,488 @@
+# PrettyBigRock 2: design
+
+Status: **draft 1**, 29 October 2026. These decisions were agreed between Christopher
+Cameron-Dow and Claude. The plan for building it is in [ROADMAP.md](ROADMAP.md).
+
+PrettyBigRock 1.x began as a quick experiment: a 32-bit kernel in C where every app is part of
+the kernel. It works and it's fun, but it can't grow into an operating system you'd use every
+day. PrettyBigRock 2 is a fresh design aimed at that. It's planned for the long term, so that
+the decisions that are expensive to change are made carefully, at the start, and written down.
+
+This document says *what* we decided and *why*. Each major part gets its own detailed design
+note (like [ROCKFS.md](ROCKFS.md)) before it's built.
+
+---
+
+## 1. Goals
+
+1. **Usable.** It boots on real computers and does real tasks well enough that you'd choose to
+   use it.
+2. **Secure by design.** Every program, including every driver, runs in a sandbox and can
+   reach only what it has been given.
+3. **Portable.** It runs on x86-64 and ARM64 from the start, and adding another processor
+   family is a contained, documented job.
+4. **Our own.** Written from scratch. Anything borrowed is temporary, sits behind our own
+   interface, and is listed with a plan to replace it (section 14).
+5. **Robust.** A crashing app or driver doesn't take the system down, and a power cut doesn't
+   lose the disk.
+6. **Documented.** Design notes come before code and are kept up to date as it changes.
+
+### Non-goals
+
+- **Being Linux, or a Unix clone.** Linux already exists and is great. PrettyBigRock has its
+  own design and offers Unix compatibility as a layer on top (section 9).
+- **Running Windows or Linux programs unchanged.** Unix software is ported by recompiling it
+  against the POSIX layer.
+- **Supporting all hardware.** We support chosen machines well and add more over time
+  (section 11).
+
+---
+
+## 2. Principles
+
+These settle arguments when a design question comes up.
+
+1. **Nothing is reachable without a capability.** There are no global names in the kernel: no
+   global file paths, process IDs anyone can signal, or devices anyone can open.
+2. **The kernel does only what can't be done anywhere else.** If something can run as an
+   ordinary program, it does.
+3. **Interfaces are contracts.** System calls, message formats and disk formats are
+   versioned, documented before they're built, and changed only with a migration plan.
+4. **Processor-specific code lives in one place** (section 10). Code outside it never
+   assumes which processor it runs on.
+5. **Choosing is granting.** Permission comes from what the user does (picking a file,
+   dropping a picture), not from pop-ups.
+6. **Fail small.** A component that fails is restarted or reported. It doesn't spread its
+   failure.
+7. **No hidden dependencies.** Anything borrowed is behind our own interface, so it can be
+   swapped out without changing anything that uses it.
+
+---
+
+## 3. Decisions
+
+| # | Decision | Why |
+|---|----------|-----|
+| D1 | **64-bit only**: x86-64 and ARM64 | Modern hardware; no 4 GB limit; both are long-lived. |
+| D2 | **Multiple processor families** through one architecture layer | The Pi 5 from the start; RISC-V and others later. |
+| D3 | **UEFI and BIOS** on x86, through a shared hand-over to the kernel | UEFI for modern PCs; BIOS for older machines such as Roxy. BIOS can be dropped later by deleting one component. |
+| D4 | **Microkernel** | Drivers and services become sandboxed programs; crashes are survivable; the processor-specific part stays small. |
+| D5 | **Capability-based security** | Every app is sandboxed by construction; a sandbox manager decides what each app gets. |
+| D6 | **Users and capabilities** are separate | Users answer whose files these are; capabilities answer what this app may touch. |
+| D7 | **Native PrettyBigRock interface**, with a **POSIX layer** on top | Our own identity, and Unix software can still be ported. |
+| D8 | **Rust**, with no third-party packages | Memory safety for a large codebase; one language across architectures. |
+| D9 | **Multi-core and multi-threaded** from the first line | Retrofitting several cores onto a one-core kernel is notoriously painful. |
+| D10 | **Multiple filesystems** behind one file layer; RockFS is native | USB sticks, SD cards and CDs use FAT, exFAT and ISO 9660. |
+| D11 | **The GUI is a program, not part of the kernel** | Boots to the desktop by default; also boots text-only for recovery, new hardware or a headless Pi. |
+| D12 | **Real hardware**, on chosen target machines | "Usable" means real machines. |
+| D13 | **Write everything ourselves**; anything borrowed is temporary | Control over the whole system; no dependence on outside code. |
+| D14 | **Documentation first** | Every major part has a design note before code. These notes are the project's memory between sessions. |
+| D15 | **GPL-3.0-or-later**, copyright Christopher Cameron-Dow | Stays open source. (See open question Q1 about apps.) |
+
+---
+
+## 4. The overall shape
+
+```
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  Apps: Notepad, Paint, Files, Terminal, ported Unix programs (via POSIX)  │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  System services (ordinary sandboxed programs):                            │
+  │    sandbox manager · file picker · clipboard · desktop/compositor · input  │
+  │    file layer · RockFS / FAT / exFAT / ISO servers · network stack · audio │
+  │    device manager · drivers (one program each) · logging and tracing       │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  Microkernel: address spaces · threads · scheduling · messages ·           │
+  │               capabilities · interrupts · timers                           │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  Architecture layer: x86-64 · ARM64 · (later: RISC-V …)                    │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  Boot: UEFI loader · BIOS loader · Pi firmware  →  one shared hand-over    │
+  └──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Starting up:**
+1. A loader puts the kernel and the **root program** (init) in memory and passes over the
+   **boot information**.
+2. The kernel sets itself up and gives the root program capabilities for all of memory, all
+   devices and all interrupts.
+3. The root program starts the device manager, drivers and services, giving each only what it
+   needs.
+4. It then starts the desktop, or the text console.
+
+---
+
+## 5. Booting
+
+All loaders produce the same **boot information** structure, defined in its own design note
+and versioned. It contains:
+- the memory map;
+- the framebuffer, if there is one;
+- where to find the hardware description (the ACPI tables on PCs, the device tree on ARM);
+- the command line;
+- the kernel and root program images, plus any other start-up files.
+
+| Loader | Used on | Notes |
+|--------|---------|-------|
+| UEFI application | Modern PCs, QEMU with OVMF, ARM64 machines with UEFI | The main path. |
+| BIOS loader | Older PCs (Roxy), QEMU with SeaBIOS | Small; builds on what 1.x already has. |
+| Pi firmware | Raspberry Pi 5 | The Pi's own firmware loads the kernel directly; a UEFI port for the Pi also exists. |
+
+The kernel never knows which loader started it.
+
+**Start-up files** are one simple archive format of our own. It holds the root program,
+early drivers and the services needed to reach the disk, and it's the only thing the kernel
+unpacks.
+
+---
+
+## 6. The kernel
+
+### 6.1 What the kernel does
+
+- **Address spaces**: creating them, mapping memory into them, and the processor's page
+  tables (through the architecture layer).
+- **Threads and scheduling**: pre-emptive scheduling across all cores, with a run queue per
+  core and priorities. A real-time class for audio and similar work is planned.
+- **Messages** between programs (6.3).
+- **Capabilities** (6.2).
+- **Interrupts**: delivered to the driver that holds the capability for them.
+- **Timers and time**: a 64-bit monotonic clock in nanoseconds; wall-clock time in UTC.
+  Time zones are handled outside the kernel.
+- **Starting the other cores.**
+
+### 6.2 What the kernel doesn't do
+
+Drivers, filesystems, networking, graphics, users, logins, policy, and file names of any
+kind. All of these are ordinary programs.
+
+### 6.3 Kernel objects and capabilities
+
+Everything the kernel manages is an **object**:
+- address space;
+- thread;
+- memory object (a range of memory that can be mapped, shared or copied on write);
+- channel (one end of a message connection);
+- notification (a lightweight signal);
+- interrupt;
+- device memory range;
+- I/O port range (x86 only);
+- timer.
+
+A program refers to objects through **handles**: small numbers indexing its own capability
+table. A capability is a handle plus a set of **rights**, such as read, write, map,
+duplicate and transfer.
+
+Rules that are cheap now and expensive later:
+- **Reduced copies.** A capability can be duplicated with fewer rights, for example turning
+  read-write into read-only, but never with more.
+- **Revocation.** Every capability records the one it was derived from. Revoking one revokes
+  everything derived from it, wherever those copies went. This is designed into the kernel's
+  data structures from the start.
+- **Moving capabilities in messages.** This is the only way a program gets new access.
+- **No forging.** Handles are meaningful only inside the program that holds them.
+
+### 6.4 Messages
+
+Messages are the heart of a microkernel, and their design is a long-term contract.
+
+- **Small messages.** Synchronous, with a fixed-size body plus up to a few capabilities.
+  Used for requests and replies, and built to be fast (L4-style direct switching from caller
+  to receiver).
+- **Bulk data.** Shared memory with ring buffers between the two sides, plus notifications to
+  say "there's more". Disk, network, audio and graphics use this, so their data is never
+  copied through the kernel.
+- **An interface language.** Services describe their messages in **interface files**: a
+  small language of our own from which the build generates Rust code for both sides. Every
+  interface has a name and a version. These files are also the documentation of how the
+  system's parts talk to each other.
+
+### 6.5 System calls
+
+- **A small set.** Roughly creating objects, operating on handles, sending and receiving
+  messages, mapping memory, waiting, and threads. Everything else goes through messages to
+  services.
+- **Handles only.** Every system call that touches an object takes a handle. None takes a
+  path or a global ID.
+- **Versioned.** System call numbers are never reused. Changes add new calls, old ones are
+  retired on a published schedule, and the interface version is readable at run time.
+- **Called through our library.** Programs call the system through the native library, not
+  directly, which leaves room to change how calls are made underneath.
+
+### 6.6 Memory
+
+The kernel needs:
+- a physical page allocator that knows about NUMA, the memory layout of multi-socket
+  machines (used on larger machines, harmless on small ones);
+- page tables per address space;
+- copy-on-write memory objects;
+- shared memory.
+
+Memory a program uses is charged to it, so one program can't exhaust the system.
+
+### 6.7 Multiple cores
+
+The kernel runs on every core from the start:
+- fine-grained locks, with a documented order for taking them;
+- a run queue per core, with work moved between cores;
+- every structure designed for concurrent access from day one.
+
+Programs get threads, and the native library offers locks and channels that are safe across
+threads.
+
+---
+
+## 7. Security: users, capabilities and sandboxes
+
+### 7.1 The model
+
+- **Apps start empty.** A program starts with only the capabilities its launcher gives it.
+- **The sandbox manager** launches apps and decides what each one gets. Its decisions come
+  from:
+  - what the app's **manifest** asks for (a small file shipped with the app);
+  - **rules** the user has set, such as "Paint may always use /Pictures";
+  - what the **user is doing at that moment**.
+
+  Rules are stored. Capabilities are not: they exist only while the system runs and are
+  handed out fresh each time an app starts.
+- **The file picker** runs as part of the system, outside the app. The app asks for "a file
+  to open". You choose one, and the app receives a capability for that file alone. Saving
+  works the same way.
+- **The clipboard, drag and drop, and "Open with…"** are system services too, so apps never
+  talk to each other directly unless they've been connected.
+- **Users** own files and settings. Each user has a home space. Logging in hands the desktop
+  that user's capabilities, and the desktop passes slices of them to apps.
+- **Trusted apps** (Terminal, backup and developer tools) can be given a user's full
+  capabilities. This is explicit and visible, never a default.
+- **The permissions viewer** shows what each running app holds and why it was given it.
+- **Drivers** get only their own device: its memory ranges, its interrupt, and access to
+  memory for data transfers, limited by the IOMMU (the hardware's memory guard for devices)
+  where the machine has one.
+- **The network is a capability too.** An app without one can't connect anywhere.
+
+### 7.2 What each app sees as its files
+
+Each app has its own **file tree**, assembled from the folders and files it has been given.
+Notepad might see `/Documents` and the one file you opened. This makes the POSIX layer work
+(section 9) and makes sandboxes understandable: what an app can see is exactly what it can
+reach.
+
+### 7.3 Known costs
+
+- **Ported Unix programs** see only their sandbox, so some will need settings or a trusted
+  launch.
+- **Stopping and inspecting processes.** Programs can only be stopped or inspected through a
+  capability for them. Debuggers and task managers are therefore trusted tools.
+- **Prompt fatigue.** If you're clicking "Allow" all day, the design has gone wrong. Prompts
+  are a last resort.
+
+---
+
+## 8. System services
+
+Each of these gets its own design note before it's built.
+
+- **Root program**: starts everything; holds the initial capabilities.
+- **Device manager**:
+  - reads the ACPI tables or the device tree;
+  - scans PCI Express and USB;
+  - matches each device to a driver and starts the driver with that device's capabilities;
+  - restarts drivers that crash.
+- **Drivers**: one program each, using a shared driver framework.
+- **File layer**: joins filesystems, builds each app's file tree, and caches.
+- **Filesystem servers**:
+  - **RockFS**, the native filesystem, carried over from 1.x. Disks made by 1.3 stay
+    readable, and `tools/rockfs.py` keeps working as the reference.
+  - FAT32, exFAT and ISO 9660, then NTFS and ext4, read-only first.
+- **Network stack**: Ethernet, IPv4 and IPv6, TCP, UDP, DHCP and DNS, then TLS.
+- **Display server and compositor**:
+  - each window is a shared buffer the app draws into;
+  - the compositor puts the screen together;
+  - it understands high-resolution screens (scale factors) from the start.
+- **Input**: keyboard layouts, mouse, touch, and later tablets and pens.
+- **Audio**: mixing and low-latency playback and recording.
+- **Sandbox manager, file picker, clipboard**: see section 7.
+- **App installer**: installs apps with their manifests; a package format of our own.
+- **Logging and tracing**: one place to see what every part of the system is doing,
+  including messages flowing between programs. This is essential for debugging a microkernel.
+
+### Text and fonts
+
+- **Unicode everywhere.** UTF-8 in every interface.
+- **Our own font rendering**: TrueType and OpenType outlines, anti-aliasing and scaling.
+- **Shaping later.** Shaping is what joins letters correctly in scripts like Arabic and
+  Devanagari; we build it afterwards.
+
+The bitmap font from 1.x stays for the early text console.
+
+---
+
+## 9. Programming interfaces
+
+- **The native library** (Rust) is the PrettyBigRock interface. It covers:
+  - handles and messages;
+  - files through capabilities;
+  - threads;
+  - the generated interface code;
+  - windows and drawing (through the display service).
+- **Rust standard library support.** Later we'll add PrettyBigRock as a target for Rust's
+  standard library, so ordinary Rust programs can be built for PrettyBigRock.
+- **The POSIX layer** is our own C library, written in Rust with a C interface. It turns Unix
+  calls into native ones: `open` looks the path up in the app's own file tree, and sockets
+  use the network capability. Unix programs are ported by recompiling.
+- **`fork`.** The Unix way of starting programs, `fork`, copies a whole running program. It
+  doesn't fit a capability system well. The POSIX layer supports `posix_spawn` properly and
+  emulates `fork` as well as it reasonably can, which is a known limit.
+- **Programs are ELF files**, the usual format for programs on Unix-like systems. A
+  PrettyBigRock note inside each one marks it as ours and says which interface version it
+  needs.
+
+---
+
+## 10. Portability
+
+All processor-specific code lives in `arch/<name>/`. Each architecture provides one
+documented set of functions:
+- early start-up;
+- page tables;
+- switching between threads;
+- system call entry;
+- interrupt controllers;
+- timers;
+- starting other cores;
+- reading the hardware description.
+
+Machine-specific details, such as a particular board's interrupt controller or the Pi's
+start-up quirks, live in `board/<name>/` underneath it.
+
+Rules:
+- **Outside `arch/`,** code doesn't assume a processor, its page size, or how many cores
+  there are.
+- **Little-endian is assumed** (all our targets are), but data on disk and on the wire is
+  always converted explicitly.
+- **Drivers for shared buses** (PCI Express, USB, NVMe, AHCI, virtio) are written once and run
+  on every architecture.
+- **Every change is built and tested on every architecture** automatically. An architecture
+  that isn't tested quietly breaks.
+- **Porting checklist.** `docs/design/porting.md` will list exactly what a new architecture
+  needs. RISC-V is the planned third architecture, and the test of whether the layer is
+  really clean.
+
+---
+
+## 11. Hardware
+
+We support chosen machines well, then widen the list.
+
+| Machine | What it needs |
+|---------|---------------|
+| QEMU (x86-64 and ARM64) | virtio disk, network, graphics and input; serial; UEFI and BIOS |
+| Roxy (Intel H61, i5-2300, about 2011) | BIOS boot, AHCI (SATA), USB 2 (EHCI) keyboard, mouse and storage, onboard Ethernet, VESA framebuffer, ACPI |
+| Raspberry Pi 5 | BCM2712, the RP1 chip (USB, Ethernet), its interrupt controller, SD card, framebuffer |
+| A modern PC or laptop (perhaps Harriet) | UEFI, NVMe, USB 3 (xHCI), its graphics in framebuffer mode, ACPI |
+
+**Graphics.** We use the framebuffer the firmware gives us. Accelerated graphics drivers are
+a long-term aim, not a near one.
+
+**Wi-Fi.** It's among the hardest hardware to support (each chip needs firmware and a complex
+driver), so wired Ethernet comes first.
+
+**ACPI.** Turning machines off properly, handling batteries and lids, and finding some
+devices needs an interpreter for ACPI's own bytecode (AML). That's a big project of its own
+and gets its own design note.
+
+---
+
+## 12. Storage and filesystems
+
+- **Disk layout.** Partition tables (GPT and MBR) are read by the storage stack, not by
+  filesystems.
+- **RockFS** stays the native filesystem. Its spec, [ROCKFS.md](ROCKFS.md), has the feature
+  flags we need for growth. The first planned additions are recording owners and permissions
+  for users (D6) and support for mounted volumes.
+- **One block cache** is shared by all filesystems. Write ordering stays the filesystem's
+  responsibility, as copy-on-write requires.
+
+---
+
+## 13. Languages and tools
+
+- **Rust** for the kernel, drivers, services, libraries and apps.
+- **Assembly** only where the processor demands it, kept in `arch/`.
+- **The Rust toolchain version** is pinned in the repo so builds are repeatable. Some kernel
+  work needs features that only exist in Rust's nightly releases; each one we use is listed
+  with a plan to move off it.
+- **No third-party Rust packages**; only Rust's built-in `core` and `alloc` libraries.
+- **The build** is driven by a small build tool of our own written in Rust, run through
+  `cargo`. It builds every architecture, makes disk images and runs QEMU.
+- **Python** stays for the host tools (`tools/rockfs.py`) and tests.
+
+---
+
+## 14. Borrowed parts
+
+The rule is to write everything ourselves. Anything borrowed:
+- is temporary;
+- sits behind our own interface;
+- appears in this list with its licence and a plan to replace it.
+
+| Part | Used for | Licence | Plan |
+|------|----------|---------|------|
+| Rust compiler and its `core`/`alloc` libraries | Building | MIT/Apache-2.0 | Part of the language; not replaced. |
+| QEMU, OVMF, SeaBIOS | Testing in VMs | GPL/LGPL/BSD | Tools, not part of the OS. |
+| Raspberry Pi firmware | Starting the Pi 5 | Broadcom licence | Firmware the board needs; not part of the OS. |
+| v86 emulator | Browser player for 1.x | BSD-2 | 32-bit only; see open question Q3. |
+
+Nothing borrowed is part of PrettyBigRock 2 itself yet.
+
+---
+
+## 15. How we work
+
+- **Design notes** live in `docs/design/`, one per major part, written before the code.
+  A note says the problem, the design, the alternatives considered, and what's still open.
+  Disk formats, boot information, system calls and interfaces each get exact
+  specifications.
+- **This document** is the top-level map and is updated when a decision changes, with the
+  change recorded in section 17.
+- **The DEVLOG** records each session: who asked for what, and what Claude did.
+- **Testing:**
+  - unit tests run on the host;
+  - QEMU tests on every architecture boot the system and run scripted checks;
+  - GitHub Actions runs all of it for every change;
+  - formats get cross-checks against independent implementations, as RockFS has with
+    `tools/rockfs.py`.
+- **Versions:**
+  - the 1.x line (the C system) continues as it is;
+  - PrettyBigRock 2.0 is the first release of this design;
+  - interfaces carry their own version numbers, separate from the OS version.
+- **Authorship.** The code is written by Claude and directed by Chris, and the repo says so
+  plainly.
+
+---
+
+## 16. Open questions
+
+- **Q1. Licence for apps.** The GPL requires programs that link GPL code to be GPL too.
+  Linux avoids this for apps through its system call boundary, and most C libraries use the
+  LGPL. Should the native library and C library carry a linking exception, so people can
+  write apps under other licences? (Claude's suggestion: yes, a linking exception on the
+  user-space libraries only; the kernel and services stay plain GPL.)
+- **Q2. Where 1.x lives in the repo.** Suggestion: move the C system into `classic/`, keep
+  it building and releasable, and put PrettyBigRock 2 at the top level.
+- **Q3. The browser player.** v86 only emulates 32-bit x86, so it can't run PrettyBigRock 2.
+  Options: keep the browser for 1.x; find or write a 64-bit browser emulator later; or
+  accept that 2.x needs a real VM.
+- **Q4. What "real tasks" means for 2.0 and beyond.** For example: writing and saving
+  documents, managing files on a USB stick, viewing pictures, playing music, simple web
+  pages. A short list would let the roadmap aim at it.
+- **Q5. Cryptography.** TLS and disk encryption need cryptography. Writing our own is
+  possible but risky to get wrong. The plan is to write it carefully against published test
+  vectors and treat it as high-stakes code, with outside review if anyone offers.
+- **Q6. A name for the kernel**, if it should have its own.
+
+---
+
+## 17. Changes to this document
+
+- 29 October 2026: draft 1.

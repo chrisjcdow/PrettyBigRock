@@ -1,0 +1,126 @@
+# PrettyBigRock 2: roadmap
+
+Status: **draft 1**, 29 October 2026. This file goes with [DESIGN.md](DESIGN.md).
+
+The roadmap is a series of milestones. Each one ends with something that can be shown working
+and tested automatically. The order is chosen so that the decisions that are expensive to
+change (the system calls, messages, capabilities, the hand-over from the boot loaders, and
+portability) are settled and proven early, before a lot of code depends on them.
+
+There are no dates. Each milestone is done when its checks pass and its design notes are
+up to date.
+
+PrettyBigRock 1.x stays available throughout as the playable version.
+
+---
+
+## M0: Foundations
+- Reorganise the repo, with the C system moved to `classic/` (open question Q2).
+- Pin the Rust toolchain; write the build tool; produce disk images for both architectures.
+- Set up GitHub Actions to build everything and boot it in QEMU.
+- Add the `docs/design/` template and the first notes: boot information, the repo layout, and
+  coding rules.
+
+**Done when:** an empty Rust kernel builds for x86-64 and ARM64 on every change.
+
+## M1: Booting, on both architectures
+- A UEFI loader (x86-64 and ARM64), a BIOS loader (x86-64), and the shared boot information.
+- The architecture layer's first pieces: early start-up, a serial port, the memory map.
+- A text console on the framebuffer, using the 1.x font.
+
+**Done when:** QEMU boots to "Hello from PrettyBigRock" through UEFI on both architectures and
+through BIOS on x86-64, all tested automatically.
+
+## M2: The kernel core
+- A physical memory allocator, page tables and kernel memory.
+- Interrupts and timers; starting all cores; a scheduler with a run queue per core.
+- Kernel threads running on every core, with lock checking in test builds.
+
+**Done when:** a stress test runs threads across 4 cores on both architectures without
+problems.
+
+## M3: Capabilities, messages and the first programs
+- Design notes, before code, for the kernel objects and capability rules, the system calls,
+  and messages and the interface language.
+- Capability tables, rights, reduced copies and revocation.
+- Synchronous messages, notifications, shared memory and ring buffers.
+- The ELF loader, the root program, and the first version of the native library.
+
+**Done when:** two separate programs exchange messages and capabilities, a program can't reach
+anything it wasn't given, and revocation is shown to work, all tested.
+
+## M4: Devices and drivers
+- The device manager; PCI Express; reading ACPI tables and device trees.
+- The driver framework, with drivers as programs and restarted when they crash.
+- Drivers: serial, the framebuffer, PS/2 and virtio keyboard and mouse, virtio disk.
+
+**Done when:** a driver can be deliberately crashed and is restarted while the system keeps
+running.
+
+## M5: Files and sandboxes
+- The file layer, each app's own file tree, and the shared block cache.
+- RockFS in Rust, reading and writing disks made by 1.3 and cross-checked with
+  `tools/rockfs.py`.
+- FAT32.
+- The first versions of the sandbox manager, app manifests and users.
+- A text shell.
+
+**Done when:** a program sees exactly the files it was given, and a 1.3 data disk opens with
+its files intact.
+
+## M6: The desktop (2.0 alpha)
+- The display server and compositor, the input service, and the window toolkit in the native
+  library.
+- The file picker, the clipboard, and the permissions viewer.
+- Rewrites of the 1.x apps for the new system: Files, Notepad, Paint, Terminal, Snake and the
+  rest. The potato stays.
+
+**Done when:** PrettyBigRock 2 does everything 1.3 does, with every app sandboxed. This is the
+first 2.0 alpha.
+
+## M7: Real hardware I, Roxy
+- AHCI; USB 2 (EHCI) with keyboard, mouse and storage; Roxy's onboard Ethernet chip.
+- An ACPI interpreter, enough to power off and to find devices.
+- A bootable USB stick image.
+
+**Done when:** PrettyBigRock boots on Roxy from a USB stick, without touching Roxy's own disks,
+and runs the desktop with a USB keyboard and mouse.
+
+## M8: Networking
+- Ethernet, IPv4, IPv6, UDP, TCP, DHCP and DNS, with the network as a capability.
+- Then cryptography and TLS (open question Q5).
+
+**Done when:** PrettyBigRock gets an address on your network and fetches a page from a web
+server.
+
+## M9: POSIX and ported software
+- Our C library, `posix_spawn`, and `fork` emulation.
+- Porting a first set of programs, such as Lua, a small C compiler, and Doom.
+- Rust standard library support.
+
+**Done when:** unmodified C programs, recompiled for PrettyBigRock, run inside a sandbox.
+
+## M10: Raspberry Pi 5
+- The BCM2712 board layer, the RP1 chip (USB and Ethernet), the SD card, and the
+  framebuffer.
+
+**Done when:** the Pi 5 boots to the desktop.
+
+## M11: A modern PC
+- NVMe, USB 3 (xHCI), and the remaining ACPI needs (battery, lid, sleep on a laptop).
+
+**Done when:** a current PC or laptop boots to the desktop and saves files on its own disk.
+
+## Beyond
+These are roughly in order of usefulness, and will be refined once open question Q4 (what
+"real tasks" means) is answered:
+- audio;
+- more filesystems (exFAT, ISO 9660, NTFS and ext4 read-only);
+- text shaping;
+- installing apps;
+- logins for several users;
+- disk encryption;
+- Wi-Fi;
+- RISC-V;
+- accelerated graphics;
+- a web browser (a very large project of its own).
