@@ -8,7 +8,7 @@ mod fb;
 mod font;
 mod uart;
 
-use crate::sync::SpinLock;
+use crate::sync::{IrqSpinLock, Level};
 use core::fmt::{self, Write};
 use pbr_bootinfo::BootInfo;
 
@@ -56,7 +56,8 @@ impl Write for Console {
     }
 }
 
-static CONSOLE: SpinLock<Console> = SpinLock::new(Console { serial: Serial::None, screen: None });
+static CONSOLE: IrqSpinLock<Console> =
+    IrqSpinLock::new(Level::Console, "console", Console { serial: Serial::None, screen: None });
 
 /// Sets up the console from the boot information.
 ///
@@ -89,6 +90,21 @@ pub unsafe fn init(info: &BootInfo, direct_map_base: u64) {
 
 /// Used by [`kprint!`] and [`kprintln!`].
 pub fn print(args: fmt::Arguments<'_>) {
+    let _ = CONSOLE.lock().write_fmt(args);
+}
+
+/// Prints even if the console is locked: for reporting a panic, which may have happened while
+/// this core was printing.
+pub fn print_panic(args: fmt::Arguments<'_>) {
+    for _ in 0..10_000_000 {
+        if let Some(mut c) = CONSOLE.try_lock() {
+            let _ = c.write_fmt(args);
+            return;
+        }
+        core::hint::spin_loop();
+    }
+    // SAFETY: the system is stopping; whoever held the console will never release it.
+    unsafe { CONSOLE.force_unlock() };
     let _ = CONSOLE.lock().write_fmt(args);
 }
 

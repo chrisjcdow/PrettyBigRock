@@ -29,7 +29,8 @@ PrettyBigRock/
 │       ├── arch/<name>/    everything specific to one processor family
 │       └── board/<name>/   everything specific to one machine (from M1)
 ├── lib/                  libraries, one folder each
-│   └── bootinfo/           the boot information (note 0003)
+│   ├── bootinfo/           the boot information (note 0003)
+│   └── platform/           page tables, ACPI and device trees, shared by loaders and kernel
 ├── drivers/              drivers, one program each (from M4)
 ├── services/             system services, one program each (from M3)
 ├── apps/                 apps (from M6)

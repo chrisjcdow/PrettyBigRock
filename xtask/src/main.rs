@@ -91,7 +91,8 @@ fn run(args: &[String]) -> Result {
     match command {
         "build" => build_all(&root, &Toolchain::find(&root)?, opts.release).map(|_| ()),
         "run" => {
-            let img = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
+            let imgs = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
+            let img = if opts.selftest { imgs.selftest } else { imgs.normal };
             let want = opts.arch.as_deref().unwrap_or("x86_64");
             let arch = ARCHES.iter().map(|a| a.name).find(|n| *n == want).unwrap_or("x86_64");
             let cfg =
@@ -99,8 +100,8 @@ fn run(args: &[String]) -> Result {
             qemu::run(&cfg, &img, &work_dir(&root)?)
         }
         "qemu-test" => {
-            let img = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
-            qemu_test(&root, &img)
+            let imgs = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
+            qemu_test(&root, &imgs.selftest)
         }
         "check" => check(&root, &Toolchain::find(&root)?),
         "test" => test(&root),
@@ -109,8 +110,8 @@ fn run(args: &[String]) -> Result {
             check(&root, &tc)?;
             test(&root)?;
             build_all(&root, &tc, true)?;
-            let img = build_all(&root, &tc, false)?;
-            qemu_test(&root, &img)?;
+            let imgs = build_all(&root, &tc, false)?;
+            qemu_test(&root, &imgs.selftest)?;
             println!("ci: all passed");
             Ok(())
         }
@@ -128,7 +129,7 @@ const HELP: &str = "
 PrettyBigRock build tool
 
   cargo xtask build [--release]          build everything, and the boot disk image
-  cargo xtask run [--arch NAME] [--bios] [--el2] [--release]
+  cargo xtask run [--arch NAME] [--bios] [--el2] [--selftest] [--release]
                                          start PrettyBigRock in QEMU, in a window
   cargo xtask qemu-test [--release]      boot every configuration; check the kernel starts
   cargo xtask check                      formatting and lints
@@ -146,6 +147,7 @@ struct Options {
     release: bool,
     bios: bool,
     el2: bool,
+    selftest: bool,
 }
 
 impl Options {
@@ -157,6 +159,7 @@ impl Options {
                 "--release" => opts.release = true,
                 "--bios" => opts.bios = true,
                 "--el2" => opts.el2 = true,
+                "--selftest" => opts.selftest = true,
                 "--arch" => {
                     let name = it.next().ok_or("--arch needs a name")?;
                     if !ARCHES.iter().any(|x| x.name == name) {
@@ -343,7 +346,7 @@ fn write_out(root: &Path, rel: &str, bytes: &[u8]) -> Result<PathBuf> {
 
 /// Builds the kernels and loaders for every architecture, and the boot disk image
 /// (docs/design/0004-loaders-and-boot-disk.md). Returns the image's path.
-fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<PathBuf> {
+fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
     let profile = if release { "release" } else { "debug" };
     let mut kernels = Vec::new();
     let mut loaders = Vec::new();
@@ -362,18 +365,36 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<PathBuf> {
         kernels.push(k);
         loaders.push(l);
     }
-    let cmdline = b"";
-    let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], cmdline)?;
-    let mut files: Vec<(String, &[u8])> = Vec::new();
-    for (i, arch) in ARCHES.iter().enumerate() {
-        files.push((format!("EFI/BOOT/{}", arch.uefi_file), &loaders[i]));
-        files.push((format!("PBR/{}/kernel.elf", arch.name), &kernels[i]));
+    // Two images: the ordinary one, and one whose command line asks for the self-test, which
+    // the boot tests use.
+    let mut paths = Vec::new();
+    for (name, cmdline) in
+        [("prettybigrock.img", &b""[..]), ("prettybigrock-selftest.img", &b"selftest"[..])]
+    {
+        let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], cmdline)?;
+        let mut files: Vec<(String, &[u8])> = Vec::new();
+        for (i, arch) in ARCHES.iter().enumerate() {
+            files.push((format!("EFI/BOOT/{}", arch.uefi_file), &loaders[i]));
+            files.push((format!("PBR/{}/kernel.elf", arch.name), &kernels[i]));
+        }
+        files.push(("PBR/cmdline.txt".to_string(), cmdline));
+        let refs: Vec<(&str, &[u8])> = files.iter().map(|(p, d)| (p.as_str(), *d)).collect();
+        let img = image::build(&image::Contents {
+            mbr_code: &mbr,
+            bios_partition: &bios,
+            esp_files: &refs,
+        })?;
+        paths.push(write_out(root, &format!("build/{profile}/{name}"), &img)?);
     }
-    files.push(("PBR/cmdline.txt".to_string(), cmdline));
-    let refs: Vec<(&str, &[u8])> = files.iter().map(|(p, d)| (p.as_str(), *d)).collect();
-    let img =
-        image::build(&image::Contents { mbr_code: &mbr, bios_partition: &bios, esp_files: &refs })?;
-    write_out(root, &format!("build/{profile}/prettybigrock.img"), &img)
+    Ok(Images { normal: paths.remove(0), selftest: paths.remove(0) })
+}
+
+/// The boot disk images [`build_all`] makes.
+struct Images {
+    /// The ordinary image.
+    normal: PathBuf,
+    /// The same, with `selftest` on the kernel's command line.
+    selftest: PathBuf,
 }
 
 /// Compiler flags that keep the folder the repository is in out of what's built, so the same
@@ -488,6 +509,8 @@ fn check(root: &Path, tc: &Toolchain) -> Result {
         "pbr-bootinfo",
         "--package",
         "pbr-boot-common",
+        "--package",
+        "pbr-platform",
         "--all-targets",
         "--",
         "-D",
@@ -550,6 +573,8 @@ fn test(root: &Path) -> Result {
         "pbr-bootinfo",
         "--package",
         "pbr-boot-common",
+        "--package",
+        "pbr-platform",
         "--package",
         "xtask",
     ]))?;

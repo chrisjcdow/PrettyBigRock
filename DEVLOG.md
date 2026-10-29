@@ -169,3 +169,39 @@ Roxy runs today. He also asked for support for several screens.
     UEFI at EL1 and at EL2) and checks the report each time. GitHub Actions now does too.
 - All four boot configurations worked first time, in debug and release builds.
 - Added `run-prettybigrock.bat` for trying PrettyBigRock 2 in QEMU on Windows.
+
+## Session 7: 29 October 2026, milestone M2 (the kernel core)
+
+**Chris** got home and booted PrettyBigRock 2 on Harriet all three ways. He pushed
+everything to GitHub, where the automatic checks passed first time, and published the v1.2
+and v1.3 releases. Then he asked for M2.
+
+**Claude:**
+- Wrote design note 0005, on the kernel core, before the code.
+- Moved the page-table, ACPI and device-tree code into `lib/platform`, shared by the loaders
+  and the kernel, and added readers for ACPI's MADT, HPET, GTDT and FADT tables, with tests.
+- Built the kernel core, on both architectures:
+  - a physical page allocator;
+  - the kernel's own page tables, with stacks behind guard pages and an area for device
+    registers;
+  - the heap, so the kernel can use `Box`, `Vec` and `Arc`;
+  - per-core data;
+  - locks, with a lock-order checker in debug builds;
+  - the clock and a 1000 Hz timer on every core (HPET/TSC and the local APIC on x86-64,
+    the generic timer and the GIC on ARM64);
+  - exceptions;
+  - starting the other cores: a real-mode trampoline and INIT-SIPI on x86-64, and PSCI with
+    its own EL2-to-EL1 drop on ARM64;
+  - a scheduler with a run queue per core, priorities, preemption, work stealing, sleep,
+    join and wait queues.
+- Added a self-test (`selftest` on the command line) and a second disk image that uses it.
+  The boot tests now run it on every configuration, with 4 cores.
+- Problems found along the way:
+  - The lock-order checker caught the heap and page allocator taken in the wrong order, and
+    a diagnostic list taking the heap.
+  - Secondary ARM cores read their start-up record after turning the MMU on, when it was no
+    longer mapped.
+  - A thread could be moved to another core halfway through marking itself not preemptible.
+  - On x86 without x2APIC, an interrupt in the middle of sending an inter-core interrupt
+    could redirect it.
+- Stress-tested the result by booting all four configurations 60 times in a row.

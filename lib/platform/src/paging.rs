@@ -6,9 +6,7 @@
 //! Both architectures use four levels of 512-entry tables with 4 KiB pages and 48-bit virtual
 //! addresses, so one builder handles both; only the bits inside each entry differ.
 
-use crate::elf::Kernel;
-use crate::memmap::is_ram;
-use crate::{DIRECT_MAP_BASE, PAGE, align_up};
+use crate::{DIRECT_MAP_BASE, PAGE, align_down, align_up, is_ram};
 use pbr_bootinfo::{MemoryKind, MemoryRegion};
 
 const LARGE: u64 = 2 * 1024 * 1024;
@@ -192,6 +190,33 @@ impl PageTables {
         Ok(Self { root: fa.alloc().ok_or(MapError::OutOfMemory)?, format })
     }
 
+    /// An existing tree.
+    pub fn from_root(root: u64, format: Format) -> Self {
+        Self { root, format }
+    }
+
+    /// The entry format.
+    pub fn format(&self) -> Format {
+        self.format
+    }
+
+    /// Removes the 4 KiB mapping at `virt`, if there is one. Returns whether there was. (Tables
+    /// emptied by this aren't freed; the caller flushes the TLB.)
+    pub fn unmap_page(&mut self, fa: &mut impl FrameAlloc, virt: u64) -> bool {
+        let mut table = self.root;
+        for level in (1..=3).rev() {
+            let e = fa.table(table)[index(virt, level)];
+            if !self.format.present(e) || self.format.is_leaf(e, level) {
+                return false;
+            }
+            table = e & ADDR_MASK;
+        }
+        let slot = &mut fa.table(table)[index(virt, 0)];
+        let was = self.format.present(*slot);
+        *slot = 0;
+        was
+    }
+
     /// Maps `len` bytes at `virt` to `phys`, using 2 MiB pages where both addresses allow.
     pub fn map(
         &mut self,
@@ -269,69 +294,54 @@ impl PageTables {
     }
 }
 
-/// The page tables a loader hands to the kernel.
-pub struct Standard {
-    /// Holds the upper half: the kernel and the direct map. On x86-64 it also holds the
-    /// identity map, and is the only tree.
-    pub upper: PageTables,
-    /// On AArch64, the lower half (`TTBR0_EL1`): the identity map. On x86-64, the same tree as
-    /// `upper`.
-    pub lower_root: u64,
+/// The memory type the direct map uses for a region, or `None` if it isn't mapped at all.
+pub fn direct_map_memory(format: Format, kind: u32) -> Option<Memory> {
+    if is_ram(kind) {
+        Some(Memory::Normal)
+    } else if kind == MemoryKind::Framebuffer as u32 {
+        Some(Memory::Framebuffer)
+    } else if kind == MemoryKind::DeviceMemory as u32 {
+        Some(Memory::Device)
+    } else if format == Format::X86_64 && kind == MemoryKind::Reserved as u32 {
+        // On PCs, firmware tables (SMBIOS, the ACPI root pointer) often sit in reserved
+        // memory, and the memory-type registers keep device memory uncached anyway. On Arm,
+        // reserved memory may belong to the secure world and must not be touched at all.
+        Some(Memory::Normal)
+    } else {
+        None
+    }
 }
 
-/// Builds the page tables note 0003 describes:
-/// - the kernel, at the address it was linked at, with each segment's own permissions;
-/// - the direct map of every region in `map`, by kind;
-/// - an identity map of RAM, so the loader keeps running while it switches tables.
-///
-/// `kernel_phys` is where [`Kernel::load_into`] put the kernel's span.
-pub fn build_standard(
+/// Maps every region of `map` into the direct map (note 0003), each by its kind.
+pub fn map_direct(
+    t: &mut PageTables,
     fa: &mut impl FrameAlloc,
-    format: Format,
-    kernel: &Kernel<'_>,
-    kernel_phys: u64,
     map: &[MemoryRegion],
-) -> Result<Standard, MapError> {
-    let mut upper = PageTables::new(fa, format)?;
-    let mut lower = match format {
-        Format::X86_64 => None,
-        Format::Aarch64 => Some(PageTables::new(fa, format)?),
-    };
-
-    let (lo, _) = kernel.span();
-    for s in kernel.segments() {
-        let attr = Attr { write: s.writable(), exec: s.executable(), mem: Memory::Normal };
-        let len = align_up(s.vaddr + s.mem_len, PAGE) - s.vaddr;
-        upper.map(fa, s.vaddr, kernel_phys + (s.vaddr - lo), len, attr)?;
-    }
-
+) -> Result<(), MapError> {
     for r in map {
-        let mem = if is_ram(r.kind) {
-            Memory::Normal
-        } else if r.kind == MemoryKind::Framebuffer as u32 {
-            Memory::Framebuffer
-        } else if r.kind == MemoryKind::DeviceMemory as u32 {
-            Memory::Device
-        } else if format == Format::X86_64 && r.kind == MemoryKind::Reserved as u32 {
-            // On PCs, firmware tables (SMBIOS, the ACPI root pointer) often sit in reserved
-            // memory, and the memory-type registers keep device memory uncached anyway. On Arm,
-            // reserved memory may belong to the secure world and must not be touched at all.
-            Memory::Normal
-        } else {
-            continue;
-        };
-        let base = crate::align_down(r.range.base, PAGE);
+        let Some(mem) = direct_map_memory(t.format, r.kind) else { continue };
+        let base = align_down(r.range.base, PAGE);
         let end = align_up(r.range.base + r.range.len, PAGE);
         let attr = Attr { write: true, exec: false, mem };
-        map_skipping_overlaps(&mut upper, fa, DIRECT_MAP_BASE + base, base, end - base, attr)?;
-        if is_ram(r.kind) {
-            let ident = Attr { write: true, exec: true, mem: Memory::Normal };
-            let t = lower.as_mut().unwrap_or(&mut upper);
-            map_skipping_overlaps(t, fa, base, base, end - base, ident)?;
-        }
+        map_skipping_overlaps(t, fa, DIRECT_MAP_BASE + base, base, end - base, attr)?;
     }
-    let lower_root = lower.map(|l| l.root).unwrap_or(upper.root);
-    Ok(Standard { upper, lower_root })
+    Ok(())
+}
+
+/// Identity-maps every RAM region of `map`, executable: what a loader needs to keep running
+/// while it switches page tables.
+pub fn map_identity(
+    t: &mut PageTables,
+    fa: &mut impl FrameAlloc,
+    map: &[MemoryRegion],
+) -> Result<(), MapError> {
+    for r in map.iter().filter(|r| is_ram(r.kind)) {
+        let base = align_down(r.range.base, PAGE);
+        let end = align_up(r.range.base + r.range.len, PAGE);
+        let attr = Attr { write: true, exec: true, mem: Memory::Normal };
+        map_skipping_overlaps(t, fa, base, base, end - base, attr)?;
+    }
+    Ok(())
 }
 
 /// Maps a range, page by page where it meets something already mapped. Regions that aren't
@@ -407,8 +417,6 @@ impl FrameAlloc for BumpAlloc {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::elf::{EM_X86_64, PF_R, PF_W, PF_X, tests::make};
-    use crate::memmap::MapBuilder;
     use pbr_bootinfo::PhysRange;
 
     /// Frames in ordinary heap memory, at made-up physical addresses.
@@ -465,38 +473,39 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn standard_layout() {
-        let b = crate::KERNEL_BASE;
-        let f =
-            make(EM_X86_64, b, &[(b, b"code", 4, PF_R | PF_X), (b + 0x1000, b"d", 1, PF_R | PF_W)]);
-        let k = Kernel::parse(&f, EM_X86_64).unwrap();
-        let mut buf = vec![MemoryRegion { range: PhysRange::NONE, kind: 0, reserved: 0 }; 16];
-        let mut m = MapBuilder::new(&mut buf);
-        m.set(0, 0x800_0000, MemoryKind::Usable).unwrap();
-        m.set(0x40_0000, 0x2000, MemoryKind::Kernel).unwrap();
-        m.set(0x8000_0000, 0x30_0000, MemoryKind::Framebuffer).unwrap();
-        m.set(0xFEC0_0000, 0x1000, MemoryKind::DeviceMemory).unwrap();
-        let map = m.finish();
+    fn direct_and_identity_maps() {
+        let r = |base: u64, len: u64, k: MemoryKind| MemoryRegion {
+            range: PhysRange { base, len },
+            kind: k as u32,
+            reserved: 0,
+        };
+        let map = [
+            r(0, 0x800_0000, MemoryKind::Usable),
+            r(0x8000_0000, 0x30_0000, MemoryKind::Framebuffer),
+            r(0xFEC0_0000, 0x1000, MemoryKind::DeviceMemory),
+            r(0xFED0_0000, 0x1000, MemoryKind::Reserved),
+        ];
         for format in [Format::X86_64, Format::Aarch64] {
             let mut fa = FakeFrames(vec![]);
-            let st = build_standard(&mut fa, format, &k, 0x40_0000, map).unwrap();
-            let up = &st.upper;
-            let code = up.translate(&mut fa, b + 2).unwrap();
-            assert_eq!(code.0, 0x40_0002);
-            assert!(code.1.exec && !code.1.write);
-            let data = up.translate(&mut fa, b + 0x1000).unwrap();
-            assert!(!data.1.exec && data.1.write);
-            let dm = up.translate(&mut fa, DIRECT_MAP_BASE + 0x123_4567).unwrap();
-            assert_eq!(dm, (0x123_4567, Attr::DATA));
-            let fb = up.translate(&mut fa, DIRECT_MAP_BASE + 0x8000_0000).unwrap();
+            let mut t = PageTables::new(&mut fa, format).unwrap();
+            map_direct(&mut t, &mut fa, &map).unwrap();
+            map_identity(&mut t, &mut fa, &map).unwrap();
+            assert_eq!(
+                t.translate(&mut fa, DIRECT_MAP_BASE + 0x123_4567),
+                Some((0x123_4567, Attr::DATA))
+            );
+            let fb = t.translate(&mut fa, DIRECT_MAP_BASE + 0x8000_0000).unwrap();
             assert!(fb.1.write && !fb.1.exec);
-            let dev = up.translate(&mut fa, DIRECT_MAP_BASE + 0xFEC0_0000).unwrap();
+            let dev = t.translate(&mut fa, DIRECT_MAP_BASE + 0xFEC0_0000).unwrap();
             assert_eq!(dev.1.mem, Memory::Device);
-            let lower = PageTables { root: st.lower_root, format };
-            let id = lower.translate(&mut fa, 0x7F_F000).unwrap();
+            let reserved = t.translate(&mut fa, DIRECT_MAP_BASE + 0xFED0_0000);
+            assert_eq!(reserved.is_some(), format == Format::X86_64);
+            let id = t.translate(&mut fa, 0x7F_F000).unwrap();
             assert_eq!(id.0, 0x7F_F000);
             assert!(id.1.exec);
-            assert_eq!(lower.translate(&mut fa, 0x8000_0000), None); // framebuffer: no identity
+            assert_eq!(t.translate(&mut fa, 0x8000_0000), None); // framebuffer: no identity map
+            assert!(t.unmap_page(&mut fa, DIRECT_MAP_BASE + 0xFEC0_0000));
+            assert_eq!(t.translate(&mut fa, DIRECT_MAP_BASE + 0xFEC0_0000), None);
         }
     }
 }

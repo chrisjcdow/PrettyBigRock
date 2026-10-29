@@ -16,6 +16,7 @@ written to be read cold.
 | [0002](0002-coding-rules.md) | Coding rules, the toolchain, and testing | Accepted |
 | [0003](0003-boot-information.md) | Boot information, and the machine's state when the kernel starts | Accepted (version 1.0) |
 | [0004](0004-loaders-and-boot-disk.md) | The UEFI and BIOS loaders, and the boot disk image | Accepted |
+| [0005](0005-kernel-core.md) | The kernel core: memory, interrupts, time, cores, scheduler, locks | Accepted |
 
 ## Writing a note
 

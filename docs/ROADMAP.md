@@ -46,6 +46,10 @@ kernel's report. Note 0004 describes the loaders and the disk.
 **Done when:** a stress test runs threads across 4 cores on both architectures without
 problems.
 
+**Status: done** (29 October 2026). Every boot test now runs the kernel's self-test with
+4 cores: heap, pages, exceptions, timing, and 64 threads sharing work across all 4 cores.
+It passed 60 boots in a row, on all four configurations. Note 0005 describes the design.
+
 ## M3: Capabilities, messages and the first programs
 - Design notes, before code, for the kernel objects and capability rules, the system calls,
   and messages and the interface language.

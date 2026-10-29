@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 pbr-bootinfo = { path = "../lib/bootinfo" }
+pbr-platform = { path = "../lib/platform" }
 
 [lints]
 workspace = true

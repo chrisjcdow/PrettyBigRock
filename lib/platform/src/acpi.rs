@@ -85,6 +85,117 @@ pub fn spcr_console(mem: &impl PhysMemory, spcr: u64) -> Option<EarlyConsole> {
     (addr != 0).then_some(EarlyConsole { kind, register_width, address: addr })
 }
 
+/// One entry in the MADT (the "APIC" table), which lists the cores and interrupt controllers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MadtEntry {
+    /// An x86 core, by local APIC ID.
+    LocalApic {
+        /// Its APIC ID.
+        apic_id: u32,
+        /// Usable now (rather than only after hot-plugging).
+        enabled: bool,
+    },
+    /// An x86 core with an APIC ID too big for the older entry.
+    X2Apic {
+        /// Its APIC ID.
+        apic_id: u32,
+        /// Usable now.
+        enabled: bool,
+    },
+    /// An x86 I/O APIC.
+    IoApic {
+        /// Its physical address.
+        address: u64,
+        /// The first interrupt it handles.
+        gsi_base: u32,
+    },
+    /// A 64-bit address for the local APICs, overriding the header's.
+    LapicAddress(u64),
+    /// An Arm core and its GIC CPU interface.
+    Gicc {
+        /// The CPU interface number (the target bit for GICv2 software interrupts).
+        interface: u32,
+        /// The core's MPIDR affinity bits.
+        mpidr: u64,
+        /// The GICv2 CPU interface's physical address.
+        base: u64,
+        /// Usable now.
+        enabled: bool,
+    },
+    /// The Arm GIC distributor.
+    Gicd {
+        /// Its physical address.
+        base: u64,
+        /// The GIC version (0 means "find out from the hardware").
+        version: u8,
+    },
+}
+
+/// Calls `f` for each MADT entry PrettyBigRock understands. Returns the local APIC address from
+/// the header (x86; meaningless on Arm).
+pub fn madt(mem: &impl PhysMemory, table: u64, mut f: impl FnMut(MadtEntry)) -> Option<u64> {
+    let len = u64::from(mem.read_u32(table + 4)?);
+    let lapic = u64::from(mem.read_u32(table + 36)?);
+    let mut a = table + 44;
+    while a + 2 <= table + len {
+        let kind = mem.read_u8(a)?;
+        let elen = u64::from(mem.read_u8(a + 1)?);
+        if elen < 2 {
+            break;
+        }
+        let e = match kind {
+            0 => Some(MadtEntry::LocalApic {
+                apic_id: u32::from(mem.read_u8(a + 3)?),
+                enabled: mem.read_u32(a + 4)? & 1 != 0,
+            }),
+            1 => Some(MadtEntry::IoApic {
+                address: u64::from(mem.read_u32(a + 4)?),
+                gsi_base: mem.read_u32(a + 8)?,
+            }),
+            5 => Some(MadtEntry::LapicAddress(mem.read_u64(a + 4)?)),
+            9 => Some(MadtEntry::X2Apic {
+                apic_id: mem.read_u32(a + 4)?,
+                enabled: mem.read_u32(a + 8)? & 1 != 0,
+            }),
+            0xB if elen >= 76 => Some(MadtEntry::Gicc {
+                interface: mem.read_u32(a + 4)?,
+                enabled: mem.read_u32(a + 12)? & 1 != 0,
+                base: mem.read_u64(a + 32)?,
+                mpidr: mem.read_u64(a + 68)?,
+            }),
+            0xC => {
+                Some(MadtEntry::Gicd { base: mem.read_u64(a + 8)?, version: mem.read_u8(a + 20)? })
+            }
+            _ => None,
+        };
+        if let Some(e) = e {
+            f(e);
+        }
+        a += elen;
+    }
+    Some(lapic)
+}
+
+/// The HPET's physical address, from the "HPET" table.
+pub fn hpet_base(mem: &impl PhysMemory, table: u64) -> Option<u64> {
+    (mem.read_u8(table + 40)? == 0).then(|| mem.read_u64(table + 44)).flatten()
+}
+
+/// The Arm virtual timer's interrupt number, from the GTDT.
+pub fn gtdt_virtual_timer(mem: &impl PhysMemory, table: u64) -> Option<u32> {
+    mem.read_u32(table + 64)
+}
+
+/// From the FADT on Arm: (PSCI is available, PSCI is called with HVC rather than SMC).
+pub fn fadt_psci(mem: &impl PhysMemory, fadt: u64) -> Option<(bool, bool)> {
+    let len = mem.read_u32(fadt + 4)?;
+    if len < 131 {
+        return None;
+    }
+    let flags = mem.read_u16(fadt + 129)?;
+    Some((flags & 1 != 0, flags & 2 != 0))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -159,6 +270,41 @@ pub(crate) mod tests {
         assert_eq!(
             spcr_console(&mem, spcr),
             Some(EarlyConsole { kind: 3, register_width: 4, address: 0x0900_0000 })
+        );
+    }
+
+    #[test]
+    fn reads_the_madt() {
+        let mut mem = FakeMem::default();
+        let mut body = vec![0u8; 8];
+        body[..4].copy_from_slice(&0xFEE0_0000u32.to_le_bytes());
+        body.extend_from_slice(&[0, 8, 0, 0, 1, 0, 0, 0]); // local APIC 0, enabled
+        body.extend_from_slice(&[0, 8, 1, 3, 0, 0, 0, 0]); // local APIC 3, disabled
+        let mut gicc = vec![0u8; 80];
+        gicc[0] = 0xB;
+        gicc[1] = 80;
+        gicc[4] = 2;
+        gicc[12] = 1;
+        gicc[32..40].copy_from_slice(&0x0801_0000u64.to_le_bytes());
+        gicc[68..76].copy_from_slice(&0x0000_0102u64.to_le_bytes());
+        body.extend_from_slice(&gicc);
+        let mut gicd = vec![0u8; 24];
+        gicd[0] = 0xC;
+        gicd[1] = 24;
+        gicd[8..16].copy_from_slice(&0x0800_0000u64.to_le_bytes());
+        gicd[20] = 2;
+        body.extend_from_slice(&gicd);
+        mem.put(0x7000, &table(b"APIC", &body));
+        let mut seen = vec![];
+        assert_eq!(madt(&mem, 0x7000, |e| seen.push(e)), Some(0xFEE0_0000));
+        assert_eq!(
+            seen,
+            vec![
+                MadtEntry::LocalApic { apic_id: 0, enabled: true },
+                MadtEntry::LocalApic { apic_id: 3, enabled: false },
+                MadtEntry::Gicc { interface: 2, mpidr: 0x102, base: 0x0801_0000, enabled: true },
+                MadtEntry::Gicd { base: 0x0800_0000, version: 2 },
+            ]
         );
     }
 

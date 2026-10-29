@@ -36,9 +36,10 @@ pub const TESTS: &[Config] = &[
         el2: false,
         expect: &[
             "on x86-64, started by UEFI.",
+            "Cores:         4 found, 4 running",
             "Screens:       1 (",
-            "ACPI yes",
             "Randomness:    seeded",
+            "Self-test passed",
         ],
     },
     Config {
@@ -48,9 +49,10 @@ pub const TESTS: &[Config] = &[
         el2: false,
         expect: &[
             "on x86-64, started by BIOS.",
+            "Cores:         4 found, 4 running",
             "Screens:       1 (",
-            "ACPI yes",
             "Time:          2",
+            "Self-test passed",
         ],
     },
     Config {
@@ -61,8 +63,10 @@ pub const TESTS: &[Config] = &[
         expect: &[
             "on ARM64, started by UEFI.",
             "exception level 1",
+            "Cores:         4 found, 4 running",
             "Screens:       1 (",
             "Randomness:    seeded",
+            "Self-test passed",
         ],
     },
     Config {
@@ -70,7 +74,12 @@ pub const TESTS: &[Config] = &[
         arch: "aarch64",
         bios: false,
         el2: true,
-        expect: &["exception level 1", "EL2 stub:      present and answering"],
+        expect: &[
+            "exception level 1",
+            "Cores:         4 found, 4 running",
+            "EL2 stub:      present and answering",
+            "Self-test passed",
+        ],
     },
 ];
 
@@ -84,7 +93,7 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     let mut cmd;
     if cfg.arch == "x86_64" {
         cmd = Command::new("qemu-system-x86_64");
-        cmd.args(["-machine", "q35", "-m", "512", "-smp", "2"]);
+        cmd.args(["-machine", "q35", "-m", "512", "-smp", "4"]);
         if !cfg.bios {
             let code = first_existing(&[
                 "/usr/share/OVMF/OVMF_CODE_4M.fd",
@@ -111,7 +120,7 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     } else {
         cmd = Command::new("qemu-system-aarch64");
         let machine = if cfg.el2 { "virt,virtualization=on" } else { "virt" };
-        cmd.args(["-machine", machine, "-cpu", "cortex-a72", "-m", "512", "-smp", "2"]);
+        cmd.args(["-machine", machine, "-cpu", "cortex-a72", "-m", "512", "-smp", "4"]);
         let fw = first_existing(&[
             "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
             "/usr/share/AAVMF/AAVMF_CODE.fd",

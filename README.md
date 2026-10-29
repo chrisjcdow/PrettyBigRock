@@ -29,12 +29,18 @@ records who did what in each session. Chris directs; Claude writes the code and 
 
 ## PrettyBigRock 2: building and running it
 
-![PrettyBigRock 2's first words](docs/screenshot-pbr2.png)
+![PrettyBigRock 2 starting all four cores and passing its self-test](docs/screenshot-pbr2.png)
 
-So far (milestone M1) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on ARM64
-machines with UEFI, all from the same disk image. The kernel reports what it found, on the
-screen and on the serial port, and stops. That doesn't sound like much, but everything after
-this builds on it.
+So far (milestone M2) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on
+ARM64 machines with UEFI, all from the same disk image. The kernel then:
+- takes over memory management;
+- handles interrupts and exceptions;
+- keeps time;
+- starts every processor core;
+- runs threads across them all.
+
+It reports what it found on the screen and the serial port. With `selftest` on its command
+line, it tests all of that too, which is what the automatic boot tests do.
 
 Building needs [rustup](https://rustup.rs); the right Rust version installs itself the first
 time. Booting it needs QEMU, with its UEFI firmware (on Debian or Ubuntu: `qemu-system-x86
@@ -42,8 +48,8 @@ qemu-system-arm ovmf qemu-efi-aarch64`).
 
 ```
 cargo xtask build --release      # build/release/prettybigrock.img: kernels, loaders, disk image
-cargo xtask run                  # start it in QEMU (add --bios, or --arch aarch64, or --el2)
-cargo xtask qemu-test            # boot all four ways and check the kernel starts each time
+cargo xtask run                  # start it in QEMU (add --bios, --arch aarch64, --el2 or --selftest)
+cargo xtask qemu-test            # boot all four ways, with 4 cores, and run the self-test each time
 cargo xtask ci                   # formatting, lints, tests, builds and boot tests: what GitHub runs
 cargo xtask doctor               # how the toolchain was found
 ```

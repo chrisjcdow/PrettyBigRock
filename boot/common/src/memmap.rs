@@ -126,22 +126,7 @@ pub fn from_e820(t: u32) -> MemoryKind {
     }
 }
 
-/// True for memory the kernel's direct map should treat as ordinary RAM.
-pub fn is_ram(kind: u32) -> bool {
-    use MemoryKind::*;
-    matches!(
-        MemoryRegion { range: PhysRange::NONE, kind, reserved: 0 }.kind(),
-        Some(
-            Usable
-                | AcpiReclaimable
-                | AcpiNvs
-                | LoaderReclaimable
-                | Kernel
-                | Module
-                | FirmwareRuntime
-        )
-    )
-}
+pub use pbr_platform::is_ram;
 
 #[cfg(test)]
 mod tests {

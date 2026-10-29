@@ -10,17 +10,33 @@
 //! Processor-specific code lives in [`arch`]; nothing outside it may assume which processor
 //! it runs on (docs/DESIGN.md, section 10).
 //!
-//! Status: milestone M1. The kernel is started by a loader, checks the boot information,
-//! reports what it was given on the serial port and the screen, and stops.
+//! Status: milestone M2, the kernel core (docs/design/0005-kernel-core.md). The kernel
+//! manages memory, handles interrupts and exceptions, keeps time, starts every core, and
+//! schedules threads across them. With `selftest` on its command line, it tests all of that.
 
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 mod arch;
 mod console;
+mod hw;
+mod mem;
+mod percpu;
+mod sched;
+mod selftest;
 mod sync;
+mod time;
 
-use pbr_bootinfo::{BootInfo, LoaderKind, MemoryKind};
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use pbr_bootinfo::{BootInfo, Framebuffer, LoaderKind, MemoryKind, MemoryRegion};
+use sync::Once;
+
+#[global_allocator]
+static HEAP: mem::heap::Heap = mem::heap::Heap;
 
 /// The kernel's version, from the workspace.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -28,27 +44,146 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The line the automatic boot tests wait for (`cargo xtask qemu-test`).
 pub const REPORT_DONE: &str = "Start-up report complete.";
 
+/// What the kernel keeps from the boot information once the loader's memory is reused.
+struct Boot {
+    map: Vec<MemoryRegion>,
+    command_line: String,
+    framebuffers: Vec<Framebuffer>,
+    loader: LoaderKind,
+    flags: u32,
+    acpi_rsdp: u64,
+    device_tree: bool,
+    smbios: u64,
+    boot_time_ns: u64,
+    seeded: bool,
+}
+
+static BOOT: Once<Boot> = Once::new();
+static MACHINE: Once<hw::Machine> = Once::new();
+static KERNEL_PHYS: AtomicU64 = AtomicU64::new(0);
+static KERNEL_VIRT: AtomicU64 = AtomicU64::new(0);
+static KERNEL_LEN: AtomicU64 = AtomicU64::new(0);
+static PANICKING: AtomicBool = AtomicBool::new(false);
+static CORES_STARTED: AtomicU64 = AtomicU64::new(0);
+
+/// Where the kernel image is: (physical address, virtual address, length).
+pub fn kernel_image() -> (u64, u64, u64) {
+    (
+        KERNEL_PHYS.load(Ordering::Relaxed),
+        KERNEL_VIRT.load(Ordering::Relaxed),
+        KERNEL_LEN.load(Ordering::Relaxed),
+    )
+}
+
+/// What the kernel learnt about the machine at start-up.
+pub fn hw_machine() -> &'static hw::Machine {
+    MACHINE.get().expect("the machine hasn't been described yet")
+}
+
+/// True once some core has panicked.
+pub fn panicking() -> bool {
+    PANICKING.load(Ordering::Relaxed)
+}
+
 /// Where every architecture's start-up code goes: the first architecture-independent code that
 /// runs. The loader's promises about the machine at this point are in
-/// `docs/design/0003-boot-information.md`.
+/// `docs/design/0003-boot-information.md`; what happens next is in note 0005, section 1.
 pub fn kernel_main(boot_info: u64, direct_map_base: u64) -> ! {
+    arch::zero_percpu();
+    mem::set_direct_map(direct_map_base);
     // SAFETY: note 0003 promises `boot_info` is the physical address of a BootInfo, reachable
-    // through the direct map at `direct_map_base`, and kept until the kernel is done with it.
-    let info = unsafe { &*((direct_map_base + boot_info) as *const BootInfo) };
+    // through the direct map, and kept until the kernel is done with it.
+    let info = unsafe { &*mem::phys_ptr::<BootInfo>(boot_info) };
     if info.validate().is_err() {
-        // Without valid boot information there's no console to complain on.
-        arch::halt_forever();
+        arch::halt_forever(); // without valid boot information there's no console to complain on
     }
     // SAFETY: called once, here, with the loader's boot information.
     unsafe { console::init(info, direct_map_base) };
-    report(info, direct_map_base);
-    kprintln!("{REPORT_DONE} Nothing else to do yet, so this core is stopping here.");
-    arch::halt_forever()
+    // SAFETY: the memory map holds `len / 24` regions, in LoaderReclaimable memory (note 0003).
+    let map = unsafe {
+        core::slice::from_raw_parts(
+            mem::phys_ptr::<MemoryRegion>(info.memory_map.base),
+            (info.memory_map.len / 24) as usize,
+        )
+    };
+
+    // Physical memory, then the heap, then copies of what's still needed from the loader.
+    mem::pmm::init(map);
+    let command_line = if info.command_line.is_none() {
+        String::new()
+    } else {
+        // SAFETY: the command line is text in LoaderReclaimable memory (note 0003).
+        let b = unsafe {
+            core::slice::from_raw_parts(
+                mem::phys_ptr::<u8>(info.command_line.base),
+                info.command_line.len as usize,
+            )
+        };
+        String::from_utf8_lossy(b).trim().into()
+    };
+    BOOT.set(Boot {
+        map: map.to_vec(),
+        command_line,
+        framebuffers: info.framebuffers().to_vec(),
+        loader: info.loader(),
+        flags: info.flags,
+        acpi_rsdp: info.acpi_rsdp,
+        device_tree: !info.device_tree.is_none(),
+        smbios: info.smbios,
+        boot_time_ns: info.boot_time_ns,
+        seeded: info.random_seed.iter().any(|&b| b != 0),
+    });
+    KERNEL_PHYS.store(info.kernel_physical.base, Ordering::Relaxed);
+    KERNEL_VIRT.store(info.kernel_virtual_base, Ordering::Relaxed);
+    KERNEL_LEN.store(info.kernel_physical.len, Ordering::Relaxed);
+
+    // The kernel's own page tables, and its own stack.
+    let boot = BOOT.get().expect("set just now");
+    mem::vm::init(&boot.map, info.kernel_physical.base, info.kernel_virtual_base);
+    let stack = mem::vm::alloc_stack(32).expect("out of memory for the boot stack");
+    arch::switch_stack(stack, continue_start_up)
 }
 
-fn report(info: &BootInfo, dmb: u64) {
+/// The rest of start-up, on the kernel's own stack and page tables.
+extern "C" fn continue_start_up() -> ! {
+    let boot = BOOT.get().expect("boot information copied");
+    // Nothing of the loader's is in use any more.
+    for r in boot.map.iter().filter(|r| r.kind == MemoryKind::LoaderReclaimable as u32) {
+        mem::pmm::add(r.range.base, r.range.len);
+    }
+
+    MACHINE.set(hw::discover(boot.acpi_rsdp, arch::this_core_hw_id()));
+    let m = hw_machine();
+    let ids: Vec<u64> = m.cores.iter().map(|c| c.hw_id).collect();
+    percpu::create(&ids);
+    for (cpu, core) in percpu::all().iter().zip(&m.cores) {
+        arch::set_core_info(cpu, core);
+    }
+    percpu::install(percpu::all()[0]);
+    arch::init_boot_core(m);
+    sched::init_this_core();
+    percpu::all()[0].online.store(true, Ordering::Release);
+    arch::irq_enable();
+    CORES_STARTED.store(1 + arch::start_other_cores(m) as u64, Ordering::Relaxed);
+
+    report(boot);
+    if boot.command_line.split_whitespace().any(|w| w == "selftest") {
+        sched::spawn("self-test", sched::NORMAL, || {
+            match selftest::run() {
+                Ok(summary) => kprintln!("Self-test passed: {summary}"),
+                Err(e) => kprintln!("Self-test FAILED: {e}"),
+            }
+            kprintln!("{REPORT_DONE}");
+        });
+    } else {
+        kprintln!("{REPORT_DONE} Nothing else to do yet, so the cores are idling.");
+    }
+    sched::idle_loop()
+}
+
+fn report(boot: &Boot) {
     kprintln!("Hello from PrettyBigRock!");
-    let loader = match info.loader() {
+    let loader = match boot.loader {
         LoaderKind::Uefi => "UEFI",
         LoaderKind::Bios => "BIOS",
         LoaderKind::RaspberryPi => "the Raspberry Pi start-up stage",
@@ -56,83 +191,54 @@ fn report(info: &BootInfo, dmb: u64) {
         LoaderKind::Unknown => "an unknown loader",
     };
     kprintln!(
-        "PrettyBigRock 2 kernel {VERSION} (milestone M1) on {}, started by {loader}.",
+        "PrettyBigRock 2 kernel {VERSION} (milestone M2) on {}, started by {loader}.",
         arch::NAME
     );
     kprintln!();
 
-    let mut cpu = Text::<96>::new();
+    let mut cpu = Text::<160>::new();
     let _ = arch::describe(&mut cpu);
-    kprintln!("Processor:     {} (boot core {})", cpu.as_str(), info.boot_cpu_id);
-
-    // SAFETY: the memory map is in LoaderReclaimable memory, reachable through the direct map,
-    // and holds `len / 24` regions (note 0003).
-    let map = unsafe {
-        core::slice::from_raw_parts(
-            (dmb + info.memory_map.base) as *const pbr_bootinfo::MemoryRegion,
-            (info.memory_map.len / 24) as usize,
-        )
-    };
-    let usable: u64 = map
-        .iter()
-        .filter(|r| matches!(r.kind(), Some(MemoryKind::Usable | MemoryKind::LoaderReclaimable)))
-        .map(|r| r.range.len)
-        .sum();
+    kprintln!("Processor:     {}", cpu.as_str());
     kprintln!(
-        "Memory:        {} MiB free once start-up is over, in a map of {} regions",
-        usable >> 20,
-        map.len()
+        "Cores:         {} found, {} running",
+        percpu::count(),
+        CORES_STARTED.load(Ordering::Relaxed)
     );
+    let (free, total) = mem::pmm::stats();
     kprintln!(
-        "Kernel:        {} KiB at {:#x}",
-        info.kernel_physical.len >> 10,
-        info.kernel_physical.base
+        "Memory:        {} MiB free of {} MiB",
+        (free * mem::PAGE) >> 20,
+        (total * mem::PAGE) >> 20
     );
-
-    let fbs = info.framebuffers();
-    kprint!("Screens:       {}", fbs.len());
-    for f in fbs {
+    let (kphys, _, klen) = kernel_image();
+    kprintln!("Kernel:        {} KiB at {:#x}", klen >> 10, kphys);
+    kprint!("Screens:       {}", boot.framebuffers.len());
+    for f in &boot.framebuffers {
         kprint!(" ({}x{}, {}-bit)", f.width, f.height, f.format.bits_per_pixel);
     }
     kprintln!();
-
     let yes = |b: bool| if b { "yes" } else { "no" };
     kprintln!(
         "Hardware info: ACPI {}, device tree {}, SMBIOS {}",
-        yes(info.acpi_rsdp != 0),
-        yes(!info.device_tree.is_none()),
-        yes(info.smbios != 0)
+        yes(boot.acpi_rsdp != 0),
+        yes(boot.device_tree),
+        yes(boot.smbios != 0)
     );
-    let cmdline = if info.command_line.is_none() {
-        ""
-    } else {
-        // SAFETY: the command line is UTF-8 text in LoaderReclaimable memory (note 0003).
-        let b = unsafe {
-            core::slice::from_raw_parts(
-                (dmb + info.command_line.base) as *const u8,
-                info.command_line.len as usize,
-            )
-        };
-        core::str::from_utf8(b).unwrap_or("(not valid UTF-8)")
-    };
-    kprintln!("Command line:  \"{}\"", cmdline.trim());
-    kprintln!(
-        "Randomness:    {}",
-        if info.random_seed.iter().any(|&b| b != 0) { "seeded" } else { "none available" }
-    );
-    if info.boot_time_ns == 0 {
+    kprintln!("Command line:  \"{}\"", boot.command_line);
+    kprintln!("Randomness:    {}", if boot.seeded { "seeded" } else { "none available" });
+    if boot.boot_time_ns == 0 {
         kprintln!("Time:          unknown");
     } else {
-        let (y, mo, d, h, mi, s) = civil(info.boot_time_ns / 1_000_000_000);
+        let (y, mo, d, h, mi, s) = civil(boot.boot_time_ns / 1_000_000_000);
         kprintln!("Time:          {y}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02} UTC");
     }
-
     #[cfg(target_arch = "aarch64")]
-    if info.flags & pbr_bootinfo::FLAG_EL2_STUB != 0 {
+    if boot.flags & pbr_bootinfo::FLAG_EL2_STUB != 0 {
         // SAFETY: the loader says the stub is there.
         unsafe { arch::ping_el2_stub() };
         kprintln!("EL2 stub:      present and answering");
     }
+    let _ = boot.flags;
     kprintln!();
 }
 
@@ -152,7 +258,7 @@ fn civil(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
     (y, m, d, rem / 3600, rem / 60 % 60, rem % 60)
 }
 
-/// A small fixed-size text buffer, for formatting without an allocator.
+/// A small fixed-size text buffer, for formatting without the heap.
 struct Text<const N: usize> {
     buf: [u8; N],
     len: usize,
@@ -184,6 +290,22 @@ impl<const N: usize> core::fmt::Write for Text<N> {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
-    kprintln!("\nThe kernel stopped because of a bug: {info}");
+    arch::irq_disable();
+    if !PANICKING.swap(true, Ordering::SeqCst) {
+        // Stop the other cores first, so the report isn't interleaved with anything.
+        if let Some(me) = percpu::try_this() {
+            for c in percpu::all() {
+                if c.index != me.index && c.online.load(Ordering::Relaxed) {
+                    arch::send_ipi(c, arch::Ipi::Stop);
+                }
+            }
+        }
+        let core = percpu::try_this().map(|c| c.index).unwrap_or(0);
+        sched::with_current_name(|name, id| {
+            console::print_panic(format_args!(
+                "\nThe kernel stopped because of a bug, on core {core} in thread \"{name}\" (#{id}): {info}\n"
+            ))
+        });
+    }
     arch::halt_forever()
 }

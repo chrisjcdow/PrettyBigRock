@@ -15,7 +15,8 @@ use core::fmt::Write;
 use pbr_boot_common::elf::{EM_X86_64, Kernel};
 use pbr_boot_common::handover::{Handover, jump};
 use pbr_boot_common::memmap::{MapBuilder, from_e820};
-use pbr_boot_common::paging::{BumpAlloc, Format, build_standard};
+use pbr_boot_common::paging::{BumpAlloc, Format};
+use pbr_boot_common::tables::build_standard;
 use pbr_boot_common::{DIRECT_MAP_BASE, IdentityMapped, PAGE, acpi, align_up};
 use pbr_bootinfo::{
     BootInfo, EarlyConsole, Framebuffer, LoaderKind, MemoryKind, MemoryRegion, PhysRange,

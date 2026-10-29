@@ -15,6 +15,7 @@ name = "pbr-boot-common"
 version = "0.0.0"
 dependencies = [
  "pbr-bootinfo",
+ "pbr-platform",
 ]
 
 [[package]]
@@ -31,6 +32,14 @@ version = "0.0.0"
 
 [[package]]
 name = "pbr-kernel"
+version = "0.0.0"
+dependencies = [
+ "pbr-bootinfo",
+ "pbr-platform",
+]
+
+[[package]]
+name = "pbr-platform"
 version = "0.0.0"
 dependencies = [
  "pbr-bootinfo",

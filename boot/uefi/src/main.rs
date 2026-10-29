@@ -20,7 +20,8 @@ use efi::*;
 use pbr_boot_common::elf::Kernel;
 use pbr_boot_common::handover::{Handover, jump};
 use pbr_boot_common::memmap::{MapBuilder, from_uefi};
-use pbr_boot_common::paging::{BumpAlloc, build_standard};
+use pbr_boot_common::paging::BumpAlloc;
+use pbr_boot_common::tables::build_standard;
 use pbr_boot_common::{DIRECT_MAP_BASE, PAGE, align_up, fdt};
 #[cfg(target_arch = "aarch64")]
 use pbr_boot_common::{IdentityMapped, acpi};
