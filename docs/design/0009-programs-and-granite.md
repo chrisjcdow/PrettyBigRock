@@ -56,8 +56,13 @@ Files are page-aligned so programs can be used straight from the archive without
 - on the EFI system partition as `PBR/<arch>/startup.arc`;
 - in the BIOS payload (note 0004) as a file named `startup.arc`.
 
-Each loader loads it and passes it to the kernel as the module named `startup` (note 0003).
-A missing archive is not fatal to the loaders: the kernel reports it and stops.
+Each loader loads it and passes it to the kernel as the module named `startup` (note 0003),
+in LoaderReclaimable memory. The kernel copies it out before it reclaims that memory, then
+gives it to the root program as a read-only memory object. A missing archive is not fatal to
+the loaders: the kernel reports it and stops.
+
+Programs in the archive, like the kernels on the disk, have their symbols and debugging
+sections stripped by the build tool; the full files stay in `build/` for debugging.
 
 The archive code lives in `lib/archive` (`pbr-archive`), built for the kernel, for programs
 and for the host. The build tool writes archives with it, and `tools/startarc.py` is an
@@ -95,6 +100,10 @@ loader (`boot/common`) moves onto it, so there's one ELF reader.
 6. Create the stack (a memory object, mapped at a random address with an unmapped guard page
    below it) and the start-up block (section 4), and give the program its capabilities.
 7. Create the main thread and start it.
+
+The memory objects are created by the launcher, so they're charged to the launcher's budget,
+not the new program's: a launcher gives a program a budget for what it will do, and pays for
+its image itself.
 
 ### 3. Who loads programs
 
@@ -204,7 +213,7 @@ Agreed on 31 October 2026, replacing the earlier plan of the GPL plus a linking 
 
 | Part | Licence |
 |------|---------|
-| `granite`, the program targets, the C library (M9) and the start-up code linked into every program | **MPL-2.0** |
+| `granite`, `lib/elf` and `lib/archive` (which `granite` builds on), the program targets, the C library (M9) and the start-up code linked into every program | **MPL-2.0** |
 | Interface files and the code generated from them | **MIT** |
 | Everything else (the kernel, services, drivers, tools, the interface compiler) | GPL-3.0-or-later |
 
@@ -217,8 +226,9 @@ itself. MPL-2.0 is compatible with the GPL. (A plan, not legal advice.)
 In practice:
 - each file's SPDX line says its licence, and `cargo xtask check` knows which licence each
   folder must have;
-- the licence texts go in `LICENSES/` (`GPL-3.0-or-later.txt`, `MPL-2.0.txt`, `MIT.txt`), and
-  `LICENSE` explains which applies where.
+- the licence texts are in `LICENSES/` (`GPL-3.0-or-later.txt`, `MPL-2.0.txt`, `MIT.txt`), and
+  the README's licence section says which applies where. `LICENSE` stays the GPL's text,
+  the main licence, so GitHub reports it correctly.
 
 ### 8. New folders
 
@@ -244,9 +254,14 @@ With `selftest` on the command line, the kernel runs its own self-test (note 000
 starts the root program, which runs the **program self-test** and prints `Program self-test
 passed` or the first failure. `cargo xtask qemu-test` waits for both, on every configuration,
 with 4 cores. The program self-test checks:
-- **Messages:** two programs (`tests/programs/echo` and `tests/programs/client`) exchange
-  calls and replies: empty, full 240-byte, with the largest attached buffer, and with
-  capabilities copied and moved; badges tell clients apart.
+- **Messages:** two programs (`tests/programs/echo`, a service, and `tests/programs/probe`,
+  which runs one set of checks per run, chosen by its arguments; they share the constants in
+  `tests/programs/protocol`) exchange calls and replies: empty, full 240-byte, with the
+  largest attached buffer, and with capabilities copied and moved; badges tell clients apart.
+- **An interface:** the probe calls echo through the code generated from
+  `interfaces/pbr.test.echo.pbi`, using every kind of type, an operation's own error, a
+  failing service, unknown operations and versions, malformed requests, a capability of the
+  wrong kind, and a call that times out.
 - **Isolation:** a program fails cleanly when it:
   - uses handle numbers it wasn't given (`BAD_HANDLE`);
   - uses a capability without the right (`NO_RIGHT`);
@@ -294,3 +309,6 @@ Actions.
 
 ## Changes
 - 31 October 2026: first version, accepted.
+- 31 October 2026, while building M3: `lib/elf` and `lib/archive` are MPL-2.0 too; where the
+  archive is kept in memory; stripped files on the disk; the launcher pays for a program's
+  image; the test programs are `echo` and `probe`, and the interface test.

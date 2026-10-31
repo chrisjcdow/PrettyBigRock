@@ -66,7 +66,18 @@ It passed 60 boots in a row, on all four configurations. Note 0005 describes the
 anything it wasn't given, and revocation is shown to work, all tested.
 
 **Design:** notes 0006 (objects and capabilities), 0007 (system calls), 0008 (messages and
-the interface language) and 0009 (programs and `granite`), drafted 31 October 2026.
+the interface language) and 0009 (programs and `granite`), accepted 31 October 2026 and
+updated with what building taught us.
+
+**Status: done** (31 October 2026). The kernel runs programs in their own processes, with
+capability tables, memory budgets, endpoints, notifications and shared memory, on both
+architectures. It starts the root program from the start-up archive; programs are built on
+`granite`, and services' interfaces are generated from `.pbi` files. Every boot test now runs
+the program self-test after the kernel's: messages and capabilities between two programs,
+an interface's generated code, isolation, four kinds of fault, revocation, the last sender
+signal, a crashing service, budgets, and 1200 calls from 4 threads to a service with 4
+threads. Ring buffers are a library format in `granite`, tested on the host against a
+hostile other side; drivers will be their first real users (M4).
 
 ## M4: Devices and drivers
 - The device manager; PCI Express; reading ACPI tables and device trees.

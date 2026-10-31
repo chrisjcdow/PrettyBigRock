@@ -22,11 +22,20 @@ so they don't depend on anyone remembering them.
 - **Kernel targets**: `x86_64-unknown-none` and `aarch64-unknown-none-softfloat`, Rust's
   built-in targets for code with no operating system underneath. "Softfloat" means the
   kernel never uses the floating-point registers, so it doesn't have to save them on every
-  entry. Programs (from M3) will get PrettyBigRock targets of their own.
+  entry.
+- **Program targets**: `x86_64-unknown-prettybigrock` and `aarch64-unknown-prettybigrock`,
+  described by the JSON files in `targets/` (note 0009). Programs may use the floating-point
+  and vector registers, which Rust's no-OS x86-64 target can't turn on.
 - **No third-party packages** (D13). Only Rust's built-in `core` and `alloc`, and for host
   tools, `std`. `Cargo.lock` should only ever list our own crates.
 - **No unstable Rust features** in our code. If one becomes unavoidable, it's listed here
-  with a plan to stop needing it.
+  with a plan to stop needing it. The list:
+  - **Custom targets** (`-Zjson-target-spec`) and **building `core` and `alloc` from source**
+    (`-Zbuild-std`), for programs. Rust has no PrettyBigRock target of its own, so programs
+    can't be built any other way. The build tool sets `RUSTC_BOOTSTRAP=1` for program builds
+    only; no unstable feature is used in the code itself. The plan to stop needing them is
+    to add PrettyBigRock as an official Rust target, with the Rust standard library work in
+    M9 (note 0009, section 5).
 
 #### The fallback: building `core` from source
 
@@ -45,8 +54,9 @@ else.
 
 ### Code rules
 
-1. **Every file starts with an SPDX licence line** (`SPDX-License-Identifier: GPL-3.0-or-later`)
-   and the copyright line. `cargo xtask check` enforces this.
+1. **Every file starts with an SPDX licence line** and the copyright line. The licence is
+   the one its folder has (note 0001): `GPL-3.0-or-later` unless the folder is one of the
+   MPL-2.0 or MIT ones. `cargo xtask check` enforces both.
 2. **Formatting is automatic**: `cargo fmt`, with the settings in `rustfmt.toml`. `cargo xtask
    check` fails on unformatted code.
 3. **Lints are errors.** Clippy runs with warnings treated as errors, for every architecture.
@@ -93,3 +103,5 @@ else.
 
 ## Changes
 - 29 October 2026: first version.
+- 31 October 2026: program targets, and the two unstable build features they need; licence
+  lines per folder.

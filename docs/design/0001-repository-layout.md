@@ -29,15 +29,27 @@ PrettyBigRock/
 │       ├── arch/<name>/    everything specific to one processor family
 │       └── board/<name>/   everything specific to one machine (from M1)
 ├── lib/                  libraries, one folder each
+│   ├── archive/            the start-up archive format (note 0009)
 │   ├── bootinfo/           the boot information (note 0003)
+│   ├── captree/            the capability derivation tree (note 0006)
+│   ├── elf/                reading kernels' and programs' ELF files (notes 0004, 0009)
+│   ├── granite/            granite, the native library programs are built on (note 0009)
+│   ├── interface-compiler/ turns interface files into Rust (note 0008)
+│   ├── interfaces/         the code generated from interfaces/ (note 0008)
 │   └── platform/           page tables, ACPI and device trees, shared by loaders and kernel
 ├── drivers/              drivers, one program each (from M4)
-├── services/             system services, one program each (from M3)
+├── services/             system services, one program each
+│   └── root/               the first program, which starts everything else (note 0009)
 ├── apps/                 apps (from M6)
-├── interfaces/           interface files for messages (from M3)
+├── interfaces/           interface files (`.pbi`) for messages (note 0008)
+├── targets/              the Rust targets programs are built for (note 0009)
+├── tests/
+│   └── programs/           test programs for the program self-test: echo, probe, and the
+│                           protocol they share
 ├── ports/                software ported from elsewhere, each under its own licence (from M9)
 ├── xtask/                the build tool (`cargo xtask`)
-├── tools/                tools for other computers, such as tools/rockfs.py
+├── tools/                tools for other computers, such as tools/rockfs.py, and the
+│                         independent checkers (startarc.py, pbi_check.py)
 │
 ├── classic/              PrettyBigRock 1.x, the C system (D17)
 │   ├── build.sh            builds classic/build/prettybigrock.img
@@ -49,6 +61,8 @@ PrettyBigRock/
 │   ├── ROCKFS.md           the RockFS specification
 │   └── design/             design notes, like this one
 │
+├── LICENSE               the GPL, which covers everything not listed in LICENSES/
+├── LICENSES/             the full text of each licence used (note 0009, section 7)
 ├── run-prettybigrock.bat starts PrettyBigRock 2 in QEMU on Windows
 ├── build/                not in git: what the build produces
 │   ├── <debug|release>/prettybigrock.img   the boot disk image
@@ -64,6 +78,9 @@ Rules:
   tool, which is `xtask` by convention.
 - **Processor-specific code is only in `kernel/src/arch/`, `kernel/src/board/` and `boot/`.**
   Libraries, drivers, services and apps are written once for every architecture.
+- **A folder's licence is fixed** (note 0009, section 7): MPL-2.0 for `lib/granite`,
+  `lib/elf`, `lib/archive` and `targets/`; MIT for `interfaces/` and `lib/interfaces`;
+  GPL-3.0-or-later for everything else. `cargo xtask check` checks every file says so.
 - **`ports/` is separate from everything else**, because ported software isn't part of the OS
   (DESIGN.md section 14) and carries its own licences.
 - **Folders listed as "from M*n*" don't exist yet.** They're created by the milestone that
@@ -97,3 +114,5 @@ The build tool's own tests check steps 1 and 3 match.
 
 ## Changes
 - 29 October 2026: first version.
+- 31 October 2026: the folders added in M3 (the libraries, `services/root`, `targets/`,
+  `tests/programs/`, `interfaces/`, `LICENSES/`), and each folder's licence.

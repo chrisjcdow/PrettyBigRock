@@ -44,6 +44,18 @@ every thread when it starts (section 3). The code page starts with this header:
   with the scale in the data page, without entering the kernel. Otherwise it makes the
   `clock_now` system call.
 
+The data page, as built in M3:
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 8 | 1 if programs may read the counter themselves, 0 if `clock_now` must ask the kernel |
+| 8 | 8 | The counter's value when the clock started |
+| 16 | 8 | Nanoseconds per count, times 2³² |
+
+The time is `((counter − start) × scale) >> 32`, with a 128-bit product. The kernel's own
+clock uses exactly the same sum, so the two always agree. (QEMU's x86-64 processors don't
+report an invariant TSC, so there `clock_now` asks the kernel.)
+
 ### 2. The calling convention behind `call`
 
 | | x86-64 | AArch64 |
@@ -144,9 +156,24 @@ start-up block, note 0009). Results are written `→ result1, result2`.
 | 24 | `process_watch` | process h, notification h, bits | | `WATCH`; `SIGNAL` on the notification |
 | 25 | `process_exit` | status | (doesn't return) | |
 
-The name is UTF-8, at most 64 bytes, for reports. `process_info` writes a versioned record:
-state, exit status or fault record, budget, memory used, thread count, and the per-object
-charges (note 0006, section 9). Its layout is specified with the native library's types.
+The name is UTF-8, at most 64 bytes, for reports. `process_info` writes a record of 128 bytes
+(a shorter buffer gets the start of it):
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | The record's version (1) |
+| 4 | 4 | State: 0 running, 1 ending, 2 exited, 3 stopped, 4 ended by a fault |
+| 8 | 8 | Exit or stop status |
+| 16 | 8 | Fault kind: 1 memory access, 2 illegal instruction, 3 alignment, 4 arithmetic, 5 breakpoint, 6 other (0 if no fault) |
+| 24 | 8 | Fault address |
+| 32 | 8 | Address of the faulting instruction |
+| 40 | 8 | Budget, in bytes |
+| 48 | 8 | Memory used, in bytes |
+| 56 | 8 | Threads |
+| 64 | 56 | The charges, in bytes, for a thread, an endpoint, a notification, a reply capability, a process, a table slot and a page-table page (note 0006, section 9) |
+| 120 | 8 | The process's number, as the kernel log shows it |
+
+Later versions only add fields after these.
 
 **Memory**
 
@@ -161,6 +188,9 @@ charges (note 0006, section 9). Its layout is specified with the native library'
 | 36 | `memory_info` | memory h | size | |
 
 Permissions: bit 0 read, bit 1 write, bit 2 execute. Write and execute together is refused.
+`memory_unmap` and `memory_protect` work on **whole mappings**: the address and length must
+be exactly those of one mapping. Splitting a mapping isn't needed yet, and refusing it keeps
+the kernel's bookkeeping simple.
 `memory_read` and `memory_write` let a loader fill a program's memory without mapping it.
 
 **Threads**
@@ -174,6 +204,11 @@ Permissions: bit 0 read, bit 1 write, bit 2 execute. Write and execute together 
 | 44 | `thread_yield` | | | |
 | 45 | `thread_sleep` | deadline | | |
 | 46 | `thread_watch` | thread h, notification h, bits | | `WATCH`; `SIGNAL` on the notification |
+| 47 | `thread_set_pointer` | address | | |
+
+`thread_set_pointer` sets the calling thread's thread pointer (`FS` base on x86-64,
+`TPIDR_EL0` on AArch64), which the library uses for each thread's own data. The address must
+be in the lower half. (It was added while building M3; programs can't set `FS` themselves.)
 
 **Endpoints and messages** (the details are in note 0008)
 
@@ -184,9 +219,12 @@ Permissions: bit 0 read, bit 1 write, bit 2 execute. Write and execute together 
 | 52 | `endpoint_call` | endpoint h, deadline | | `SEND` |
 | 53 | `endpoint_receive` | endpoint h, deadline | kind, reply h or bits | `RECEIVE` |
 | 54 | `endpoint_reply` | reply h | | |
-| 55 | `endpoint_reply_receive` | reply h, endpoint h, deadline | kind, reply h or bits | `RECEIVE` |
+| 55 | `endpoint_reply_receive` | reply h, endpoint h, deadline | kind and reply error, reply h or bits | `RECEIVE` |
 | 56 | `endpoint_bind` | endpoint h, notification h | | `RECEIVE`; `WAIT` on the notification |
 | 57 | `endpoint_watch` | endpoint h, notification h, bits | | `WATCH`; `SIGNAL` on the notification |
+
+`endpoint_reply_receive`'s first result holds the kind in its low 32 bits, and in its high
+32 bits the error the reply failed with (0 if it was delivered).
 
 **Notifications**
 
@@ -221,15 +259,22 @@ never reused, even if its call is retired.
 ### 8. Reading and writing programs' memory
 
 Calls that take an address (a name, a buffer, a message page) read or write it through
-two routines, *copy in* and *copy out*:
-- they check that the whole range is in the lower half;
-- a page fault inside them is not a kernel bug: the fault handler sees which routine was
-  running and makes it return `BAD_ADDRESS` (this is the "faults taken on behalf of
-  programs" case from note 0005);
-- everywhere else, the kernel is stopped by the processor from touching program memory by
-  accident: **SMEP and SMAP** on x86-64 and **PAN** on AArch64, switched off only inside the
-  copy routines. Program memory is never executable by the kernel (SMEP, and `PXN` on
-  every lower-half mapping on AArch64).
+two routines, *copy in* and *copy out*, which **never touch the program's memory through the
+program's own addresses**. Instead they look the address up in the process's list of
+mappings, check every page of the range is mapped with the permission needed, and copy
+through the kernel's own map of all physical memory. So:
+- an address that isn't mapped, or not that way, fails with `BAD_ADDRESS` before anything is
+  copied, and there's no page fault to recover from;
+- the same routines read and write *another* process's memory (a message's attached buffer
+  goes straight from the sender's memory to the receiver's);
+- the processor's protection against the kernel touching program memory, **SMEP and SMAP**
+  on x86-64 and **PAN** on AArch64 (where the processor has it), stays on all the time.
+  Program memory is never executable by the kernel (SMEP, and `PXN` on every lower-half
+  mapping on AArch64).
+
+(The first version of this note had the copy routines switch SMAP and PAN off and recover
+from page faults, as Linux does. Copying through the mappings turned out simpler and
+stricter.)
 
 ### 9. When a program faults
 
@@ -244,15 +289,17 @@ or a supervisor instead of ending the process is a later addition (an "exception
 Kernel threads and program threads in the kernel run on `SP_EL1`, each on its own kernel
 stack, as they do now; programs' own stacks use `SP_EL0`. To make a kernel stack overflow
 report cleanly, as the x86 double-fault stack does:
-- kernel stacks are aligned so that the bottom of each stack can be recognised from the
-  stack pointer alone;
-- the exception entry code for exceptions taken at EL1 checks whether the stack pointer has
-  gone below the current stack's bottom, before saving anything;
-- if it has, it switches to that core's **emergency stack** and reports a kernel stack
-  overflow with the usual register dump.
+- every kernel stack sits at the top of a **256 KiB slot aligned to its size**, and the
+  bottom half of each slot is never mapped. So bit 17 of the stack pointer is set anywhere on
+  a stack, and clear once it has run off the bottom;
+- the exception entry code for exceptions taken at EL1 tests that bit before saving
+  anything. It has no free register at that point, so it briefly parks `x0` inside the stack
+  pointer, as Linux does;
+- if the stack has overflowed, it keeps `x0` in `TPIDRRO_EL0` for a moment (programs only
+  ever see that register as 0, and this path never returns), switches to that core's
+  **emergency stack**, and reports a kernel stack overflow with the usual register dump.
 
-This is what Linux does on Arm. The cost is two instructions on each exception taken in the
-kernel.
+The cost is a few instructions on each exception taken in the kernel.
 
 ## Alternatives considered
 
@@ -278,3 +325,8 @@ kernel.
 
 ## Changes
 - 31 October 2026: first version, accepted.
+- 31 October 2026, while building M3: the system data page's layout; call 47
+  (`thread_set_pointer`); unmapping and protecting whole mappings only; how
+  `endpoint_reply_receive` reports a failed reply; the `process_info` record; copying
+  through the mappings instead of switching SMAP and PAN off (section 8); the details of the
+  AArch64 stack check (section 10).

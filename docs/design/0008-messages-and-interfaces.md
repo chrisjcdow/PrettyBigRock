@@ -201,9 +201,9 @@ function  = "@" INT "fn" IDENT "(" [ params ] ")" [ "->" "(" [ params ] ")" ]
 reserved  = "reserved" "@" INT ";" ;
 params    = param { "," param } [ "," ] ;
 param     = IDENT ":" type ;
-struct    = "struct" IDENT "{" { IDENT ":" type "," } "}" ;
-enum      = [ "flexible" ] "enum" IDENT "{" { IDENT "@" INT "," } "}" ;   (last comma optional)
-bits      = "bits" IDENT ":" uint "{" { IDENT "@" INT "," } "}" ;          (INT is a bit number)
+struct    = "struct" IDENT "{" { doc* IDENT ":" type "," } "}" ;           (last comma optional)
+enum      = [ "flexible" ] "enum" IDENT "{" { doc* IDENT "@" INT "," } "}" ; (last comma optional)
+bits      = "bits" IDENT ":" uint "{" { doc* IDENT "@" INT "," } "}" ;     (INT is a bit number)
 const     = "const" IDENT ":" uint "=" INT ";" ;
 type      = uint | sint | "bool"
           | "string" "<" INT ">" | "bytes" "<" INT ">"
@@ -215,8 +215,9 @@ hkind     = qname | "memory" | "notification" | "process" | "thread" | "any" ;
 qname     = IDENT { "." IDENT } ;
 doc       = "///" text to end of line ;
 ```
-`//` starts an ordinary comment. `IDENT` is ASCII letters, digits and `_`, not starting with
-a digit. `INT` is decimal or `0x` hexadecimal.
+`//` starts an ordinary comment (so does `////`). `IDENT` is ASCII letters, digits and `_`,
+not starting with a digit. `INT` is decimal or `0x` hexadecimal. Words like `fn` and `struct`
+are only special where the grammar expects them.
 
 **Rules the compiler enforces:**
 - operation numbers are 1 to 65535, unique, and never the number of a `reserved` line;
@@ -224,8 +225,24 @@ a digit. `INT` is decimal or `0x` hexadecimal.
   is known; a message's fixed part must fit in 240 bytes and its variable part in 65536;
 - at most 4 handles in a request and 4 in a reply, and handles can't be inside a `list`;
 - names are unique; types are defined in the file (importing other files is a later
-  addition);
-- enum values and bit numbers are unique within their type, and bits fit their size.
+  addition), and may be used before they're defined;
+- enum values and bit numbers are unique within their type, and bits fit their size; enums
+  and bits types have at least one value;
+- **handles are only parameters or results themselves** (`handle<…>` or
+  `option<handle<…>>`), never inside a struct, list, array or other option. This keeps every
+  type copyable and comparable, and a message's capabilities easy to count;
+- a struct can't contain itself (directly or through an array, option or list), an option
+  can't hold another option, a list's elements take up space, and lengths and maximums are
+  from 1 to 65536;
+- **names follow Rust's style**, so generated code reads naturally: the interface's parts,
+  operations, parameters and fields in `snake_case`; types, enum values and bits in
+  `CamelCase`; constants in `UPPER_CASE`. Names that are reserved words in Rust or C are
+  refused (`type`, `long`, …), so a C generator (M9) never meets one it can't express;
+- a few names belong to the generated code: types can't be called `Client`, `Server`,
+  `Reply`, `Request` or `Results`; constants can't be `VERSION`, `NAME`, `OP`, `LABEL`,
+  `ALL` or the buffer and size names of section 9; operations can't be `new`, `endpoint`,
+  `into_endpoint`, `set_deadline`, `deadline` or a primitive type's name; a parameter can't
+  be `reply`; a flexible enum can't have a value called `Unknown`.
 
 **Compatibility.** `version` is the interface's major version. Within a version, these are
 compatible: adding an operation, adding a value to a `flexible enum`, adding a bit to a
@@ -248,17 +265,24 @@ All values are little-endian.
 size (at most 8):
 - integers: their size; `bool`: one byte, 0 or 1;
 - `enum`: `u32`; `bits`: its declared size;
-- `struct`: its fields in order, aligned to its largest field;
+- `struct`: its fields in order, each aligned to its own alignment; the struct is aligned
+  to its largest field's alignment, and padded at the end to a multiple of it;
 - `array<T, N>`: N copies of T;
-- `option<T>`: a `u8` (0 absent, 1 present), then T, which is all zeros when absent;
-- `handle<…>`: a `u32` index into the message's `caps` (0 to 3), or `0xFFFF_FFFF` for an absent
-  `option<handle>`;
+- `option<T>`: aligned to T's alignment: a `u8` tag (0 absent, 1 present), padding to T's
+  alignment, then T, which is all zeros when absent;
+- `handle<…>`: a `u32` index into the message's `caps` (0 to 3). An absent
+  `option<handle>` is all zeros, like any absent option, and takes no capability;
 - `string`, `bytes`, `list`: a **reference**, two `u32`s: offset and length in bytes into the
   attached buffer.
 
+The parameters as a whole are laid out exactly like a struct's fields, including the padding
+at the end.
+
 **The variable part** goes in the attached buffer. Each `string`, `bytes` and `list` is placed
-at an offset aligned to 8, in the order they appear. A list's elements are laid out like the
-fixed part; a list of strings holds references, which point elsewhere in the same buffer.
+at an offset aligned to 8, in the order they appear, depth first. A list's elements are laid
+out like the fixed part, in one block, and whatever they refer to follows the block; a list
+of strings holds references, which point elsewhere in the same buffer. The largest a
+variable part can be counts each item rounded up to 8.
 
 **What a receiver checks** before the service sees anything (the generated code does this):
 - `data_len` is exactly the fixed part's size, and the capability count is what the
@@ -274,6 +298,11 @@ fixed part; a list of strings holds references, which point elsewhere in the sam
   with `SEND`;
 - padding bytes are 0.
 
+A receiver doesn't insist that each item sits exactly where an encoder would put it: a
+reference anywhere inside the buffer received is accepted. Overlapping references cost the
+receiver nothing (everything is copied out), and checking placement would only add ways to
+get it wrong.
+
 A message that fails any check is answered with `0xFFFF_0002` and its capabilities are closed.
 
 ### 9. Generated code
@@ -284,19 +313,42 @@ runs it from its build script over every file in `interfaces/`, generating one R
 per interface, for programs (`no_std`, with `alloc`). `cargo xtask interfaces` prints the
 generated code for review. Generated code isn't kept in git.
 
-For each interface it generates:
-- **types** for its structs, enums and bits;
-- **a client**: a wrapper around an endpoint capability with one method per operation,
-  returning `Result<results, CallError<E>>`, where `CallError` is the operation's error or a
-  failure of the call itself;
-- **a server trait** with one method per operation, and a **dispatcher** that checks and
-  decodes a received message, calls the right method, and encodes the reply. A method may
-  answer at once or keep a responder to answer later;
-- **constants** for each operation's label and the largest buffer each direction needs.
+For each interface it generates a module named after it (`pbr.file` becomes `pbr_file`):
+- **types** for its structs, enums and bits. Structs derive `Clone`, `Debug`, `PartialEq` and
+  `Eq`; enums are Rust enums, and a flexible one has an extra `Unknown(u32)`; bits types are
+  a newtype over their integer with a constant per bit, `ALL`, `contains` and `|`;
+- **constants**: `NAME`, `VERSION`, the file's own constants, and `REQUEST_BUFFER` and
+  `REPLY_BUFFER`, the largest attached buffer any request or reply can have (what a service
+  receives into);
+- **a module per operation**, with `OP`, `LABEL`, the exact fixed size and largest buffer and
+  capability count of each direction (`REQUEST_FIXED`, `REQUEST_BUFFER`, `REQUEST_CAPS`, and
+  the same for `REPLY_`), a `Request` struct (and `Results` when there are several results),
+  functions to encode and decode each direction, and `Reply`, the responder (below);
+- **a client**, `Client`: an endpoint capability and a deadline for its calls, with one
+  method per operation. Small values are passed by value, strings, lists and structs by
+  reference, and handles are moved. It returns the result (nothing, the single result, or
+  `Results`) or a `CallError<E>`: the operation's error `E`, a failure of the call itself, an
+  unknown operation, a rejected request, a failed service, or a malformed reply. If the call
+  fails, the capabilities it would have moved are closed;
+- **a server trait**, `Server`, with one method per operation, taking the decoded
+  parameters and the operation's `Reply`. A method answers with `reply.ok(…)`,
+  `reply.err(…)` or `reply.fail()`, at once or later; `reply.badge()` says which client
+  called. Dropping a `Reply` unanswered tells the caller the service has gone;
+- **`dispatch`**, which checks and decodes a request and calls the right method. It answers
+  malformed requests and unknown operations itself, and hands back a request for another
+  version of the interface so the service can try another dispatcher.
 
-The compiler is tested on the host with interface files and expected output, and with files
-that must be rejected. The encoding is cross-checked by a second, independent decoder in
-Python (`tools/pbi_check.py`), as RockFS is.
+Paths in generated code are written in full (`::granite::…`, `::core::…`), so no name in an
+interface can hide them. The encoding and checking themselves are in
+`granite::interface` (MPL-2.0), so the generated code stays small.
+
+The compiler is tested on the host: its parser and checks (including a list of files it
+must refuse), and the generated code for `interfaces/pbr.test.echo.pbi` (round trips, exact
+bytes worked out by hand, and every single-byte change to valid messages). The program
+self-test then runs that interface between two programs on PrettyBigRock. The layouts are
+cross-checked by a second, independent **layout calculator** in Python
+(`tools/pbi_check.py`), which reads the same files and must agree on every struct's size and
+every message's fixed size, largest buffer and capability count.
 
 ### 10. Licences
 
@@ -336,3 +388,8 @@ GPL-3.0-or-later, with a statement that its output is MIT-licensed.
 
 ## Changes
 - 31 October 2026: first version, accepted.
+- 31 October 2026, while building M3: handles only as parameters or results themselves; an
+  absent `option<handle>` is all zeros; an option starts at its value's alignment; the order
+  of a list's block and what it refers to; documentation on fields and values; naming rules
+  and reserved names; receivers accept references anywhere in the buffer; what is generated;
+  the Python cross-check is a layout calculator.

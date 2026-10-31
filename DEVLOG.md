@@ -205,3 +205,68 @@ and v1.3 releases. Then he asked for M2.
   - On x86 without x2APIC, an interrupt in the middle of sending an inter-core interrupt
     could redirect it.
 - Stress-tested the result by booting all four configurations 60 times in a row.
+
+## Session 8: 31 October 2026, milestone M3 (capabilities, messages and the first programs)
+
+**Chris** asked for M3, and to be walked through its key decisions one at a time before any
+design notes or code, as for the overall design. He settled ten decisions:
+- processes that hold the capability tables;
+- 32-bit handles, rights, copies that can be revoked;
+- memory budgets;
+- endpoints with badges (rather than a private channel per client), plus the "last sender
+  gone" signal, after asking whether we'd regret it and whether to build both;
+- message sizes;
+- memory objects, notifications and rings;
+- the system page and the list of calls;
+- the start-up archive and program files;
+- the interface language;
+- the licences.
+
+He named the native library: asked what Table Mountain is made of, he chose **granite** for
+the bedrock library, keeping **sandstone** for a later layer. He asked that tests stay small
+but never at the cost of quality, since everything later is built on this.
+
+**Claude:**
+- Wrote design notes 0006 to 0009, which Chris accepted, and draft 3 of DESIGN.md. The
+  licences changed from a linking exception to MPL-2.0 for `granite` and MIT for interfaces.
+- Built host-tested libraries first:
+  - the capability derivation tree (`lib/captree`), with model tests;
+  - ELF reading for kernels and programs (`lib/elf`);
+  - the start-up archive (`lib/archive`, with `tools/startarc.py` as an independent reader).
+- Built the kernel side, on both architectures:
+  - user mode, with SMEP, SMAP and PAN on all the time;
+  - processes, capability tables, budgets, memory objects and address spaces;
+  - endpoints with direct hand-over, replies, notifications;
+  - the system page and the system calls;
+  - a reaper that finishes ending processes;
+  - loading the root program from the start-up archive, which both loaders now bring.
+- Built **granite** (programs' start-up, system calls, handles, messages, memory, threads, a
+  heap, the program loader, ring buffers) and PrettyBigRock's own Rust targets for programs.
+- Built the **interface compiler** (`lib/interface-compiler`) and the generated code
+  (`lib/interfaces`). `tools/pbi_check.py` independently works out every message's layout,
+  and the two are compared on every test run.
+- Added the **program self-test**: the root program runs `echo` and `probe` through:
+  - messages and capabilities;
+  - an interface's generated code;
+  - isolation;
+  - four kinds of fault;
+  - revocation;
+  - the last sender signal;
+  - a crashing service;
+  - budgets;
+  - 1200 calls across 4 threads.
+
+  It passes on all four boot configurations.
+- Problems found along the way:
+  - revoking was quadratic, so a model test took 4 minutes; it now takes 9 seconds;
+  - the debug kernel outgrew the BIOS partition, so the disk now carries stripped files;
+  - exiting threads leaked their process;
+  - a lock check gave a false alarm;
+  - two endpoint races, a deadlock and a lost deadline, were found in review and fixed
+    before they could show up;
+  - the interface test's exact-bytes check caught options being laid out differently from the
+    note, before anything depended on it;
+  - the budget check could be confused by earlier test programs still being torn down.
+- Updated notes 0001, 0002 and 0007 to 0009 with what building taught us (for example,
+  the kernel now copies through programs' mappings instead of switching SMAP off), and added
+  `LICENSES/`.

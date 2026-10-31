@@ -31,16 +31,25 @@ records who did what in each session. Chris directs; Claude writes the code and 
 
 ![PrettyBigRock 2 starting all four cores and passing its self-test](docs/screenshot-pbr2.png)
 
-So far (milestone M2) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on
+So far (milestone M3) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on
 ARM64 machines with UEFI, all from the same disk image. The kernel then:
 - takes over memory management;
 - handles interrupts and exceptions;
 - keeps time;
 - starts every processor core;
-- runs threads across them all.
+- runs threads across them all;
+- runs programs, each in its own process with its own memory and its own capabilities (the
+  only way a program can reach anything), talking to each other by messages;
+- starts the first program, `root`, from an archive the loader brings along.
+
+Programs are written in Rust against **granite**, PrettyBigRock's native library, and
+services describe what they offer in small interface files (`interfaces/*.pbi`), from which
+the code for both sides is generated.
 
 It reports what it found on the screen and the serial port. With `selftest` on its command
-line, it tests all of that too, which is what the automatic boot tests do.
+line, it tests all of that too, which is what the automatic boot tests do: the kernel tests
+itself, then `root` runs test programs that check messages, isolation, faults, revocation,
+memory budgets and calls under load.
 
 Building needs [rustup](https://rustup.rs); the right Rust version installs itself the first
 time. Booting it needs QEMU, with its UEFI firmware (on Debian or Ubuntu: `qemu-system-x86
@@ -51,6 +60,7 @@ cargo xtask build --release      # build/release/prettybigrock.img: kernels, loa
 cargo xtask run                  # start it in QEMU (add --bios, --arch aarch64, --el2, --selftest, --cores 8)
 cargo xtask qemu-test            # boot all four ways, with 4 cores, and run the self-test each time
 cargo xtask ci                   # formatting, lints, tests, builds and boot tests: what GitHub runs
+cargo xtask interfaces           # print the code generated from interfaces/
 cargo xtask doctor               # how the toolchain was found
 ```
 
@@ -151,8 +161,16 @@ GNU General Public License as published by the Free Software Foundation, either 
 of the License, or (at your option) any later version. It is distributed in the hope that it
 will be useful, but WITHOUT ANY WARRANTY. See [LICENSE](LICENSE) for the full text.
 
-The app libraries of PrettyBigRock 2 will carry a linking exception, so that apps can be
-written under any licence (DESIGN.md section 9.1).
+So that programs for PrettyBigRock 2 can be written under any licence, the parts that end up
+inside them use more permissive licences (DESIGN.md section 9.1, decision D16):
+
+| Licence | What |
+|---|---|
+| [MPL-2.0](LICENSES/MPL-2.0.txt) | `lib/granite` (the native library), `lib/elf`, `lib/archive`, `targets/` |
+| [MIT](LICENSES/MIT.txt) | `interfaces/` (interface files), `lib/interfaces` and all code generated from interfaces |
+| [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt) | everything else: the kernel, loaders, services, tools and PrettyBigRock 1.x |
+
+Every source file says which applies on its first lines, and `cargo xtask check` checks it.
 
 # Known limits of 1.x
 
