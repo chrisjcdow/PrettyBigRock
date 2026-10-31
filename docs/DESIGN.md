@@ -1,6 +1,6 @@
 # PrettyBigRock 2: design
 
-Status: **draft 2**, 29 October 2026. These decisions were agreed between Christopher
+Status: **draft 3**, 31 October 2026. These decisions were agreed between Christopher
 Cameron-Dow and Claude. The plan for building it is in [ROADMAP.md](ROADMAP.md).
 
 PrettyBigRock 1.x began as a quick experiment: a 32-bit kernel in C where every app is part of
@@ -115,7 +115,7 @@ These settle arguments when a design question comes up.
 | D13 | **Write the OS ourselves**; anything borrowed is temporary. Ported apps are welcome (section 1.1) | Control over the whole system; no dependence on outside code. |
 | D14 | **Documentation first** | Every major part has a design note before code. These notes are the project's memory between sessions. |
 | D15 | **GPL-3.0-or-later**, copyright Christopher Cameron-Dow | Stays open source. |
-| D16 | **A linking exception for app libraries** (section 9.1) | So that anyone, including companies making proprietary software, can write apps for PrettyBigRock. The kernel and system services stay plain GPL. |
+| D16 | **App-facing libraries under MPL-2.0, interface code under MIT** (section 9.1) | So that anyone, including companies making proprietary software, can write apps for PrettyBigRock. The kernel and system services stay plain GPL. |
 | D17 | **The 1.x C system moves to `classic/`** and stays buildable and releasable | One repo and one history; the playable version stays available while 2.x is built. |
 | D18 | **The browser player stays on 1.x** | v86 only emulates 32-bit x86. A 64-bit browser version can come later. |
 | D19 | **General purpose**: desktop and home server (section 1.1) | Chris wants to use it for what he uses computers for today. |
@@ -207,10 +207,11 @@ kind. All of these are ordinary programs.
 ### 6.3 Kernel objects and capabilities
 
 Everything the kernel manages is an **object**:
-- address space;
+- process (an address space, a capability table, its threads and its memory budget);
 - thread;
 - memory object (a range of memory that can be mapped, shared or copied on write);
-- channel (one end of a message connection);
+- endpoint (a service's receiving point for messages);
+- reply (a one-time capability to answer one message);
 - notification (a lightweight signal);
 - interrupt;
 - device memory range;
@@ -230,13 +231,18 @@ Rules that are cheap now and expensive later:
 - **Moving capabilities in messages.** This is the only way a program gets new access.
 - **No forging.** Handles are meaningful only inside the program that holds them.
 
+The exact rules are in [note 0006](design/0006-objects-and-capabilities.md).
+
 ### 6.4 Messages
 
 Messages are the heart of a microkernel, and their design is a long-term contract.
 
-- **Small messages.** Synchronous, with a fixed-size body plus up to a few capabilities.
-  Used for requests and replies, and built to be fast (L4-style direct switching from caller
-  to receiver).
+- **Small messages.** Synchronous, with a fixed-size body (240 bytes), up to 4 capabilities
+  and an optional attached buffer of up to 64 KiB. Used for requests and replies, and built
+  to be fast (L4-style direct switching from caller to receiver). A service has one
+  **endpoint** for all its clients, who are told apart by **badges**, and is told when a
+  client's last capability to it goes. In the native library, a two-way connection between
+  programs is still called a channel.
 - **Bulk data.** Shared memory with ring buffers between the two sides, plus notifications to
   say "there's more". Disk, network, audio and graphics use this, so their data is never
   copied through the kernel.
@@ -244,6 +250,9 @@ Messages are the heart of a microkernel, and their design is a long-term contrac
   small language of our own from which the build generates Rust code for both sides. Every
   interface has a name and a version. These files are also the documentation of how the
   system's parts talk to each other.
+
+The exact rules are in [note 0008](design/0008-messages-and-interfaces.md), and the system
+calls in [note 0007](design/0007-system-calls.md).
 
 ### 6.5 System calls
 
@@ -417,24 +426,25 @@ Apps link against the native library and the C library, and include code generat
 interface files. If all of that were plain GPL, every app would have to be GPL too, and
 nobody would write proprietary software for PrettyBigRock.
 
-So these app-facing parts carry the GPL **plus a linking exception**: an app may use them,
-including linking them statically, under any licence it likes. Changes to the libraries
-themselves stay GPL.
+So these app-facing parts have more permissive licences:
+- **MPL-2.0** for the native library (`granite`), the C library and POSIX layer, and the
+  start-up code linked into every program. Anyone who changes one of their files must keep
+  that file open, but an app may include them, statically and with their generic and inlined
+  code, under any licence it likes.
+- **MIT** for the interface files and the code generated from them, so generated code in an
+  app carries no obligations.
 
-Covered by the exception:
-- the native library;
-- the C library and POSIX layer;
-- the interface files and the code generated from them;
-- the start-up code linked into every program.
-
-Not covered: the kernel and the system services. Apps talk to those through messages, not by
+Everything else is GPL-3.0-or-later: the kernel and the system services. Apps talk to those through messages, not by
 linking, so the GPL doesn't reach the apps anyway, in the same way that programs on Linux
 aren't covered by the kernel's GPL.
 
-The exact wording will be settled before the native library is first published (milestone
-M3). We'll prefer an existing, well-known exception over writing our own, since a recognised
-text is better understood by developers and lawyers. Chris holds the copyright, so he can
-grant the exception. (This is a plan, not legal advice.)
+This was first planned as the GPL plus a linking exception. On 31 October 2026 it became
+MPL-2.0 instead: linking exceptions were written for C, where an app calls a separately
+compiled library, while Rust compiles much of a library's code into the app itself, which
+makes "linking" a grey area. MPL-2.0 is a well-known licence that covers this directly, and
+it's compatible with the GPL. Chris holds the copyright, so he can choose these licences.
+The details are in [note 0009](design/0009-programs-and-granite.md). (This is a plan, not
+legal advice.)
 
 ---
 
@@ -602,3 +612,6 @@ Settled on 29 October 2026: Q1 (became D16), Q2 (D17), Q3 (D18) and Q4 (D19, sec
   a clarification that D13 covers the OS rather than ported apps, and open questions Q7
   and Q8.
 - 29 October 2026: added support for several screens to the display server design.
+- 31 October 2026: draft 3, with the M3 decisions (notes 0006 to 0009): processes hold the
+  capability tables; endpoints with badges instead of channels, plus replies; message sizes;
+  and D16 changed from a linking exception to MPL-2.0 and MIT.

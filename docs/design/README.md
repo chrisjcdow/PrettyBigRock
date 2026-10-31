@@ -17,6 +17,10 @@ written to be read cold.
 | [0003](0003-boot-information.md) | Boot information, and the machine's state when the kernel starts | Accepted (version 1.0) |
 | [0004](0004-loaders-and-boot-disk.md) | The UEFI and BIOS loaders, and the boot disk image | Accepted |
 | [0005](0005-kernel-core.md) | The kernel core: memory, interrupts, time, cores, scheduler, locks | Accepted |
+| [0006](0006-objects-and-capabilities.md) | Kernel objects, capabilities and budgets | Draft |
+| [0007](0007-system-calls.md) | System calls (interface version 1.0) | Draft |
+| [0008](0008-messages-and-interfaces.md) | Messages, rings and the interface language | Draft |
+| [0009](0009-programs-and-granite.md) | Programs, the start-up archive, the root program and `granite` | Draft |
 
 ## Writing a note
 

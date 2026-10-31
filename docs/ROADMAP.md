@@ -12,6 +12,11 @@ up to date.
 
 PrettyBigRock 1.x stays available throughout as the playable version.
 
+**Releases.** There are no PrettyBigRock 2 releases until the 2.0 alpha at M6, when it can do
+everything 1.3 does. The suggested version scheme (not yet adopted in the code, which still
+says 0.0.0) is `2.0.0-alpha.N`, then betas from around M7 or M8, then 2.0. The version is set
+when the alpha is prepared.
+
 ---
 
 ## M0: Foundations
@@ -59,6 +64,9 @@ It passed 60 boots in a row, on all four configurations. Note 0005 describes the
 
 **Done when:** two separate programs exchange messages and capabilities, a program can't reach
 anything it wasn't given, and revocation is shown to work, all tested.
+
+**Design:** notes 0006 (objects and capabilities), 0007 (system calls), 0008 (messages and
+the interface language) and 0009 (programs and `granite`), drafted 31 October 2026.
 
 ## M4: Devices and drivers
 - The device manager; PCI Express; reading ACPI tables and device trees.
