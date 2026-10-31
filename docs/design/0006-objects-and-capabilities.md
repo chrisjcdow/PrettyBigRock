@@ -1,6 +1,6 @@
 # 0006: Kernel objects, capabilities and budgets
 
-Status: Draft · 31 October 2026 · Related: DESIGN.md sections 6.3, 6.6 and 7; notes 0005,
+Status: Accepted · 31 October 2026 · Related: DESIGN.md sections 6.3, 6.6 and 7; notes 0005,
 0007, 0008, 0009; milestone M3
 
 ## The problem
@@ -252,4 +252,4 @@ Every process has a **budget** in bytes, and a count of how much of it is used.
 - Per-core caches for handle lookups, if the table lock becomes a bottleneck.
 
 ## Changes
-- 31 October 2026: first version (draft).
+- 31 October 2026: first version, accepted.

@@ -1,6 +1,6 @@
 # 0008: Messages, rings and the interface language
 
-Status: Draft · 31 October 2026 · Related: DESIGN.md section 6.4; notes 0006, 0007, 0009;
+Status: Accepted · 31 October 2026 · Related: DESIGN.md section 6.4; notes 0006, 0007, 0009;
 milestone M3
 
 ## The problem
@@ -335,4 +335,4 @@ GPL-3.0-or-later, with a statement that its output is MIT-licensed.
 - Moving a reply capability to another process (for a service that passes work to a helper).
 
 ## Changes
-- 31 October 2026: first version (draft).
+- 31 October 2026: first version, accepted.

@@ -1,6 +1,6 @@
 # 0007: System calls
 
-Status: Draft · 31 October 2026 · Related: DESIGN.md section 6.5; notes 0005, 0006, 0008,
+Status: Accepted · 31 October 2026 · Related: DESIGN.md section 6.5; notes 0005, 0006, 0008,
 0009; milestone M3
 
 ## The problem
@@ -277,4 +277,4 @@ kernel.
 - The exception endpoint for debuggers.
 
 ## Changes
-- 31 October 2026: first version (draft).
+- 31 October 2026: first version, accepted.

@@ -1,6 +1,6 @@
 # 0009: Programs, the start-up archive, the root program and `granite`
 
-Status: Draft · 31 October 2026 · Related: DESIGN.md sections 4, 5, 9 and 9.1; D16; notes
+Status: Accepted · 31 October 2026 · Related: DESIGN.md sections 4, 5, 9 and 9.1; D16; notes
 0003, 0004, 0006, 0007, 0008; milestone M3
 
 ## The problem
@@ -293,4 +293,4 @@ Actions.
 - Signing the start-up archive (with secure boot, after Q5).
 
 ## Changes
-- 31 October 2026: first version (draft).
+- 31 October 2026: first version, accepted.
