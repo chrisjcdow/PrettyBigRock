@@ -11,11 +11,23 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-/// One core's data.
+/// One core's data. The first four fields are at fixed offsets, because the architecture
+/// layer's entry code reads them before it can run any Rust: see [`OFFSET_USER_SP`] and the
+/// constants after it.
 #[repr(C)]
 pub struct PerCpu {
     /// Points at this structure itself (x86-64 reads it through `GS:[0]`).
     self_ptr: *const PerCpu,
+    /// Somewhere to keep a program's stack pointer while entering the kernel (x86-64).
+    pub user_sp_scratch: AtomicU64,
+    /// The top of the current thread's kernel stack: where a program's entry to the kernel
+    /// starts its stack (x86-64 system calls).
+    pub kernel_sp: AtomicU64,
+    /// The top of this core's emergency stack, for reporting a kernel stack overflow (AArch64).
+    pub emergency_sp: AtomicU64,
+    /// The root of the program page tables loaded on this core (0: none), so that changes to
+    /// them reach every core that might have cached them.
+    pub loaded_root: AtomicU64,
     /// The core's number: 0 for the boot core, then 1, 2, ... in start-up order.
     pub index: u32,
     /// The hardware's name for the core: the x86 APIC ID, or the Arm MPIDR affinity bits.
@@ -40,6 +52,18 @@ unsafe impl Sync for PerCpu {}
 // SAFETY: as above.
 unsafe impl Send for PerCpu {}
 
+/// Where [`PerCpu::user_sp_scratch`] is.
+pub const OFFSET_USER_SP: usize = 8;
+/// Where [`PerCpu::kernel_sp`] is.
+pub const OFFSET_KERNEL_SP: usize = 16;
+/// Where [`PerCpu::emergency_sp`] is.
+pub const OFFSET_EMERGENCY_SP: usize = 24;
+const _: () = {
+    assert!(core::mem::offset_of!(PerCpu, user_sp_scratch) == OFFSET_USER_SP);
+    assert!(core::mem::offset_of!(PerCpu, kernel_sp) == OFFSET_KERNEL_SP);
+    assert!(core::mem::offset_of!(PerCpu, emergency_sp) == OFFSET_EMERGENCY_SP);
+};
+
 static CPUS: Once<Vec<&'static PerCpu>> = Once::new();
 
 /// Creates the per-core data for every core (`hw_ids[0]` is the boot core).
@@ -48,6 +72,10 @@ pub fn create(hw_ids: &[u64]) {
     for (i, &hw) in hw_ids.iter().enumerate() {
         let p = Box::leak(Box::new(PerCpu {
             self_ptr: core::ptr::null(),
+            user_sp_scratch: AtomicU64::new(0),
+            kernel_sp: AtomicU64::new(0),
+            emergency_sp: AtomicU64::new(0),
+            loaded_root: AtomicU64::new(0),
             index: i as u32,
             hw_id: hw,
             online: AtomicBool::new(false),
@@ -81,8 +109,11 @@ pub fn install(cpu: &'static PerCpu) {
 /// This core's data, or `None` before [`install`].
 pub fn try_this() -> Option<&'static PerCpu> {
     let p = arch::get_percpu();
-    // SAFETY: a non-zero value is only ever set by `install`, to a leaked (so 'static) PerCpu.
-    (p != 0).then(|| unsafe { &*(p as *const PerCpu) })
+    // A program's value can be there for an instant while a core enters or leaves the kernel
+    // (x86-64's `swapgs`); only a kernel address can be ours.
+    // SAFETY: a kernel-half value is only ever set by `install`, to a leaked (so 'static)
+    // PerCpu.
+    (p >= 0xFFFF_8000_0000_0000).then(|| unsafe { &*(p as *const PerCpu) })
 }
 
 /// This core's data.

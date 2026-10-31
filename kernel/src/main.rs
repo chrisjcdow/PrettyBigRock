@@ -10,9 +10,10 @@
 //! Processor-specific code lives in [`arch`]; nothing outside it may assume which processor
 //! it runs on (docs/DESIGN.md, section 10).
 //!
-//! Status: milestone M2, the kernel core (docs/design/0005-kernel-core.md). The kernel
-//! manages memory, handles interrupts and exceptions, keeps time, starts every core, and
-//! schedules threads across them. With `selftest` on its command line, it tests all of that.
+//! Status: milestone M3, capabilities, messages and the first programs (notes 0006 to 0009),
+//! on top of the kernel core (note 0005). The kernel starts the root program from the start-up
+//! archive; with `selftest` on its command line, it tests itself first, and the root program
+//! then tests capabilities and messages from inside running programs.
 
 #![no_std]
 #![no_main]
@@ -23,11 +24,17 @@ mod arch;
 mod console;
 mod hw;
 mod mem;
+mod obj;
 mod percpu;
+mod rng;
+mod root;
 mod sched;
 mod selftest;
 mod sync;
+mod syscall;
+mod syspage;
 mod time;
+mod user;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -56,6 +63,8 @@ struct Boot {
     smbios: u64,
     boot_time_ns: u64,
     seeded: bool,
+    /// The start-up archive (note 0009), copied before the loader's memory is reused.
+    startup: Option<Vec<u8>>,
 }
 
 static BOOT: Once<Boot> = Once::new();
@@ -121,6 +130,24 @@ pub fn kernel_main(boot_info: u64, direct_map_base: u64) -> ! {
         };
         String::from_utf8_lossy(b).trim().into()
     };
+    rng::seed(&info.random_seed);
+    let mut startup = None;
+    if !info.modules.is_none() {
+        // SAFETY: the loader's array of modules, in LoaderReclaimable memory (note 0003).
+        let mods = unsafe {
+            core::slice::from_raw_parts(
+                mem::phys_ptr::<pbr_bootinfo::Module>(info.modules.base),
+                (info.modules.len / 64) as usize,
+            )
+        };
+        if let Some(m) = mods.iter().find(|m| m.name() == Some("startup")) {
+            // SAFETY: the module's contents, in memory the loader set aside (note 0003).
+            let bytes = unsafe {
+                core::slice::from_raw_parts(mem::phys_ptr::<u8>(m.data.base), m.data.len as usize)
+            };
+            startup = Some(bytes.to_vec());
+        }
+    }
     BOOT.set(Boot {
         map: map.to_vec(),
         command_line,
@@ -132,6 +159,7 @@ pub fn kernel_main(boot_info: u64, direct_map_base: u64) -> ! {
         smbios: info.smbios,
         boot_time_ns: info.boot_time_ns,
         seeded: info.random_seed.iter().any(|&b| b != 0),
+        startup,
     });
     KERNEL_PHYS.store(info.kernel_physical.base, Ordering::Relaxed);
     KERNEL_VIRT.store(info.kernel_virtual_base, Ordering::Relaxed);
@@ -167,18 +195,49 @@ extern "C" fn continue_start_up() -> ! {
     CORES_STARTED.store(1 + arch::start_other_cores(m) as u64, Ordering::Relaxed);
 
     report(boot);
-    if boot.command_line.split_whitespace().any(|w| w == "selftest") {
-        sched::spawn("self-test", sched::NORMAL, || {
+    obj::process::start_reaper();
+    syspage::init();
+    let selftest = boot.command_line.split_whitespace().any(|w| w == "selftest");
+    sched::spawn("start-up", sched::NORMAL, move || {
+        if selftest {
             match selftest::run() {
                 Ok(summary) => kprintln!("Self-test passed: {summary}"),
                 Err(e) => kprintln!("Self-test FAILED: {e}"),
             }
-            kprintln!("{REPORT_DONE}");
-        });
-    } else {
-        kprintln!("{REPORT_DONE} Nothing else to do yet, so the cores are idling.");
-    }
+        }
+        start_root(selftest);
+    });
     sched::idle_loop()
+}
+
+/// Starts the root program. With the self-test, waits for it (it runs the program self-test
+/// and exits) before saying the start-up report is complete.
+fn start_root(selftest: bool) {
+    let boot = BOOT.get().expect("boot information copied");
+    let Some(archive) = boot.startup.clone() else {
+        kprintln!("There's no start-up archive, so there's no root program to start.");
+        kprintln!("{REPORT_DONE}");
+        return;
+    };
+    match root::start(archive, &boot.command_line) {
+        Err(e) => {
+            kprintln!("Couldn't start the root program: {e}");
+            kprintln!("{REPORT_DONE}");
+        }
+        Ok(p) if selftest => {
+            let done = obj::notification::Notification::new(None);
+            p.watch(done.clone(), 1);
+            let _ = done.wait(u64::MAX, || true);
+            match p.status() {
+                Some(obj::process::Status::Exited(s)) => {
+                    kprintln!("The root program {} exited with status {s}.", root::describe(&p))
+                }
+                other => kprintln!("The root program {} ended: {other:?}.", root::describe(&p)),
+            }
+            kprintln!("{REPORT_DONE}");
+        }
+        Ok(p) => kprintln!("{REPORT_DONE} The root program {} is running.", root::describe(&p)),
+    }
 }
 
 fn report(boot: &Boot) {
@@ -191,7 +250,7 @@ fn report(boot: &Boot) {
         LoaderKind::Unknown => "an unknown loader",
     };
     kprintln!(
-        "PrettyBigRock 2 kernel {VERSION} (milestone M2) on {}, started by {loader}.",
+        "PrettyBigRock 2 kernel {VERSION} (milestone M3) on {}, started by {loader}.",
         arch::NAME
     );
     kprintln!();

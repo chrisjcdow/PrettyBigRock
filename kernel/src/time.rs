@@ -12,21 +12,29 @@ pub const TICK_HZ: u64 = 1000;
 
 static FREQ: AtomicU64 = AtomicU64::new(0);
 static START: AtomicU64 = AtomicU64::new(0);
+/// Nanoseconds per counter tick, times 2^32.
+static MULT: AtomicU64 = AtomicU64::new(0);
 
 /// Starts the clock, once the architecture layer knows its counter's frequency.
 pub fn init(freq: u64) {
     FREQ.store(freq, Ordering::Relaxed);
+    MULT.store(((1_000_000_000u128 << 32) / u128::from(freq.max(1))) as u64, Ordering::Relaxed);
     START.store(arch::clock_counter(), Ordering::Relaxed);
 }
 
 /// Nanoseconds since the clock started.
+///
+/// It's `(ticks × mult) >> 32` rather than a division, because programs compute exactly the
+/// same thing in the system page without entering the kernel (note 0007, section 1), and a
+/// multiplication and a shift are the same on every processor.
 pub fn now_ns() -> u64 {
-    let f = FREQ.load(Ordering::Relaxed);
-    if f == 0 {
-        return 0;
-    }
     let ticks = arch::clock_counter().wrapping_sub(START.load(Ordering::Relaxed));
-    (u128::from(ticks) * 1_000_000_000 / u128::from(f)) as u64
+    ((u128::from(ticks) * u128::from(MULT.load(Ordering::Relaxed))) >> 32) as u64
+}
+
+/// What the system page needs to compute [`now_ns`] itself: (counter at start, multiplier).
+pub fn parameters() -> (u64, u64) {
+    (START.load(Ordering::Relaxed), MULT.load(Ordering::Relaxed))
 }
 
 #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))] // x86-64 core start-up uses it

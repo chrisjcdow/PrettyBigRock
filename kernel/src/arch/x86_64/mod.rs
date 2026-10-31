@@ -10,11 +10,16 @@ mod cpu;
 mod interrupts;
 mod serial;
 mod smp;
+mod user;
 
 pub use context::{init_thread_stack, switch_context, switch_stack};
 pub use cpu::CpuArch;
 pub use serial::Port16550;
 pub use smp::start_other_cores;
+pub use user::{
+    ELF_MACHINE, SHARES_TOP_LEVEL, UserRegs, activate_space, enter_user, flush_user_pages,
+    load_user, save_user, set_kernel_stack, set_thread_pointer, syspage_code, user_clock,
+};
 
 use crate::{hw, percpu, time};
 
@@ -176,5 +181,7 @@ pub fn describe(out: &mut dyn core::fmt::Write) -> core::fmt::Result {
         core::str::from_utf8(&vendor).unwrap_or("unknown vendor"),
         apic::describe()
     )?;
-    write!(out, ", clock: {}", clock::describe())
+    write!(out, ", clock: {}", clock::describe())?;
+    let (fp, smep, smap) = user::describe_protections();
+    write!(out, ", {fp}{}{}", if smep { ", SMEP" } else { "" }, if smap { ", SMAP" } else { "" })
 }

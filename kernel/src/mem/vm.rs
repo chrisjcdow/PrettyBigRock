@@ -17,6 +17,13 @@ pub const STACK_AREA: u64 = 0xFFFF_C000_0000_0000;
 /// Where device registers are mapped.
 pub const DEVICE_AREA: u64 = 0xFFFF_C800_0000_0000;
 const AREA_END: u64 = 0xFFFF_D000_0000_0000;
+/// Each kernel stack has a slot of this size to itself: the stack at the top, and everything
+/// below it unmapped. The slots are aligned to their size, so on AArch64 the exception entry
+/// code can tell a stack has overflowed from one bit of the stack pointer
+/// (docs/design/0007-system-calls.md, section 10).
+pub const STACK_SLOT: u64 = 256 * 1024;
+/// The largest kernel stack, in pages: half a slot, so the lower half is always a guard.
+pub const MAX_STACK_PAGES: u64 = STACK_SLOT / 2 / PAGE;
 
 /// Page-table frames from the page allocator, reached through the direct map.
 pub struct Frames {
@@ -67,12 +74,12 @@ pub fn init(map: &[MemoryRegion], kernel_phys: u64, kernel_virt: u64) {
             (
                 sym(&raw const __text_start),
                 sym(&raw const __text_end),
-                Attr { write: false, exec: true, mem: Memory::Normal },
+                Attr { write: false, exec: true, mem: Memory::Normal, user: false },
             ),
             (
                 sym(&raw const __rodata_start),
                 sym(&raw const __rodata_end),
-                Attr { write: false, exec: false, mem: Memory::Normal },
+                Attr { write: false, exec: false, mem: Memory::Normal, user: false },
             ),
             (sym(&raw const __data_start), sym(&raw const __kernel_end), Attr::DATA),
         ]
@@ -83,6 +90,9 @@ pub fn init(map: &[MemoryRegion], kernel_phys: u64, kernel_virt: u64) {
             .expect("can't map the kernel");
     }
     map_direct(&mut t, &mut fa, map).expect("can't build the direct map");
+    // Programs' page tables (on x86-64) share the kernel's top-level entries, so every one the
+    // kernel will ever use must exist before the first program.
+    t.ensure_top_entries(&mut fa, STACK_AREA, AREA_END).expect("out of memory for page tables");
     arch::activate_kernel_tables(t.root);
     *KERNEL.lock() = Some(Kernel {
         tables: t,
@@ -107,7 +117,7 @@ pub fn map_device(phys: u64, len: u64) -> u64 {
     let virt = k.next_device;
     assert!(virt + size <= AREA_END, "out of space for device mappings");
     k.next_device += size + PAGE; // leave a gap, so overruns fault
-    let attr = Attr { write: true, exec: false, mem: Memory::Device };
+    let attr = Attr { write: true, exec: false, mem: Memory::Device, user: false };
     k.tables
         .map(&mut Frames { below: u64::MAX }, virt, base, size, attr)
         .expect("can't map a device");
@@ -122,11 +132,13 @@ pub fn alloc_stack(pages: u64) -> Option<u64> {
     if let Some(i) = k.free_stacks.iter().position(|&(_, p)| p == pages) {
         return Some(k.free_stacks.swap_remove(i).0);
     }
-    let bottom = k.next_stack + PAGE; // the guard page stays unmapped
-    if bottom + pages * PAGE > DEVICE_AREA {
+    assert!(pages <= MAX_STACK_PAGES, "kernel stacks are at most {MAX_STACK_PAGES} pages");
+    let slot = k.next_stack;
+    if slot + STACK_SLOT > DEVICE_AREA {
         return None;
     }
-    k.next_stack = bottom + pages * PAGE;
+    k.next_stack = slot + STACK_SLOT;
+    let bottom = slot + STACK_SLOT - pages * PAGE;
     let mut fa = Frames { below: u64::MAX };
     for i in 0..pages {
         let frame = pmm::alloc_page()?;
@@ -148,7 +160,7 @@ pub fn free_stack(top: u64, pages: u64) {
 pub fn identity_map(phys: u64, len: u64) {
     let mut g = KERNEL.lock();
     let k = g.as_mut().expect("kernel page tables not set up");
-    let attr = Attr { write: true, exec: true, mem: Memory::Normal };
+    let attr = Attr { write: true, exec: true, mem: Memory::Normal, user: false };
     k.tables
         .map(&mut Frames { below: u64::MAX }, phys, phys, align_up(len, PAGE), attr)
         .expect("can't identity-map");
@@ -174,7 +186,7 @@ pub fn identity_tree(phys: u64, len: u64) -> u64 {
     let mut fa = Frames { below: u64::MAX };
     let mut t = PageTables::new(&mut fa, arch::PAGE_FORMAT).expect("out of memory for page tables");
     let base = phys & !(PAGE - 1);
-    let attr = Attr { write: true, exec: true, mem: Memory::Normal };
+    let attr = Attr { write: true, exec: true, mem: Memory::Normal, user: false };
     t.map(&mut fa, base, base, align_up(phys + len, PAGE) - base, attr)
         .expect("can't identity-map");
     t.root

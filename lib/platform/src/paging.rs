@@ -31,11 +31,14 @@ pub struct Attr {
     pub exec: bool,
     /// The memory type.
     pub mem: Memory,
+    /// Programs may use it (a lower-half mapping in a program's address space). Kernel
+    /// mappings never have this.
+    pub user: bool,
 }
 
 impl Attr {
     /// Read-write data.
-    pub const DATA: Attr = Attr { write: true, exec: false, mem: Memory::Normal };
+    pub const DATA: Attr = Attr { write: true, exec: false, mem: Memory::Normal, user: false };
 }
 
 /// The page-table entry format.
@@ -53,6 +56,8 @@ pub trait FrameAlloc {
     fn alloc(&mut self) -> Option<u64>;
     /// The 512 entries of the table in frame `phys`.
     fn table(&mut self, phys: u64) -> &mut [u64; 512];
+    /// Gives back a frame that held a table. Allocators that never free can ignore it.
+    fn free(&mut self, _phys: u64) {}
 }
 
 /// Why a mapping failed.
@@ -71,6 +76,7 @@ const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
 // x86-64 entry bits
 const X_P: u64 = 1;
 const X_RW: u64 = 1 << 1;
+const X_US: u64 = 1 << 2;
 const X_PWT: u64 = 1 << 3;
 const X_PCD: u64 = 1 << 4;
 const X_PS: u64 = 1 << 7;
@@ -80,9 +86,11 @@ const X_NX: u64 = 1 << 63;
 const A_VALID: u64 = 1;
 const A_TABLE_OR_PAGE: u64 = 1 << 1;
 const A_ATTR_SHIFT: u64 = 2;
+const A_AP_EL0: u64 = 1 << 6;
 const A_AP_RO: u64 = 1 << 7;
 const A_SH_INNER: u64 = 3 << 8;
 const A_AF: u64 = 1 << 10;
+const A_NG: u64 = 1 << 11;
 const A_PXN: u64 = 1 << 53;
 const A_UXN: u64 = 1 << 54;
 
@@ -91,8 +99,9 @@ const A_UXN: u64 = 1 << 54;
 pub const AARCH64_MAIR: u64 = 0xFF | (0x44 << 16); // index 1 is 0x00: device nGnRnE
 
 impl Format {
-    fn table_entry(self, phys: u64) -> u64 {
+    fn table_entry(self, phys: u64, user: bool) -> u64 {
         match self {
+            Format::X86_64 if user => phys | X_P | X_RW | X_US,
             Format::X86_64 => phys | X_P | X_RW,
             Format::Aarch64 => phys | A_VALID | A_TABLE_OR_PAGE,
         }
@@ -114,6 +123,9 @@ impl Format {
                 if attr.mem == Memory::Device {
                     e |= X_PCD | X_PWT;
                 }
+                if attr.user {
+                    e |= X_US;
+                }
                 e
             }
             Format::Aarch64 => {
@@ -122,15 +134,25 @@ impl Format {
                     Memory::Device => (1, 0),
                     Memory::Framebuffer => (2, A_SH_INNER),
                 };
-                let mut e = phys | A_VALID | A_AF | sh | (index << A_ATTR_SHIFT) | A_UXN;
+                let mut e = phys | A_VALID | A_AF | sh | (index << A_ATTR_SHIFT);
                 if !large {
                     e |= A_TABLE_OR_PAGE;
                 }
                 if !attr.write {
                     e |= A_AP_RO;
                 }
-                if !attr.exec || attr.mem != Memory::Normal {
-                    e |= A_PXN;
+                if attr.user {
+                    // Programs' pages: reachable from EL0, never executable by the kernel, and
+                    // tagged with the address space (not global).
+                    e |= A_AP_EL0 | A_PXN | A_NG;
+                    if !attr.exec || attr.mem != Memory::Normal {
+                        e |= A_UXN;
+                    }
+                } else {
+                    e |= A_UXN;
+                    if !attr.exec || attr.mem != Memory::Normal {
+                        e |= A_PXN;
+                    }
                 }
                 e
             }
@@ -159,10 +181,12 @@ impl Format {
                 write: e & X_RW != 0,
                 exec: e & X_NX == 0,
                 mem: if e & X_PCD != 0 { Memory::Device } else { Memory::Normal },
+                user: e & X_US != 0,
             },
             Format::Aarch64 => Attr {
                 write: e & A_AP_RO == 0,
-                exec: e & A_PXN == 0,
+                exec: if e & A_AP_EL0 != 0 { e & A_UXN == 0 } else { e & A_PXN == 0 },
+                user: e & A_AP_EL0 != 0,
                 mem: match (e >> A_ATTR_SHIFT) & 7 {
                     0 => Memory::Normal,
                     1 => Memory::Device,
@@ -203,18 +227,107 @@ impl PageTables {
     /// Removes the 4 KiB mapping at `virt`, if there is one. Returns whether there was. (Tables
     /// emptied by this aren't freed; the caller flushes the TLB.)
     pub fn unmap_page(&mut self, fa: &mut impl FrameAlloc, virt: u64) -> bool {
+        self.unmap(fa, virt).is_some()
+    }
+
+    /// The last-level entry for `virt`, if every table above it exists and it isn't inside a
+    /// large page.
+    fn leaf_slot<'f>(&self, fa: &'f mut impl FrameAlloc, virt: u64) -> Option<&'f mut u64> {
         let mut table = self.root;
         for level in (1..=3).rev() {
             let e = fa.table(table)[index(virt, level)];
             if !self.format.present(e) || self.format.is_leaf(e, level) {
-                return false;
+                return None;
             }
             table = e & ADDR_MASK;
         }
-        let slot = &mut fa.table(table)[index(virt, 0)];
-        let was = self.format.present(*slot);
+        Some(&mut fa.table(table)[index(virt, 0)])
+    }
+
+    /// Removes the 4 KiB mapping at `virt`, returning the physical page it pointed at. (The
+    /// caller flushes the TLB.)
+    pub fn unmap(&mut self, fa: &mut impl FrameAlloc, virt: u64) -> Option<u64> {
+        let format = self.format;
+        let slot = self.leaf_slot(fa, virt)?;
+        if !format.present(*slot) {
+            return None;
+        }
+        let phys = *slot & ADDR_MASK;
         *slot = 0;
-        was
+        Some(phys)
+    }
+
+    /// Changes what the 4 KiB mapping at `virt` allows, keeping where it points. Returns false
+    /// if nothing is mapped there. (The caller flushes the TLB.)
+    pub fn protect(&mut self, fa: &mut impl FrameAlloc, virt: u64, attr: Attr) -> bool {
+        let format = self.format;
+        let Some(slot) = self.leaf_slot(fa, virt) else { return false };
+        if !format.present(*slot) {
+            return false;
+        }
+        *slot = format.leaf(*slot & ADDR_MASK, attr, false);
+        true
+    }
+
+    /// Makes sure the top-level entries covering `[start, end)` point at tables, so that
+    /// trees which copy the top level (see [`PageTables::copy_top_entries`]) share everything
+    /// below it from then on.
+    pub fn ensure_top_entries(
+        &mut self,
+        fa: &mut impl FrameAlloc,
+        start: u64,
+        end: u64,
+    ) -> Result<(), MapError> {
+        let (first, last) = (index(start, 3), index(end - 1, 3));
+        for i in first..=last {
+            if !self.format.present(fa.table(self.root)[i]) {
+                let t = fa.alloc().ok_or(MapError::OutOfMemory)?;
+                fa.table(self.root)[i] = self.format.table_entry(t, false);
+            }
+        }
+        Ok(())
+    }
+
+    /// Copies top-level entries `range` (each covering 512 GiB) from the tree at `from`: how a
+    /// program's tree shares the kernel's upper half.
+    pub fn copy_top_entries(
+        &mut self,
+        fa: &mut impl FrameAlloc,
+        from: u64,
+        range: core::ops::Range<usize>,
+    ) {
+        let src: [u64; 512] = *fa.table(from);
+        let dst = fa.table(self.root);
+        dst[range.clone()].copy_from_slice(&src[range]);
+    }
+
+    /// Frees every table below top-level entries `range` and clears those entries. The pages
+    /// the tables pointed at aren't touched: they belong to whoever mapped them. Only for 4
+    /// KiB mappings (programs' address spaces).
+    pub fn free_tables(&mut self, fa: &mut impl FrameAlloc, range: core::ops::Range<usize>) {
+        for i in range {
+            let e3 = fa.table(self.root)[i];
+            if !self.format.present(e3) || self.format.is_leaf(e3, 3) {
+                continue;
+            }
+            let t2 = e3 & ADDR_MASK;
+            for j in 0..512 {
+                let e2 = fa.table(t2)[j];
+                if !self.format.present(e2) || self.format.is_leaf(e2, 2) {
+                    continue;
+                }
+                let t1 = e2 & ADDR_MASK;
+                for k in 0..512 {
+                    let e1 = fa.table(t1)[k];
+                    if self.format.present(e1) && !self.format.is_leaf(e1, 1) {
+                        fa.free(e1 & ADDR_MASK);
+                    }
+                }
+                fa.free(t1);
+            }
+            fa.free(t2);
+            fa.table(self.root)[i] = 0;
+        }
     }
 
     /// Maps `len` bytes at `virt` to `phys`, using 2 MiB pages where both addresses allow.
@@ -256,7 +369,7 @@ impl PageTables {
             let e = fa.table(table)[i];
             table = if !self.format.present(e) {
                 let t = fa.alloc().ok_or(MapError::OutOfMemory)?;
-                fa.table(table)[i] = self.format.table_entry(t);
+                fa.table(table)[i] = self.format.table_entry(t, attr.user);
                 t
             } else if self.format.is_leaf(e, level) {
                 return Err(MapError::AlreadyMapped);
@@ -322,7 +435,7 @@ pub fn map_direct(
         let Some(mem) = direct_map_memory(t.format, r.kind) else { continue };
         let base = align_down(r.range.base, PAGE);
         let end = align_up(r.range.base + r.range.len, PAGE);
-        let attr = Attr { write: true, exec: false, mem };
+        let attr = Attr { write: true, exec: false, mem, user: false };
         map_skipping_overlaps(t, fa, DIRECT_MAP_BASE + base, base, end - base, attr)?;
     }
     Ok(())
@@ -338,7 +451,7 @@ pub fn map_identity(
     for r in map.iter().filter(|r| is_ram(r.kind)) {
         let base = align_down(r.range.base, PAGE);
         let end = align_up(r.range.base + r.range.len, PAGE);
-        let attr = Attr { write: true, exec: true, mem: Memory::Normal };
+        let attr = Attr { write: true, exec: true, mem: Memory::Normal, user: false };
         map_skipping_overlaps(t, fa, base, base, end - base, attr)?;
     }
     Ok(())
@@ -440,7 +553,7 @@ pub(crate) mod tests {
         for format in [Format::X86_64, Format::Aarch64] {
             let mut fa = FakeFrames(vec![]);
             let mut t = PageTables::new(&mut fa, format).unwrap();
-            let ro = Attr { write: false, exec: true, mem: Memory::Normal };
+            let ro = Attr { write: false, exec: true, mem: Memory::Normal, user: false };
             t.map(&mut fa, 0xFFFF_FFFF_8000_0000, 0x20_0000, 0x3000, ro).unwrap();
             t.map(&mut fa, 0xFFFF_8000_0000_0000, 0, 4 * LARGE, Attr::DATA).unwrap();
             assert_eq!(
@@ -451,12 +564,74 @@ pub(crate) mod tests {
             assert_eq!(t.translate(&mut fa, 0xFFFF_FFFF_8000_3000), None);
             assert_eq!(t.translate(&mut fa, 0xFFFF_8000_0065_4321), Some((0x65_4321, Attr::DATA)));
             // 4 large pages need only 3 tables below the top one.
-            let dev = Attr { write: true, exec: false, mem: Memory::Device };
+            let dev = Attr { write: true, exec: false, mem: Memory::Device, user: false };
             t.map(&mut fa, 0x900_0000, 0x900_0000, PAGE, dev).unwrap();
             assert_eq!(t.translate(&mut fa, 0x900_0010), Some((0x900_0010, dev)));
             assert_eq!(t.map(&mut fa, 0x900_0000, 0, PAGE, dev), Err(MapError::AlreadyMapped));
             assert_eq!(t.map(&mut fa, 0x123, 0, PAGE, dev), Err(MapError::Unaligned));
         }
+    }
+
+    #[test]
+    fn user_mappings() {
+        for format in [Format::X86_64, Format::Aarch64] {
+            let mut fa = FakeFrames(vec![]);
+            let mut t = PageTables::new(&mut fa, format).unwrap();
+            let code = Attr { write: false, exec: true, mem: Memory::Normal, user: true };
+            let data = Attr { write: true, exec: false, mem: Memory::Normal, user: true };
+            t.map(&mut fa, 0x40_0000, 0x10_0000, PAGE, code).unwrap();
+            t.map(&mut fa, 0x40_1000, 0x20_0000, PAGE, data).unwrap();
+            assert_eq!(t.translate(&mut fa, 0x40_0010), Some((0x10_0010, code)), "{format:?}");
+            assert_eq!(t.translate(&mut fa, 0x40_1010), Some((0x20_0010, data)), "{format:?}");
+            if format == Format::X86_64 {
+                // Every table on the way down is open to user mode too.
+                let top = fa.table(t.root)[0];
+                assert!(top & X_US != 0);
+            } else {
+                // Programs' pages are never executable at EL1, and aren't global.
+                let raw =
+                    |fa: &mut FakeFrames, t: &PageTables, v: u64| *t.leaf_slot(fa, v).unwrap();
+                assert!(raw(&mut fa, &t, 0x40_0000) & A_PXN != 0);
+                assert!(raw(&mut fa, &t, 0x40_0000) & A_UXN == 0);
+                assert!(raw(&mut fa, &t, 0x40_1000) & A_UXN != 0);
+                assert!(raw(&mut fa, &t, 0x40_1000) & A_NG != 0);
+            }
+            assert!(t.protect(&mut fa, 0x40_1000, Attr { write: false, ..data }));
+            assert_eq!(t.translate(&mut fa, 0x40_1000).unwrap().1.write, false);
+            assert_eq!(t.unmap(&mut fa, 0x40_1000), Some(0x20_0000));
+            assert_eq!(t.unmap(&mut fa, 0x40_1000), None);
+            assert!(!t.protect(&mut fa, 0x40_1000, data));
+            // Freeing the lower half's tables gives back all but the top table.
+            let before = fa.0.len();
+            let mut freed = 0;
+            struct Counting<'a>(&'a mut FakeFrames, &'a mut usize);
+            impl FrameAlloc for Counting<'_> {
+                fn alloc(&mut self) -> Option<u64> {
+                    self.0.alloc()
+                }
+                fn table(&mut self, phys: u64) -> &mut [u64; 512] {
+                    self.0.table(phys)
+                }
+                fn free(&mut self, _phys: u64) {
+                    *self.1 += 1;
+                }
+            }
+            t.free_tables(&mut Counting(&mut fa, &mut freed), 0..256);
+            assert_eq!(freed, before - 1);
+            assert_eq!(t.translate(&mut fa, 0x40_0000), None);
+        }
+    }
+
+    #[test]
+    fn sharing_the_upper_half() {
+        let mut fa = FakeFrames(vec![]);
+        let mut k = PageTables::new(&mut fa, Format::X86_64).unwrap();
+        k.ensure_top_entries(&mut fa, 0xFFFF_C000_0000_0000, 0xFFFF_D000_0000_0000).unwrap();
+        let mut p = PageTables::new(&mut fa, Format::X86_64).unwrap();
+        p.copy_top_entries(&mut fa, k.root, 256..512);
+        // A kernel mapping made afterwards is visible through the program's tree.
+        k.map(&mut fa, 0xFFFF_C000_0000_1000, 0x5000, PAGE, Attr::DATA).unwrap();
+        assert_eq!(p.translate(&mut fa, 0xFFFF_C000_0000_1000), Some((0x5000, Attr::DATA)));
     }
 
     #[test]

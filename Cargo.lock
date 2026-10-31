@@ -47,7 +47,10 @@ version = "0.0.0"
 name = "pbr-kernel"
 version = "0.0.0"
 dependencies = [
+ "pbr-archive",
  "pbr-bootinfo",
+ "pbr-captree",
+ "pbr-elf",
  "pbr-platform",
 ]
 

@@ -370,8 +370,10 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
     let mut kernels = Vec::new();
     let mut loaders = Vec::new();
     for arch in ARCHES {
-        let k = build_kernel(root, tc, arch, release)?;
-        write_out(root, &format!("build/{}/{profile}/kernel.elf", arch.name), &k)?;
+        let full = build_kernel(root, tc, arch, release)?;
+        write_out(root, &format!("build/{}/{profile}/kernel.elf", arch.name), &full)?;
+        // The image gets the kernel without what only debuggers need.
+        let k = elf::strip(&full).map_err(|e| format!("the {} kernel: {e}", arch.name))?;
         let l = build_artifact(
             root,
             tc,

@@ -194,22 +194,9 @@ extern "C" fn secondary_main(cpu: u64) -> ! {
     let cpu: &'static PerCpu = unsafe { &*(cpu as *const PerCpu) };
     percpu::install(cpu);
     exceptions::install();
-    // The identity map was only for getting here: turn lower-half walks off again.
-    // SAFETY: nothing uses lower-half addresses any more.
-    unsafe {
-        core::arch::asm!(
-            "mrs {t}, tcr_el1",
-            "orr {t}, {t}, #(1 << 7)",
-            "msr tcr_el1, {t}",
-            "msr ttbr0_el1, xzr",
-            "isb",
-            "tlbi vmalle1",
-            "dsb ish",
-            "isb",
-            t = out(reg) _,
-            options(nostack)
-        );
-    }
+    // The identity map was only for getting here: from now on the lower half is programs'
+    // (and empty until one runs here).
+    super::user::init_this_core();
     timer::start(crate::hw_machine().vtimer_irq);
     let _ = gic::version();
     sched::init_this_core();

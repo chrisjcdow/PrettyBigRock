@@ -8,9 +8,14 @@ mod exceptions;
 mod gic;
 mod smp;
 mod timer;
+mod user;
 
 pub use context::{init_thread_stack, switch_context, switch_stack};
 pub use smp::start_other_cores;
+pub use user::{
+    ELF_MACHINE, SHARES_TOP_LEVEL, UserRegs, activate_space, enter_user, flush_user_pages,
+    load_user, save_user, set_kernel_stack, set_thread_pointer, syspage_code, user_clock,
+};
 
 use crate::{hw, percpu, time};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -187,6 +192,7 @@ pub fn zero_percpu() {
 /// Sets up the boot core: exceptions, the interrupt controller, the clock and its timer.
 pub fn init_boot_core(m: &hw::Machine) {
     exceptions::install();
+    user::init_this_core();
     exceptions::set_timer_irq(m.vtimer_irq);
     gic::init(m);
     time::init(timer::frequency());
@@ -214,12 +220,13 @@ pub fn describe(out: &mut dyn core::fmt::Write) -> core::fmt::Result {
     }
     write!(
         out,
-        "exception level {}, implementer {:#04x}, part {:#05x}, GICv{}, clock: generic timer at {} MHz",
+        "exception level {}, implementer {:#04x}, part {:#05x}, GICv{}, clock: generic timer at {} MHz{}",
         (el >> 2) & 3,
         midr >> 24,
         (midr >> 4) & 0xFFF,
         gic::version(),
-        timer::frequency() / 1_000_000
+        timer::frequency() / 1_000_000,
+        if user::has_pan() { ", PAN" } else { "" }
     )
 }
 

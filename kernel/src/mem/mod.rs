@@ -5,7 +5,9 @@
 //! kernel's page tables and virtual areas, and the heap.
 
 pub mod heap;
+pub mod object;
 pub mod pmm;
+pub mod space;
 pub mod vm;
 
 use core::sync::atomic::{AtomicU64, Ordering};

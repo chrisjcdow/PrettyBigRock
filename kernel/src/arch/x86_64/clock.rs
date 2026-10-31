@@ -90,6 +90,11 @@ pub fn init(hpet_phys: Option<u64>) -> u64 {
     }
 }
 
+/// True if the clock is the TSC, which programs can read themselves.
+pub fn is_tsc() -> bool {
+    SOURCE.load(Ordering::Relaxed) == SOURCE_TSC
+}
+
 /// The clock's counter.
 pub fn counter() -> u64 {
     match SOURCE.load(Ordering::Relaxed) {

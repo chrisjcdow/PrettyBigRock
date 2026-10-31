@@ -56,6 +56,12 @@ pub struct Thread {
     is_idle: bool,
     entry: SpinLock<Option<Box<dyn FnOnce() + Send>>>,
     exited: WaitQueue,
+    /// What a program's thread has besides its kernel side (`None` for kernel threads).
+    pub user: Option<Box<crate::user::UserThread>>,
+    /// Set when the thread should stop: a program's thread exits at its next chance.
+    pub stop: AtomicBool,
+    /// Counts the thread's timed waits, so a timer set for an earlier wait can't wake it.
+    wait_seq: AtomicU64,
 }
 
 // SAFETY: `sp` is only touched by the core switching to or from the thread, with interrupts
@@ -76,6 +82,11 @@ impl Thread {
     /// True once the thread has finished.
     pub fn has_exited(&self) -> bool {
         self.state.load(Ordering::SeqCst) == EXITED
+    }
+
+    /// The top of its kernel stack.
+    pub fn stack_top(&self) -> Option<u64> {
+        self.stack
     }
 }
 
@@ -108,7 +119,7 @@ impl RunQueue {
 /// One core's scheduler state.
 pub struct CpuSched {
     rq: IrqSpinLock<RunQueue>,
-    timers: IrqSpinLock<Vec<(u64, Arc<Thread>)>>,
+    timers: IrqSpinLock<Vec<(u64, Arc<Thread>, u64)>>,
     current: UnsafeCell<Option<Arc<Thread>>>,
     idle: UnsafeCell<Option<Arc<Thread>>>,
     prev: UnsafeCell<Option<(Arc<Thread>, Action)>>,
@@ -161,6 +172,9 @@ pub fn init_this_core() {
         is_idle: true,
         entry: SpinLock::new(None),
         exited: WaitQueue::new(),
+        user: None,
+        stop: AtomicBool::new(false),
+        wait_seq: AtomicU64::new(0),
     });
     let irq = arch::irq_save();
     // SAFETY: only this core touches its own `current` and `idle`, with interrupts masked.
@@ -191,9 +205,22 @@ pub fn with_current_name(f: impl FnOnce(&str, u64)) {
     }
 }
 
-/// Starts a new thread running `f`.
+/// Starts a new kernel thread running `f`.
 pub fn spawn(name: &str, priority: u8, f: impl FnOnce() + Send + 'static) -> Arc<Thread> {
-    let top = mem::vm::alloc_stack(STACK_PAGES).expect("out of memory for a kernel stack");
+    let t = create(name, priority, f, None).expect("out of memory for a kernel stack");
+    start(&t);
+    t
+}
+
+/// Makes a thread that will run `f`, without starting it. `user` is set for a program's
+/// thread. Returns `None` if there's no memory for its kernel stack.
+pub fn create(
+    name: &str,
+    priority: u8,
+    f: impl FnOnce() + Send + 'static,
+    user: Option<Box<crate::user::UserThread>>,
+) -> Option<Arc<Thread>> {
+    let top = mem::vm::alloc_stack(STACK_PAGES)?;
     let t = Arc::new(Thread {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         name: String::from(name),
@@ -202,16 +229,29 @@ pub fn spawn(name: &str, priority: u8, f: impl FnOnce() + Send + 'static) -> Arc
         stack: Some(top),
         state: AtomicU8::new(READY),
         on_cpu: AtomicBool::new(false),
-        queued: AtomicBool::new(true),
+        queued: AtomicBool::new(false),
         last_cpu: AtomicU32::new(0),
         is_idle: false,
         entry: SpinLock::new(Some(Box::new(f))),
         exited: WaitQueue::new(),
+        user,
+        stop: AtomicBool::new(false),
+        wait_seq: AtomicU64::new(0),
     });
     // SAFETY: the thread hasn't started, so nothing else uses its stack pointer. The stack
     // holds a pointer to the thread, kept alive by the run queue's reference until it runs.
     unsafe { *t.sp.get() = arch::init_thread_stack(top, Arc::as_ptr(&t) as u64) };
-    // The least busy online core.
+    let mut all = ALL.lock();
+    all.retain(|w| w.strong_count() > 0);
+    all.push(Arc::downgrade(&t));
+    Some(t)
+}
+
+/// Starts a thread made by [`create`], on the least busy core. Starting it again does nothing.
+pub fn start(t: &Arc<Thread>) {
+    if t.queued.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let target = percpu::all()
         .iter()
         .filter(|c| c.online.load(Ordering::Acquire))
@@ -219,13 +259,21 @@ pub fn spawn(name: &str, priority: u8, f: impl FnOnce() + Send + 'static) -> Arc
         .map(|c| c.index)
         .unwrap_or(0);
     t.last_cpu.store(target, Ordering::Relaxed);
-    {
-        let mut all = ALL.lock();
-        all.retain(|w| w.strong_count() > 0);
-        all.push(Arc::downgrade(&t));
-    }
     enqueue(target, t.clone());
-    t
+}
+
+/// Wakes `t` if it's waiting, and if it's running on another core, interrupts that core so it
+/// looks at `t` again (used to stop a program's threads).
+pub fn kick(t: &Arc<Thread>) {
+    wake(t);
+    if t.on_cpu.load(Ordering::SeqCst) {
+        let cpu = t.last_cpu.load(Ordering::Relaxed) as usize;
+        if let Some(c) = percpu::all().get(cpu)
+            && percpu::try_this().map(|m| m.index) != Some(c.index)
+        {
+            arch::send_ipi(c, arch::Ipi::Reschedule);
+        }
+    }
 }
 
 /// Prints the scheduler's state: each core's current thread and queues, and every thread.
@@ -247,7 +295,7 @@ pub fn dump() {
         let rq = c.sched.rq.try_lock().map(|q| q.len);
         let timers = c.sched.timers.try_lock().map(|t| {
             t.iter()
-                .map(|(d, th)| {
+                .map(|(d, th, _)| {
                     alloc::format!("{}@{}ms", th.id, (*d as i64 - now as i64) / 1_000_000)
                 })
                 .collect::<Vec<_>>()
@@ -282,7 +330,7 @@ pub fn dump() {
 
 /// Called (through the architecture's start-up code) when a new thread first runs.
 pub extern "C" fn thread_entry(thread: u64) -> ! {
-    finish_switch();
+    arrive();
     arch::irq_enable();
     // SAFETY: `thread` is the Arc pointer `spawn` put on the stack; this thread's own entry in
     // its core's `current` keeps it alive.
@@ -370,6 +418,9 @@ fn schedule(action: Action) {
     next.last_cpu.store(cpu.index, Ordering::Relaxed);
     s.slice.store(SLICE_TICKS, Ordering::Relaxed);
     s.switches.fetch_add(1, Ordering::Relaxed);
+    if let Some(u) = &cur.user {
+        u.save_registers();
+    }
     let prev_sp = cur.sp.get();
     let next_sp = next.sp.get();
     // SAFETY: as above. The references move into the per-core cells, so no counted reference is
@@ -379,7 +430,27 @@ fn schedule(action: Action) {
         *s.current.get() = Some(next);
         arch::switch_context(prev_sp, *next_sp);
     }
+    arrive();
+}
+
+/// What a thread does first whenever it starts or resumes on a core: deal with the thread
+/// switched away from, then put this core in the state this thread needs (its kernel stack
+/// for entries from a program, its program's address space and registers).
+fn arrive() {
     finish_switch();
+    let cpu = percpu::this();
+    // SAFETY: only this core touches its own `current`, with interrupts masked.
+    let Some(me) = (unsafe { (*cpu.sched.current.get()).as_ref() }) else { return };
+    match &me.user {
+        Some(u) => {
+            if let Some(top) = me.stack {
+                arch::set_kernel_stack(top);
+            }
+            crate::mem::space::activate(Some(u.process.root()));
+            u.load_registers();
+        }
+        None => crate::mem::space::activate(None),
+    }
 }
 
 /// Deals with the thread this core just switched away from. Every thread does this first
@@ -420,17 +491,55 @@ pub fn yield_now() {
 
 /// Sleeps for at least `ns` nanoseconds (to the timer tick's resolution).
 pub fn sleep_ns(ns: u64) {
-    let deadline = time::now_ns() + ns;
-    let irq = arch::irq_save();
+    let deadline = time::now_ns().saturating_add(ns);
+    while wait_event(deadline, || false) != Woken::TimedOut {}
+}
+
+/// Why [`wait_event`] returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Woken {
+    /// What it waited for happened.
+    Ready,
+    /// The deadline passed first.
+    TimedOut,
+    /// The thread was asked to stop.
+    Stopped,
+}
+
+/// Waits until `ready` returns true, the time `deadline` (on [`time::now_ns`]'s clock; 0 means
+/// don't wait, `u64::MAX` means for ever) passes, or the thread is asked to stop.
+///
+/// `ready` is called with the thread already marked as waiting and interrupts masked, so a
+/// [`wake`] after the condition changes can't be missed: whoever makes it true must make it
+/// true first and wake the thread after. `ready` may take spin locks, but must not sleep.
+pub fn wait_event(deadline: u64, mut ready: impl FnMut() -> bool) -> Woken {
     let me = current();
-    me.state.store(BLOCKED, Ordering::SeqCst);
-    {
-        let mut timers = percpu::this().sched.timers.lock();
-        let at = timers.partition_point(|(d, _)| *d <= deadline);
-        timers.insert(at, (deadline, me));
+    loop {
+        let irq = arch::irq_save();
+        me.state.store(BLOCKED, Ordering::SeqCst);
+        let outcome = if ready() {
+            Some(Woken::Ready)
+        } else if me.stop.load(Ordering::SeqCst) {
+            Some(Woken::Stopped)
+        } else if deadline != u64::MAX && time::now_ns() >= deadline {
+            Some(Woken::TimedOut)
+        } else {
+            None
+        };
+        if let Some(o) = outcome {
+            me.state.store(RUNNING, Ordering::SeqCst);
+            arch::irq_restore(irq);
+            return o;
+        }
+        if deadline != u64::MAX {
+            let seq = me.wait_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut timers = percpu::this().sched.timers.lock();
+            let at = timers.partition_point(|(d, _, _)| *d <= deadline);
+            timers.insert(at, (deadline, me.clone(), seq));
+        }
+        schedule(Action::Block);
+        arch::irq_restore(irq);
     }
-    schedule(Action::Block);
-    arch::irq_restore(irq);
 }
 
 /// Ends the current thread.
@@ -472,13 +581,16 @@ pub fn tick() {
         crate::kprintln!("Watchdog: still waiting after the deadline. Scheduler state:");
         dump();
     }
-    let due: Vec<Arc<Thread>> = {
+    let due: Vec<(Arc<Thread>, u64)> = {
         let mut timers = cpu.sched.timers.lock();
-        let n = timers.partition_point(|(d, _)| *d <= now);
-        timers.drain(..n).map(|(_, t)| t).collect()
+        let n = timers.partition_point(|(d, _, _)| *d <= now);
+        timers.drain(..n).map(|(_, t, seq)| (t, seq)).collect()
     };
-    for t in &due {
-        wake(t);
+    for (t, seq) in &due {
+        // Only if the thread is still in the wait this timer was set for.
+        if t.wait_seq.load(Ordering::SeqCst) == *seq {
+            wake(t);
+        }
     }
     let s = &cpu.sched;
     if s.slice.fetch_sub(1, Ordering::Relaxed) <= 1 {

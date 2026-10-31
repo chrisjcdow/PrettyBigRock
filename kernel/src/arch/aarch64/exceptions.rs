@@ -14,6 +14,12 @@ static TIMER_IRQ: AtomicU32 = AtomicU32::new(27);
 
 // Sixteen entries of 128 bytes. Each saves x0 and x1, puts its own number in x1, and jumps to
 // the common code, which saves everything else into a 288-byte frame on the current stack.
+//
+// Entries for exceptions taken in the kernel (4 to 7) first check the kernel stack hasn't
+// overflowed. Every kernel stack sits at the top of a 256 KiB slot aligned to its size, with
+// the bottom half never mapped (crate::mem::vm::STACK_SLOT), so a stack pointer with bit 17
+// clear has run off its stack. The check uses no register: it parks x0 inside the stack
+// pointer for a moment, as Linux does (docs/design/0007-system-calls.md, section 10).
 core::arch::global_asm!(
     ".section .text.pbr_vectors, \"ax\"",
     ".balign 2048",
@@ -23,6 +29,17 @@ core::arch::global_asm!(
     ".rept 16",
     ".balign 128",
     "sub sp, sp, #288",
+    ".if (kind >= 4) && (kind <= 7)",
+    "add sp, sp, x0",
+    "sub x0, sp, x0",
+    "tbnz x0, #17, 1f",
+    "sub x0, sp, x0",
+    "sub sp, sp, x0",
+    "b pbr_stack_overflow",
+    "1:",
+    "sub x0, sp, x0",
+    "sub sp, sp, x0",
+    ".endif",
     "stp x0, x1, [sp, #0]",
     "mov x1, #kind",
     "b pbr_exception_common",
@@ -50,8 +67,15 @@ core::arch::global_asm!(
     "mrs x12, esr_el1",
     "mrs x13, far_el1",
     "stp x12, x13, [sp, #264]",
+    "mrs x14, sp_el0",
+    "str x14, [sp, #280]",
     "mov x0, sp",
     "bl {handler}",
+    // Where every return from an exception goes, and where a program first starts.
+    ".global pbr_exception_exit",
+    "pbr_exception_exit:",
+    "ldr x10, [sp, #280]",
+    "msr sp_el0, x10",
     "ldp x10, x11, [sp, #248]",
     "msr elr_el1, x10",
     "msr spsr_el1, x11",
@@ -73,7 +97,20 @@ core::arch::global_asm!(
     "ldp x0, x1, [sp, #0]",
     "add sp, sp, #288",
     "eret",
+    // The kernel stack overflowed: carry on on this core's emergency stack, and report it.
+    // TPIDRRO_EL0 holds x0 for a moment (programs only ever see it as 0, and this is fatal).
+    "pbr_stack_overflow:",
+    "msr tpidrro_el0, x0",
+    "mrs x0, tpidr_el1",
+    "ldr x0, [x0, #{emergency}]",
+    "mov sp, x0",
+    "mrs x0, tpidrro_el0",
+    "sub sp, sp, #288",
+    "stp x0, x1, [sp, #0]",
+    "mov x1, #99",
+    "b pbr_exception_common",
     handler = sym handle,
+    emergency = const crate::percpu::OFFSET_EMERGENCY_SP,
 );
 
 unsafe extern "C" {
@@ -88,7 +125,30 @@ pub struct Frame {
     spsr: u64,
     esr: u64,
     far: u64,
-    pad: u64,
+    /// The program's stack pointer, `SP_EL0`.
+    sp_el0: u64,
+}
+
+impl Frame {
+    /// A frame that starts a program at EL0: every register zero except `x0` to `x2`,
+    /// interrupts unmasked.
+    pub fn user(pc: u64, sp: u64, args: [u64; 3]) -> Self {
+        let mut x = [0; 31];
+        x[..3].copy_from_slice(&args);
+        Frame { x, elr: pc, spsr: 0, esr: 0, far: 0, sp_el0: sp }
+    }
+}
+
+/// Returns from an exception through `frame`, which is at the top of the current kernel
+/// stack: how a program's thread first gets to EL0.
+///
+/// # Safety
+/// `frame` must be a valid frame at the top of the current thread's kernel stack.
+pub unsafe fn return_through(frame: *const Frame) -> ! {
+    // SAFETY: as the caller promises.
+    unsafe {
+        core::arch::asm!("mov sp, {}", "b pbr_exception_exit", in(reg) frame, options(noreturn))
+    }
 }
 
 /// Points this core's `VBAR_EL1` at the vector table.
@@ -111,8 +171,43 @@ extern "C" fn handle(f: &mut Frame, kind: u64) {
             irq();
             sched::interrupt_exit();
         }
+        8 => {
+            // Synchronous, from a program: a system call or a fault.
+            sync_user(f);
+            super::user::returning_to_user();
+        }
+        9 => {
+            irq();
+            super::user::returning_to_user();
+        }
+        99 => fatal(f, kind, "kernel stack overflow"),
         _ => fatal(f, kind, "unexpected exception"),
     }
+}
+
+fn sync_user(f: &mut Frame) {
+    use crate::obj::process::fault_kind as k;
+    let ec = f.esr >> 26;
+    if ec == 0x15 {
+        // SVC: a system call. ELR already points past the SVC.
+        super::irq_enable();
+        let (status, r1, r2) =
+            crate::syscall::handle(f.x[8], [f.x[0], f.x[1], f.x[2], f.x[3], f.x[4], f.x[5]]);
+        f.x[0] = status;
+        f.x[1] = r1;
+        f.x[2] = r2;
+        super::irq_disable();
+        return;
+    }
+    let (kind, addr) = match ec {
+        0x20 | 0x24 => (k::MEMORY, f.far),
+        0x22 | 0x26 => (k::ALIGNMENT, f.far),
+        0x00 | 0x0E | 0x18 | 0x01 => (k::INSTRUCTION, f.elr),
+        0x2C => (k::ARITHMETIC, 0),
+        0x3C => (k::BREAKPOINT, f.elr),
+        _ => (k::OTHER, 0),
+    };
+    crate::user::fault(kind, addr, f.elr)
 }
 
 fn sync(f: &mut Frame) {

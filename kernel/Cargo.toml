@@ -16,7 +16,10 @@ test = false
 bench = false
 
 [dependencies]
+pbr-archive = { path = "../lib/archive" }
 pbr-bootinfo = { path = "../lib/bootinfo" }
+pbr-captree = { path = "../lib/captree" }
+pbr-elf = { path = "../lib/elf", features = ["alloc"] }
 pbr-platform = { path = "../lib/platform" }
 
 [lints]

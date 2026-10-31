@@ -36,7 +36,8 @@ pub fn build_standard(
     let mut upper = PageTables::new(fa, format)?;
     let (lo, _) = kernel.span();
     for s in kernel.segments() {
-        let attr = Attr { write: s.writable(), exec: s.executable(), mem: Memory::Normal };
+        let attr =
+            Attr { write: s.writable(), exec: s.executable(), mem: Memory::Normal, user: false };
         let len = align_up(s.vaddr + s.mem_len, PAGE) - s.vaddr;
         upper.map(fa, s.vaddr, kernel_phys + (s.vaddr - lo), len, attr)?;
     }

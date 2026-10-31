@@ -39,6 +39,33 @@ impl Header {
     }
 }
 
+/// The file without its section headers and the sections only debuggers use: everything up
+/// to the end of the last program header's contents. What goes in the boot disk image; the
+/// full file stays in `build/` for debugging.
+pub fn strip(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if bytes.len() < 64 || &bytes[..4] != b"\x7fELF" || bytes[4] != 2 || bytes[5] != 1 {
+        return Err("not a 64-bit little-endian ELF file");
+    }
+    let u16_at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]) as usize;
+    let u64_at = |o: usize| -> Result<u64, &'static str> {
+        Ok(u64::from_le_bytes(bytes.get(o..o + 8).ok_or("truncated")?.try_into().unwrap()))
+    };
+    let (phoff, phentsize, phnum) = (u64_at(32)? as usize, u16_at(54), u16_at(56));
+    let mut end = phoff + phentsize * phnum;
+    for i in 0..phnum {
+        let p = phoff + i * phentsize;
+        let (off, filesz) = (u64_at(p + 8)? as usize, u64_at(p + 32)? as usize);
+        end = end.max(off + filesz);
+    }
+    if end > bytes.len() {
+        return Err("a segment runs past the end of the file");
+    }
+    let mut out = bytes[..end].to_vec();
+    out[40..48].fill(0); // e_shoff
+    out[58..64].fill(0); // e_shentsize, e_shnum, e_shstrndx
+    Ok(out)
+}
+
 /// Lays out a statically linked program's loadable segments as one flat image starting at
 /// `base`, as a BIOS loads it: byte `i` of the result belongs at address `base + i`.
 pub fn flat_binary(bytes: &[u8], base: u64) -> Result<Vec<u8>, &'static str> {

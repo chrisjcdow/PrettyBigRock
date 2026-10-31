@@ -124,4 +124,15 @@ pub fn init_this_core(cpu: &PerCpu) {
             out("rax") _,
         );
     }
+    super::user::init_this_core();
+}
+
+/// Sets where the processor switches stacks to when an interrupt arrives from a program.
+pub fn set_tss_rsp0(cpu: &PerCpu, top: u64) {
+    // SAFETY: only this core touches its own TSS; a 64-bit store to a packed field is done
+    // unaligned-safely.
+    unsafe {
+        let tss = cpu.arch.tss.get();
+        core::ptr::addr_of_mut!((*tss).rsp).cast::<u64>().write_unaligned(top);
+    }
 }

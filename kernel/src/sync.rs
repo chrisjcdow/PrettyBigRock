@@ -209,3 +209,78 @@ impl<T> Once<T> {
         }
     }
 }
+
+/// A lock that puts waiting threads to sleep instead of spinning: for long operations, such as
+/// revoking a large tree of capabilities, that must stay preemptible. It may only be taken by
+/// a thread holding no spin locks (debug builds check).
+pub struct Mutex<T> {
+    locked: AtomicBool,
+    waiters: crate::sched::WaitQueue,
+    value: UnsafeCell<T>,
+}
+
+// SAFETY: as for SpinLock: one thread at a time has access to the value.
+unsafe impl<T: Send> Sync for Mutex<T> {}
+
+impl<T> Mutex<T> {
+    /// A new, unlocked mutex.
+    pub const fn new(value: T) -> Self {
+        Self {
+            locked: AtomicBool::new(false),
+            waiters: crate::sched::WaitQueue::new(),
+            value: UnsafeCell::new(value),
+        }
+    }
+
+    /// Waits (sleeping) for the mutex and takes it.
+    pub fn lock(&self) -> MutexGuard<'_, T> {
+        debug_assert!(
+            percpu::preemptible() || crate::panicking(),
+            "a sleeping lock was taken while holding a spin lock"
+        );
+        loop {
+            if self
+                .locked
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return MutexGuard { lock: self };
+            }
+            self.waiters.wait_until(|| !self.locked.load(Ordering::Acquire));
+        }
+    }
+}
+
+/// Access to a locked [`Mutex`]'s value; unlocks when dropped.
+pub struct MutexGuard<'a, T> {
+    lock: &'a Mutex<T>,
+}
+
+impl<T> Deref for MutexGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: holding the guard means holding the lock.
+        unsafe { &*self.lock.value.get() }
+    }
+}
+
+impl<T> DerefMut for MutexGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: as for `deref`.
+        unsafe { &mut *self.lock.value.get() }
+    }
+}
+
+impl<T> Drop for MutexGuard<'_, T> {
+    fn drop(&mut self) {
+        self.lock.locked.store(false, Ordering::Release);
+        self.lock.waiters.wake_all();
+    }
+}
+
+impl<T> SpinLock<T> {
+    /// The value, without locking: having `&mut self` means nobody else can be using it.
+    pub fn get_mut(&mut self) -> &mut T {
+        self.value.get_mut()
+    }
+}
