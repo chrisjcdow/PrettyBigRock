@@ -11,7 +11,11 @@ publish.workspace = true
 
 [dependencies]
 pbr-bootinfo = { path = "../../lib/bootinfo" }
+pbr-elf = { path = "../../lib/elf" }
 pbr-platform = { path = "../../lib/platform" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+pbr-elf = { path = "../../lib/elf", features = ["alloc"] }

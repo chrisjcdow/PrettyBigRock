@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "pbr-archive"
+version = "0.0.0"
+
+[[package]]
 name = "pbr-boot-bios"
 version = "0.0.0"
 dependencies = [
@@ -15,6 +19,7 @@ name = "pbr-boot-common"
 version = "0.0.0"
 dependencies = [
  "pbr-bootinfo",
+ "pbr-elf",
  "pbr-platform",
 ]
 
@@ -28,6 +33,14 @@ dependencies = [
 
 [[package]]
 name = "pbr-bootinfo"
+version = "0.0.0"
+
+[[package]]
+name = "pbr-captree"
+version = "0.0.0"
+
+[[package]]
+name = "pbr-elf"
 version = "0.0.0"
 
 [[package]]
