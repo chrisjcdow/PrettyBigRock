@@ -9,5 +9,9 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+pbr-archive = { path = "../lib/archive" }
+pbr-elf = { path = "../lib/elf", features = ["alloc"] }
+
 [lints]
 workspace = true

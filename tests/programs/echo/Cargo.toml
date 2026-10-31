@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-test-echo"
+description = "A test service for the program self-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "echo"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-test-protocol = { path = "../protocol" }
+pbr-granite = { path = "../../../lib/granite" }
+
+[lints]
+workspace = true

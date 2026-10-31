@@ -45,6 +45,7 @@ pub type CapTree = Tree<Owner>;
 static TREE: Mutex<CapTree> = Mutex::new(Tree::new());
 
 /// Takes the tree's lock, for an operation spanning several capabilities (message delivery).
+#[track_caller]
 pub fn lock() -> MutexGuard<'static, CapTree> {
     TREE.lock()
 }

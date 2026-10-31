@@ -204,6 +204,14 @@ impl Default for Module {
 }
 
 impl Module {
+    /// A module called `name` (at most 48 bytes of it are kept) holding `data`.
+    pub fn new(name: &str, data: PhysRange) -> Module {
+        let mut m = Module { data, name: [0; 48] };
+        let n = name.len().min(48);
+        m.name[..n].copy_from_slice(&name.as_bytes()[..n]);
+        m
+    }
+
     /// The name as text, without the padding. `None` if it isn't valid UTF-8.
     pub fn name(&self) -> Option<&str> {
         let len = self.name.iter().position(|&b| b == 0).unwrap_or(self.name.len());

@@ -233,11 +233,17 @@ impl<T> Mutex<T> {
     }
 
     /// Waits (sleeping) for the mutex and takes it.
+    #[track_caller]
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        debug_assert!(
-            percpu::preemptible() || crate::panicking(),
-            "a sleeping lock was taken while holding a spin lock"
-        );
+        if cfg!(debug_assertions) {
+            // With interrupts masked, so the thread can't move to another core between finding
+            // this core and reading its counts.
+            let irq = arch::irq_save();
+            let ok = percpu::preemptible() || crate::panicking();
+            let state = if ok { alloc::string::String::new() } else { percpu::describe_locks() };
+            arch::irq_restore(irq);
+            assert!(ok, "a sleeping lock was taken while holding a spin lock ({state})");
+        }
         loop {
             if self
                 .locked

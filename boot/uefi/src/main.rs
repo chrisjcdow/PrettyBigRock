@@ -29,7 +29,7 @@ use pbr_boot_common::{IdentityMapped, acpi};
 use pbr_bootinfo::FLAG_EL2_STUB;
 use pbr_bootinfo::{
     BootInfo, EarlyConsole, Framebuffer, LoaderKind, MAX_FRAMEBUFFERS, MemoryKind, MemoryRegion,
-    PhysRange, PixelFormat,
+    Module, PhysRange, PixelFormat,
 };
 
 #[cfg(target_arch = "x86_64")]
@@ -411,6 +411,15 @@ extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
         fail("the kernel file is damaged");
     }
     let cmdline = fw.read_file(root, "\\PBR\\cmdline.txt");
+    // The start-up archive (note 0009), if there is one: the kernel reports it if not.
+    let mut apath = [0u8; 40];
+    let apath = {
+        let mut w = Buf(&mut apath, 0);
+        let _ = write!(w, "\\PBR\\{}\\startup.arc", arch::NAME);
+        let n = w.1;
+        core::str::from_utf8(&apath[..n]).unwrap_or("")
+    };
+    let startup = fw.read_file(root, apath);
 
     // What the firmware knows.
     let mut info = BootInfo::new(LoaderKind::Uefi);
@@ -430,6 +439,12 @@ extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
     }
     if let Some((base, len)) = cmdline {
         info.command_line = PhysRange { base, len };
+    }
+    if let Some((base, len)) = startup {
+        let list = fw.alloc_pages(PAGE);
+        // SAFETY: a page just allocated, big enough for one 64-byte Module.
+        unsafe { (list as *mut Module).write(Module::new("startup", PhysRange { base, len })) };
+        info.modules = PhysRange { base: list, len: 64 };
     }
     info.framebuffer_count = fw.framebuffers(&mut info.framebuffers);
     fw.random(&mut info.random_seed);

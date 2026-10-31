@@ -44,6 +44,13 @@ name = "pbr-elf"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-granite"
+version = "0.0.0"
+dependencies = [
+ "pbr-elf",
+]
+
+[[package]]
 name = "pbr-kernel"
 version = "0.0.0"
 dependencies = [
@@ -62,5 +69,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-root"
+version = "0.0.0"
+dependencies = [
+ "pbr-archive",
+ "pbr-granite",
+ "pbr-test-protocol",
+]
+
+[[package]]
+name = "pbr-test-echo"
+version = "0.0.0"
+dependencies = [
+ "pbr-granite",
+ "pbr-test-protocol",
+]
+
+[[package]]
+name = "pbr-test-probe"
+version = "0.0.0"
+dependencies = [
+ "pbr-granite",
+ "pbr-test-protocol",
+]
+
+[[package]]
+name = "pbr-test-protocol"
+version = "0.0.0"
+
+[[package]]
 name = "xtask"
 version = "0.0.0"
+dependencies = [
+ "pbr-archive",
+ "pbr-elf",
+]

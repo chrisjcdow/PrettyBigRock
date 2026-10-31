@@ -27,6 +27,18 @@ type R = Result<(u64, u64), Error>;
 
 /// Handles one system call. Returns (status, result 1, result 2).
 pub fn handle(num: u64, a: [u64; 6]) -> (u64, u64, u64) {
+    // The calls that never return are handled first, holding no references: anything still
+    // held on this stack when the thread exits would never be released.
+    match num {
+        25 => {
+            if let Some(p) = sched::current().user.as_ref().map(|u| u.process.clone()) {
+                p.end(Status::Exited(a[0]));
+            }
+            user::exit_thread()
+        }
+        42 => user::exit_thread(),
+        _ => {}
+    }
     let me = sched::current();
     let Some(u) = me.user.as_ref() else { return (Error::BadState as u64, 0, 0) };
     let p = u.process.clone();
@@ -163,10 +175,6 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
             target.watch(n, a[2]);
             Ok((0, 0))
         }
-        25 => {
-            p.end(Status::Exited(a[0]));
-            user::exit_thread()
-        }
 
         // Memory.
         30 => {
@@ -232,7 +240,6 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
             let u = t.user.as_ref().ok_or(Error::WrongType)?;
             u.process.start_thread(&t).map(|()| (0, 0))
         }
-        42 => user::exit_thread(),
         43 => {
             let t = thread(p, a[0], rights::STOP)?;
             t.stop.store(true, core::sync::atomic::Ordering::SeqCst);

@@ -141,7 +141,8 @@ pub fn preempt_enable() {
     arch::irq_restore(irq);
 }
 
-/// True if the current thread may be preempted now.
+/// True if the current thread may be preempted now. Only meaningful with interrupts masked
+/// (otherwise the thread may move to another core while this looks).
 pub fn preemptible() -> bool {
     try_this().is_some_and(|c| {
         c.preempt_count.load(Ordering::Relaxed) == 0 && c.held_levels.load(Ordering::Relaxed) == 0
@@ -171,5 +172,18 @@ pub fn lock_level_taken(level: Level, name: &str) {
 pub fn lock_level_released(level: Level) {
     if let Some(c) = try_this() {
         c.held_levels.fetch_and(!(1u32 << level as u32), Ordering::Relaxed);
+    }
+}
+
+/// This core's lock state, for reports: the preemption count and the lock levels held.
+pub fn describe_locks() -> alloc::string::String {
+    match try_this() {
+        Some(c) => alloc::format!(
+            "core {}, preemption count {}, lock levels {:#b}",
+            c.index,
+            c.preempt_count.load(Ordering::Relaxed),
+            c.held_levels.load(Ordering::Relaxed)
+        ),
+        None => alloc::string::String::from("no per-core data"),
     }
 }

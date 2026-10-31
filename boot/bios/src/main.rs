@@ -19,7 +19,7 @@ use pbr_boot_common::paging::{BumpAlloc, Format};
 use pbr_boot_common::tables::build_standard;
 use pbr_boot_common::{DIRECT_MAP_BASE, IdentityMapped, PAGE, acpi, align_up};
 use pbr_bootinfo::{
-    BootInfo, EarlyConsole, Framebuffer, LoaderKind, MemoryKind, MemoryRegion, PhysRange,
+    BootInfo, EarlyConsole, Framebuffer, LoaderKind, MemoryKind, MemoryRegion, Module, PhysRange,
     PixelFormat,
 };
 
@@ -243,6 +243,13 @@ pub extern "C" fn bios_main() -> ! {
     info.direct_map_base = DIRECT_MAP_BASE;
     if let Some((base, len)) = payload_file("cmdline.txt") {
         info.command_line = PhysRange { base, len };
+    }
+    // The start-up archive (note 0009), if there is one: the kernel reports it if not.
+    if let Some((base, len)) = payload_file("startup.arc") {
+        let list = mem.alloc(PAGE, e820);
+        // SAFETY: a page just allocated, big enough for one 64-byte Module.
+        unsafe { (list as *mut Module).write(Module::new("startup", PhysRange { base, len })) };
+        info.modules = PhysRange { base: list, len: 64 };
     }
     info.acpi_rsdp = acpi::find_rsdp_bios(&IdentityMapped).unwrap_or(0);
     info.smbios = find_smbios();

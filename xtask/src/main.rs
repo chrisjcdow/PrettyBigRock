@@ -37,8 +37,10 @@ struct Arch {
     uefi_target: &'static str,
     /// The UEFI loader's file name on the EFI system partition.
     uefi_file: &'static str,
-    /// The ELF machine number the kernel must have.
+    /// The ELF machine number the kernel and programs must have.
     elf_machine: u16,
+    /// The target description file programs are built with (in `targets/`).
+    program_target: &'static str,
 }
 
 /// Every architecture. Adding one starts here (docs/design/0001-repository-layout.md).
@@ -49,6 +51,7 @@ const ARCHES: &[Arch] = &[
         uefi_target: "x86_64-unknown-uefi",
         uefi_file: "BOOTX64.EFI",
         elf_machine: elf::EM_X86_64,
+        program_target: "x86_64-unknown-prettybigrock",
     },
     Arch {
         name: "aarch64",
@@ -56,7 +59,29 @@ const ARCHES: &[Arch] = &[
         uefi_target: "aarch64-unknown-uefi",
         uefi_file: "BOOTAA64.EFI",
         elf_machine: elf::EM_AARCH64,
+        program_target: "aarch64-unknown-prettybigrock",
     },
+];
+
+/// The programs in the start-up archive: (package, program name). The root program must be
+/// first (docs/design/0009-programs-and-granite.md).
+const PROGRAMS: &[(&str, &str)] =
+    &[("pbr-root", "root"), ("pbr-test-echo", "echo"), ("pbr-test-probe", "probe")];
+
+/// Crates built for the programs' targets, checked with Clippy there.
+const PROGRAM_CRATES: &[&str] =
+    &["pbr-granite", "pbr-root", "pbr-test-echo", "pbr-test-probe", "pbr-test-protocol"];
+
+/// Crates tested on this computer.
+const HOST_CRATES: &[&str] = &[
+    "pbr-archive",
+    "pbr-bootinfo",
+    "pbr-boot-common",
+    "pbr-captree",
+    "pbr-elf",
+    "pbr-granite",
+    "pbr-platform",
+    "xtask",
 ];
 
 /// The BIOS loader's Rust target (x86-64 only).
@@ -334,6 +359,80 @@ fn build_artifact(
     fs::read(&built).map_err(|e| format!("{}: {e}", built.display()))
 }
 
+/// Cargo arguments and environment for building for a program target (`targets/*.json`). A
+/// target of our own always needs `core` and `alloc` built from source (note 0009, section 5).
+fn program_args(
+    root: &Path,
+    tc: &Toolchain,
+    arch: &Arch,
+) -> Result<(Vec<String>, Vec<(&'static str, &'static str)>)> {
+    if tc.source.is_none() {
+        return Err(
+            "building programs needs the Rust library source: run `rustup component add rust-src`"
+                .into(),
+        );
+    }
+    let target = root.join("targets").join(format!("{}.json", arch.program_target));
+    Ok((
+        vec![
+            "--target".into(),
+            target.display().to_string(),
+            "--target-dir".into(),
+            "target/programs".into(),
+            "-Zjson-target-spec".into(),
+            "-Zbuild-std=core,alloc,compiler_builtins".into(),
+            "-Zbuild-std-features=compiler-builtins-mem".into(),
+        ],
+        vec![("RUSTC_BOOTSTRAP", "1")],
+    ))
+}
+
+/// Builds one program for `arch`, checks it against the rules for programs (note 0009,
+/// section 2), and returns its bytes.
+fn build_program(
+    root: &Path,
+    tc: &Toolchain,
+    arch: &Arch,
+    package: &str,
+    bin: &str,
+    release: bool,
+) -> Result<Vec<u8>> {
+    let (args, envs) = program_args(root, tc, arch)?;
+    let mut cmd = cargo(root);
+    cmd.args(["build", "--package", package]).args(&args).envs(envs.iter().copied());
+    if release {
+        cmd.arg("--release");
+    }
+    cmd.env("RUSTFLAGS", repeatable_flags(root, ""));
+    status(&mut cmd)?;
+    let profile = if release { "release" } else { "debug" };
+    let built = root.join("target/programs").join(arch.program_target).join(profile).join(bin);
+    let bytes = fs::read(&built).map_err(|e| format!("{}: {e}", built.display()))?;
+    pbr_elf::Program::parse(&bytes, arch.elf_machine).map_err(|e| {
+        format!("the {} program `{bin}` breaks the rules for programs: {e}", arch.name)
+    })?;
+    Ok(bytes)
+}
+
+/// Builds every program for `arch` and packs the start-up archive (note 0009, section 1).
+fn build_archive(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Result<Vec<u8>> {
+    let profile = if release { "release" } else { "debug" };
+    let mut files = Vec::new();
+    for (package, bin) in PROGRAMS {
+        let full = build_program(root, tc, arch, package, bin, release)?;
+        write_out(root, &format!("build/{}/{profile}/{bin}", arch.name), &full)?;
+        let stripped = elf::strip(&full).map_err(|e| format!("{bin}: {e}"))?;
+        // Stripping must leave a valid program.
+        pbr_elf::Program::parse(&stripped, arch.elf_machine)
+            .map_err(|e| format!("{bin} after stripping: {e}"))?;
+        files.push((*bin, stripped));
+    }
+    let refs: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
+    let archive = pbr_archive::build(&refs).map_err(|e| format!("the start-up archive: {e}"))?;
+    write_out(root, &format!("build/{}/{profile}/startup.arc", arch.name), &archive)?;
+    Ok(archive)
+}
+
 fn build_kernel(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Result<Vec<u8>> {
     let bytes = build_artifact(root, tc, "pbr-kernel", "kernel", arch.kernel_target, release)?;
     let header =
@@ -369,7 +468,9 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
     let profile = if release { "release" } else { "debug" };
     let mut kernels = Vec::new();
     let mut loaders = Vec::new();
+    let mut archives = Vec::new();
     for arch in ARCHES {
+        archives.push(build_archive(root, tc, arch, release)?);
         let full = build_kernel(root, tc, arch, release)?;
         write_out(root, &format!("build/{}/{profile}/kernel.elf", arch.name), &full)?;
         // The image gets the kernel without what only debuggers need.
@@ -392,11 +493,12 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
     for (name, cmdline) in
         [("prettybigrock.img", &b""[..]), ("prettybigrock-selftest.img", &b"selftest"[..])]
     {
-        let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], cmdline)?;
+        let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], &archives[0], cmdline)?;
         let mut files: Vec<(String, &[u8])> = Vec::new();
         for (i, arch) in ARCHES.iter().enumerate() {
             files.push((format!("EFI/BOOT/{}", arch.uefi_file), &loaders[i]));
             files.push((format!("PBR/{}/kernel.elf", arch.name), &kernels[i]));
+            files.push((format!("PBR/{}/startup.arc", arch.name), &archives[i]));
         }
         files.push(("PBR/cmdline.txt".to_string(), cmdline));
         let refs: Vec<(&str, &[u8])> = files.iter().map(|(p, d)| (p.as_str(), *d)).collect();
@@ -434,6 +536,7 @@ fn bios_loader(
     tc: &Toolchain,
     release: bool,
     kernel: &[u8],
+    archive: &[u8],
     cmdline: &[u8],
 ) -> Result<(Vec<u8>, Vec<u8>)> {
     // The BIOS loader lives at low addresses, so it needs the "small" code model rather than
@@ -472,7 +575,11 @@ fn bios_loader(
 
     let mut part = rest.to_vec();
     part.resize(sectors * 512, 0);
-    part.extend_from_slice(&payload(&[("kernel.elf", kernel), ("cmdline.txt", cmdline)]));
+    part.extend_from_slice(&payload(&[
+        ("kernel.elf", kernel),
+        ("cmdline.txt", cmdline),
+        ("startup.arc", archive),
+    ]));
     Ok((mbr, part))
 }
 
@@ -522,21 +629,22 @@ fn qemu_test(root: &Path, img: &Path) -> Result {
 
 fn check(root: &Path, tc: &Toolchain) -> Result {
     status(cargo(root).args(["fmt", "--all", "--check"]))?;
-    status(cargo(root).args([
-        "clippy",
-        "--package",
-        "xtask",
-        "--package",
-        "pbr-bootinfo",
-        "--package",
-        "pbr-boot-common",
-        "--package",
-        "pbr-platform",
-        "--all-targets",
-        "--",
-        "-D",
-        "warnings",
-    ]))?;
+    let mut host = cargo(root);
+    host.arg("clippy");
+    for c in HOST_CRATES {
+        host.args(["--package", c]);
+    }
+    status(host.args(["--all-targets", "--", "-D", "warnings"]))?;
+    for arch in ARCHES {
+        let (args, envs) = program_args(root, tc, arch)?;
+        let mut cmd = cargo(root);
+        cmd.arg("clippy");
+        for c in PROGRAM_CRATES {
+            cmd.args(["--package", c]);
+        }
+        cmd.args(&args).envs(envs.iter().copied()).env("RUSTFLAGS", repeatable_flags(root, ""));
+        status(cmd.args(["--", "-D", "warnings"]))?;
+    }
     let (extra, envs) = tc.target_args(BIOS_TARGET)?;
     status(
         cargo(root)
@@ -588,17 +696,12 @@ fn check(root: &Path, tc: &Toolchain) -> Result {
 }
 
 fn test(root: &Path) -> Result {
-    status(cargo(root).args([
-        "test",
-        "--package",
-        "pbr-bootinfo",
-        "--package",
-        "pbr-boot-common",
-        "--package",
-        "pbr-platform",
-        "--package",
-        "xtask",
-    ]))?;
+    let mut cmd = cargo(root);
+    cmd.arg("test");
+    for c in HOST_CRATES {
+        cmd.args(["--package", c]);
+    }
+    status(&mut cmd)?;
     status(Command::new("python3").current_dir(root).arg("tools/test_rockfs.py"))?;
     println!("test: all passed");
     Ok(())
@@ -629,24 +732,49 @@ fn classic(root: &Path) -> Result {
     Ok(())
 }
 
-/// Every source file must start with an SPDX licence line (docs/design/0002-coding-rules.md).
+/// Every source file must start with an SPDX licence line, and it must be the licence its
+/// folder has (docs/design/0009-programs-and-granite.md, section 7; note 0002).
 fn check_licence_headers(root: &Path) -> Result {
-    let mut missing = Vec::new();
-    for dir in ["boot", "kernel", "lib", "xtask"] {
+    let mut problems = Vec::new();
+    for dir in ["boot", "interfaces", "kernel", "lib", "services", "tests", "tools", "xtask"] {
         walk(&root.join(dir), &mut |path| {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if matches!(ext, "rs" | "ld" | "toml" | "s") {
-                let text = fs::read_to_string(path).unwrap_or_default();
-                if !text.lines().take(3).any(|l| l.contains("SPDX-License-Identifier:")) {
-                    missing.push(path.strip_prefix(root).unwrap_or(path).display().to_string());
+            if !matches!(ext, "rs" | "ld" | "toml" | "s" | "py" | "pbi") {
+                return;
+            }
+            let rel = path.strip_prefix(root).unwrap_or(path);
+            let text = fs::read_to_string(path).unwrap_or_default();
+            let found = text
+                .lines()
+                .take(3)
+                .find_map(|l| l.split_once("SPDX-License-Identifier:").map(|(_, id)| id.trim()));
+            let want = licence_for(rel);
+            match found {
+                None => problems.push(format!("{}: no SPDX licence line", rel.display())),
+                Some(id) if id != want => {
+                    problems.push(format!("{}: says {id}, but its folder is {want}", rel.display()))
                 }
+                Some(_) => {}
             }
         });
     }
-    if missing.is_empty() {
+    if problems.is_empty() {
         Ok(())
     } else {
-        Err(format!("these files have no SPDX licence line:\n  {}", missing.join("\n  ")))
+        Err(format!("licence lines are wrong:\n  {}", problems.join("\n  ")))
+    }
+}
+
+/// The licence a file must have, by where it is (DESIGN.md D16).
+fn licence_for(rel: &Path) -> &'static str {
+    let s = rel.to_string_lossy().replace('\\', "/");
+    let under = |p: &str| s.starts_with(p);
+    if under("lib/granite/") || under("lib/elf/") || under("lib/archive/") || under("targets/") {
+        "MPL-2.0"
+    } else if under("interfaces/") || under("lib/interfaces/") {
+        "MIT"
+    } else {
+        "GPL-3.0-or-later"
     }
 }
 
@@ -704,6 +832,51 @@ mod tests {
             assert!(dir.join("mod.rs").is_file(), "{} has no mod.rs", arch.name);
             assert!(dir.join("linker.ld").is_file(), "{} has no linker.ld", arch.name);
         }
+    }
+
+    #[test]
+    fn licences_by_folder() {
+        assert_eq!(licence_for(Path::new("lib/granite/src/lib.rs")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("lib/elf/Cargo.toml")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("interfaces/echo.pbi")), "MIT");
+        assert_eq!(licence_for(Path::new("lib/interfaces/build.rs")), "MIT");
+        assert_eq!(licence_for(Path::new("kernel/src/main.rs")), "GPL-3.0-or-later");
+        assert_eq!(licence_for(Path::new("lib/captree/src/lib.rs")), "GPL-3.0-or-later");
+    }
+
+    /// An archive written by `lib/archive` is read the same by `tools/startarc.py`, which was
+    /// written from the specification alone; and a damaged one is refused by both.
+    #[test]
+    fn archive_cross_check() {
+        let root = repo_root().unwrap();
+        let big: Vec<u8> = (0..10_000u32).map(|i| (i % 251) as u8).collect();
+        let files: [(&str, &[u8]); 3] =
+            [("root", b"one"), ("drivers/serial", &big), ("empty", b"")];
+        let arc = pbr_archive::build(&files).unwrap();
+        let dir = env::temp_dir().join(format!("pbr-archive-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.arc");
+        fs::write(&path, &arc).unwrap();
+        let out = Command::new("python3")
+            .arg(root.join("tools/startarc.py"))
+            .args(["extract".as_ref(), path.as_os_str(), dir.join("out").as_os_str()])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        for (name, data) in files {
+            assert_eq!(fs::read(dir.join("out").join(name)).unwrap(), data, "{name}");
+        }
+        let mut bad = arc.clone();
+        bad[100] ^= 1;
+        fs::write(&path, &bad).unwrap();
+        let out = Command::new("python3")
+            .arg(root.join("tools/startarc.py"))
+            .args(["list".as_ref(), path.as_os_str()])
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        assert!(pbr_archive::Archive::parse(&bad).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
