@@ -152,7 +152,7 @@ impl Frame {
         }
     }
 
-    fn from_user(&self) -> bool {
+    fn is_from_user(&self) -> bool {
         self.cs & 3 == 3
     }
 }
@@ -219,7 +219,7 @@ const NAMES: [&str; 22] = [
 
 extern "C" fn dispatch(f: &mut Frame) {
     let v = f.vector as u8;
-    let user = f.from_user();
+    let user = f.is_from_user();
     match v {
         // A program's fault ends its process; machine-level trouble is never the program's.
         0..=31 if user && !matches!(v, 2 | 8 | 18) => user_fault(f),

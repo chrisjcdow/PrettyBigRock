@@ -18,6 +18,7 @@ pub struct Endpoint(pub Handle);
 
 /// What a receive got.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // returned by value: boxing would allocate on every call
 pub enum Event {
     /// A call, and the capability to answer it.
     Call(Incoming, ReplyCap),

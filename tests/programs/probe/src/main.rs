@@ -217,13 +217,15 @@ fn fault_readonly() -> Result<(), i32> {
 fn fault_kernel() -> Result<(), i32> {
     // SAFETY: none: kernel memory, so this must fault.
     let x = unsafe { core::ptr::read_volatile(0xFFFF_8000_0000_1000 as *const u64) };
-    Err(2 + (x as i32 & 0))
+    core::hint::black_box(x);
+    Err(2)
 }
 
 fn fault_null() -> Result<(), i32> {
     // SAFETY: none: the first 64 KiB are never mapped, so this must fault.
-    let x = unsafe { core::ptr::read_volatile(0x8 as *const u64) };
-    Err(2 + (x as i32 & 0))
+    let x = unsafe { core::ptr::read_volatile(core::ptr::without_provenance::<u64>(8)) };
+    core::hint::black_box(x);
+    Err(2)
 }
 
 fn fault_instruction() -> Result<(), i32> {
@@ -280,7 +282,8 @@ fn revoke_memory(start: &mut granite::Start) -> Result<(), i32> {
         sum = sum.wrapping_add(unsafe { core::ptr::read_volatile(page.as_ptr()) }.into());
         time::sleep_ms(1);
     }
-    Err(4 + (sum as i32 & 0))
+    core::hint::black_box(sum);
+    Err(4)
 }
 
 /// Holds an endpoint capability, signals it's ready, and exits.

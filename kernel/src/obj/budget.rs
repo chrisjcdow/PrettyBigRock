@@ -82,11 +82,6 @@ impl Charge {
         self.budget.used.fetch_sub(less, Ordering::AcqRel);
         self.amount -= less;
     }
-
-    /// The budget it's charged to.
-    pub fn budget(&self) -> &Arc<Budget> {
-        &self.budget
-    }
 }
 
 impl Drop for Charge {

@@ -138,9 +138,4 @@ impl Table {
         self.used = 0;
         out
     }
-
-    /// How many capabilities it holds.
-    pub fn len(&self) -> usize {
-        self.used
-    }
 }

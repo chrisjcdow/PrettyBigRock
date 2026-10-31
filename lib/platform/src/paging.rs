@@ -597,7 +597,7 @@ pub(crate) mod tests {
                 assert!(raw(&mut fa, &t, 0x40_1000) & A_NG != 0);
             }
             assert!(t.protect(&mut fa, 0x40_1000, Attr { write: false, ..data }));
-            assert_eq!(t.translate(&mut fa, 0x40_1000).unwrap().1.write, false);
+            assert!(!t.translate(&mut fa, 0x40_1000).unwrap().1.write);
             assert_eq!(t.unmap(&mut fa, 0x40_1000), Some(0x20_0000));
             assert_eq!(t.unmap(&mut fa, 0x40_1000), None);
             assert!(!t.protect(&mut fa, 0x40_1000, data));

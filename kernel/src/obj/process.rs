@@ -144,11 +144,6 @@ impl Process {
         self.root
     }
 
-    /// True until it starts to end.
-    pub fn running(&self) -> bool {
-        *self.state.lock() == State::Running
-    }
-
     /// How it ended, once it has.
     pub fn status(&self) -> Option<Status> {
         match *self.state.lock() {

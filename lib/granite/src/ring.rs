@@ -327,15 +327,27 @@ mod tests {
         }
     }
 
+    // The memory these use is test memory: 64-byte aligned, at least `len` bytes, and alive
+    // for the whole test.
+    fn ring(at: *mut u8, len: usize, kind: Kind, size: usize) -> Result<u32, RingError> {
+        // SAFETY: as above.
+        unsafe { init(at, len, kind, size) }
+    }
+    fn producer(at: *mut u8, len: usize) -> Result<Producer, RingError> {
+        // SAFETY: as above.
+        unsafe { Producer::new(at, len) }
+    }
+    fn consumer(at: *mut u8, len: usize) -> Result<Consumer, RingError> {
+        // SAFETY: as above.
+        unsafe { Consumer::new(at, len) }
+    }
+
     #[test]
     fn entries_round_trip_and_wrap() {
         let m = Mem::new(4096);
-        // SAFETY: test memory, aligned.
-        let count = unsafe { init(m.ptr(), 4096, Kind::Entries, 32) }.unwrap();
+        let count = ring(m.ptr(), 4096, Kind::Entries, 32).unwrap();
         assert_eq!(count, 64);
-        let (mut p, mut c) = unsafe {
-            (Producer::new(m.ptr(), 4096).unwrap(), Consumer::new(m.ptr(), 4096).unwrap())
-        };
+        let (mut p, mut c) = (producer(m.ptr(), 4096).unwrap(), consumer(m.ptr(), 4096).unwrap());
         let mut out = [0u8; 32];
         assert_eq!(c.pop(&mut out), Err(RingError::WouldBlock));
         for round in 0..10u8 {
@@ -354,18 +366,17 @@ mod tests {
     #[test]
     fn bytes_round_trip() {
         let m = Mem::new(300);
-        let n = unsafe { init(m.ptr(), 300, Kind::Bytes, 1) }.unwrap();
+        let n = ring(m.ptr(), 300, Kind::Bytes, 1).unwrap();
         assert_eq!(n, 32);
-        let (mut p, mut c) =
-            unsafe { (Producer::new(m.ptr(), 300).unwrap(), Consumer::new(m.ptr(), 300).unwrap()) };
+        let (mut p, mut c) = (producer(m.ptr(), 300).unwrap(), consumer(m.ptr(), 300).unwrap());
         let msg: Vec<u8> = (0..100u8).collect();
         let mut got = Vec::new();
         let mut sent = 0;
         while got.len() < msg.len() {
-            if sent < msg.len() {
-                if let Ok((n, _)) = p.write(&msg[sent..]) {
-                    sent += n;
-                }
+            if sent < msg.len()
+                && let Ok((n, _)) = p.write(&msg[sent..])
+            {
+                sent += n;
             }
             let mut buf = [0u8; 7];
             if let Ok((n, _)) = c.read(&mut buf) {
@@ -379,15 +390,15 @@ mod tests {
     fn refuses_bad_rings() {
         let m = Mem::new(4096);
         // Not set up at all.
-        assert!(matches!(unsafe { Consumer::new(m.ptr(), 4096) }, Err(RingError::Broken)));
-        unsafe { init(m.ptr(), 4096, Kind::Entries, 16) }.unwrap();
+        assert!(matches!(consumer(m.ptr(), 4096), Err(RingError::Broken)));
+        ring(m.ptr(), 4096, Kind::Entries, 16).unwrap();
         // Claims more entries than the memory holds.
         let s = Shared { base: m.ptr(), len: 4096 };
         s.set(OFF_COUNT, 1 << 20);
-        assert!(matches!(unsafe { Consumer::new(m.ptr(), 4096) }, Err(RingError::Broken)));
+        assert!(matches!(consumer(m.ptr(), 4096), Err(RingError::Broken)));
         s.set(OFF_COUNT, 100); // not a power of two
-        assert!(matches!(unsafe { Producer::new(m.ptr(), 4096) }, Err(RingError::Broken)));
-        assert!(matches!(unsafe { Producer::new(m.ptr(), 100) }, Err(RingError::Broken)));
+        assert!(matches!(producer(m.ptr(), 4096), Err(RingError::Broken)));
+        assert!(matches!(producer(m.ptr(), 100), Err(RingError::Broken)));
     }
 
     /// The other side writes garbage into the header and entries the whole time: the honest
@@ -395,7 +406,7 @@ mod tests {
     #[test]
     fn survives_a_hostile_producer() {
         let m = Arc::new(Mem::new(4096));
-        unsafe { init(m.ptr(), 4096, Kind::Entries, 16) }.unwrap();
+        ring(m.ptr(), 4096, Kind::Entries, 16).unwrap();
         let base = m.ptr() as usize;
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (m2, stop2) = (m.clone(), stop.clone());
@@ -407,14 +418,16 @@ mod tests {
                 x ^= x >> 17;
                 x ^= x << 5;
                 let at = (x as usize % 1024) & !3;
-                // SAFETY: inside the test memory; atomics so the test itself is sound.
-                unsafe { &*((base + at) as *const AtomicU32) }.store(x, Ordering::Relaxed);
+                // SAFETY: inside the test memory, 4-byte aligned; atomics so the test itself is
+                // sound while both threads touch it.
+                let w = unsafe { &*((base + at) as *const AtomicU32) };
+                w.store(x, Ordering::Relaxed);
             }
         });
         let mut out = [0u8; 16];
         let mut broken = 0;
         for _ in 0..200_000 {
-            match unsafe { Consumer::new(m.ptr(), 4096) } {
+            match consumer(m.ptr(), 4096) {
                 Ok(mut c) => {
                     for _ in 0..8 {
                         if let Err(RingError::Broken) = c.pop(&mut out) {
@@ -435,12 +448,12 @@ mod tests {
     #[test]
     fn two_threads() {
         let m = Arc::new(Mem::new(1024));
-        unsafe { init(m.ptr(), 1024, Kind::Entries, 8) }.unwrap();
+        ring(m.ptr(), 1024, Kind::Entries, 8).unwrap();
         let base = m.ptr() as usize;
         let m2 = m.clone();
         let t = std::thread::spawn(move || {
             let _keep = m2;
-            let mut p = unsafe { Producer::new(base as *mut u8, 1024) }.unwrap();
+            let mut p = producer(base as *mut u8, 1024).unwrap();
             for i in 0..100_000u64 {
                 loop {
                     match p.push(&i.to_le_bytes()) {
@@ -451,7 +464,7 @@ mod tests {
                 }
             }
         });
-        let mut c = unsafe { Consumer::new(m.ptr(), 1024) }.unwrap();
+        let mut c = consumer(m.ptr(), 1024).unwrap();
         let mut out = [0u8; 8];
         let mut next = 0u64;
         while next < 100_000 {

@@ -91,9 +91,12 @@ const BIOS_TARGET: &str = "x86_64-unknown-none";
 const KERNEL_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 
 /// How long a boot test may take. Emulating ARM on a PC is slow, so this is generous.
-const BOOT_TEST_LIMIT: Duration = Duration::from_secs(120);
+const BOOT_TEST_LIMIT: Duration = Duration::from_secs(300);
 
 type Result<T = ()> = std::result::Result<T, String>;
+
+/// Cargo arguments, and environment variables, for building programs.
+type ProgramArgs = (Vec<String>, Vec<(&'static str, &'static str)>);
 
 /// Extra `cargo` arguments, and environment variables, needed for one target.
 type CargoExtras = (Vec<&'static str>, Vec<(&'static str, &'static str)>);
@@ -127,6 +130,7 @@ fn run(args: &[String]) -> Result {
                 bios: opts.bios,
                 el2: opts.el2,
                 cores,
+                cpu: None,
                 expect: &[],
             };
             qemu::run(&cfg, &img, &work_dir(&root)?)
@@ -361,11 +365,7 @@ fn build_artifact(
 
 /// Cargo arguments and environment for building for a program target (`targets/*.json`). A
 /// target of our own always needs `core` and `alloc` built from source (note 0009, section 5).
-fn program_args(
-    root: &Path,
-    tc: &Toolchain,
-    arch: &Arch,
-) -> Result<(Vec<String>, Vec<(&'static str, &'static str)>)> {
+fn program_args(root: &Path, tc: &Toolchain, arch: &Arch) -> Result<ProgramArgs> {
     if tc.source.is_none() {
         return Err(
             "building programs needs the Rust library source: run `rustup component add rust-src`"

@@ -25,6 +25,10 @@ pub struct Config {
     pub el2: bool,
     /// How many processor cores.
     pub cores: u32,
+    /// The processor model, if not QEMU's usual one for the machine. `max` turns on every
+    /// feature QEMU can emulate, which tests the paths that use them (SMEP, SMAP and XSAVE on
+    /// x86-64; PAN on ARM64).
+    pub cpu: Option<&'static str>,
     /// Lines the kernel's report must contain.
     pub expect: &'static [&'static str],
 }
@@ -37,12 +41,16 @@ pub const TESTS: &[Config] = &[
         bios: false,
         el2: false,
         cores: 4,
+        cpu: Some("max"),
         expect: &[
             "on x86-64, started by UEFI.",
+            "XSAVE, SMEP, SMAP",
             "Cores:         4 found, 4 running",
             "Screens:       1 (",
             "Randomness:    seeded",
             "Self-test passed",
+            "Program self-test passed",
+            "exited with status 0.",
         ],
     },
     Config {
@@ -51,12 +59,16 @@ pub const TESTS: &[Config] = &[
         bios: true,
         el2: false,
         cores: 4,
+        cpu: None,
         expect: &[
             "on x86-64, started by BIOS.",
+            "FXSAVE",
             "Cores:         4 found, 4 running",
             "Screens:       1 (",
             "Time:          2",
             "Self-test passed",
+            "Program self-test passed",
+            "exited with status 0.",
         ],
     },
     Config {
@@ -65,6 +77,7 @@ pub const TESTS: &[Config] = &[
         bios: false,
         el2: false,
         cores: 4,
+        cpu: None,
         expect: &[
             "on ARM64, started by UEFI.",
             "exception level 1",
@@ -72,6 +85,8 @@ pub const TESTS: &[Config] = &[
             "Screens:       1 (",
             "Randomness:    seeded",
             "Self-test passed",
+            "Program self-test passed",
+            "exited with status 0.",
         ],
     },
     Config {
@@ -80,11 +95,15 @@ pub const TESTS: &[Config] = &[
         bios: false,
         el2: true,
         cores: 4,
+        cpu: Some("max"),
         expect: &[
             "exception level 1",
+            ", PAN",
             "Cores:         4 found, 4 running",
             "EL2 stub:      present and answering",
             "Self-test passed",
+            "Program self-test passed",
+            "exited with status 0.",
         ],
     },
 ];
@@ -100,6 +119,9 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     if cfg.arch == "x86_64" {
         cmd = Command::new("qemu-system-x86_64");
         cmd.args(["-machine", "q35", "-m", "512"]);
+        if let Some(cpu) = cfg.cpu {
+            cmd.args(["-cpu", cpu]);
+        }
         cmd.arg("-smp").arg(cfg.cores.to_string());
         if !cfg.bios {
             let code = first_existing(&[
@@ -127,7 +149,7 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     } else {
         cmd = Command::new("qemu-system-aarch64");
         let machine = if cfg.el2 { "virt,virtualization=on" } else { "virt" };
-        cmd.args(["-machine", machine, "-cpu", "cortex-a72", "-m", "512"]);
+        cmd.args(["-machine", machine, "-cpu", cfg.cpu.unwrap_or("cortex-a72"), "-m", "512"]);
         cmd.arg("-smp").arg(cfg.cores.to_string());
         let fw = first_existing(&[
             "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",

@@ -52,7 +52,8 @@ pub enum Error {
     AlreadyExists = 13,
     /// The object isn't in a state that allows this.
     BadState = 14,
-    /// The call can't be done here.
+    /// The call can't be done here. (Part of the interface; nothing returns it yet.)
+    #[allow(dead_code)]
     NotSupported = 15,
 }
 
@@ -112,8 +113,6 @@ pub mod rights {
 
     /// The rights every type shares.
     pub const COMMON: u32 = DUPLICATE | TRANSFER | REVOKE | INSPECT;
-    /// Every right defined for any type.
-    pub const ALL_DEFINED: u32 = 0x07FF;
 }
 
 /// The kernel's charges for its own structures, in bytes, rounded up so they're never less
@@ -179,20 +178,6 @@ impl Object {
             Object::Notification(_) => COMMON | SIGNAL | WAIT,
             Object::Reply(_) => 0,
             Object::Log => COMMON | WRITE,
-        }
-    }
-
-    /// True if `self` and `other` are the same object.
-    pub fn same(&self, other: &Object) -> bool {
-        match (self, other) {
-            (Object::Process(a), Object::Process(b)) => Arc::ptr_eq(a, b),
-            (Object::Thread(a), Object::Thread(b)) => Arc::ptr_eq(a, b),
-            (Object::Memory(a), Object::Memory(b)) => Arc::ptr_eq(a, b),
-            (Object::Endpoint(a), Object::Endpoint(b)) => Arc::ptr_eq(a, b),
-            (Object::Notification(a), Object::Notification(b)) => Arc::ptr_eq(a, b),
-            (Object::Reply(a), Object::Reply(b)) => Arc::ptr_eq(a, b),
-            (Object::Log, Object::Log) => true,
-            _ => false,
         }
     }
 }

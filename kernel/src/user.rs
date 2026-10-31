@@ -168,10 +168,5 @@ pub fn before_return() {
     }
 }
 
-/// True if `t` is a program thread of `p`.
-pub fn belongs_to(t: &Thread, p: &Arc<Process>) -> bool {
-    t.user.as_ref().is_some_and(|u| Arc::ptr_eq(&u.process, p))
-}
-
 /// The page size, for the system call layer.
 pub const PAGE: u64 = mem::PAGE;
