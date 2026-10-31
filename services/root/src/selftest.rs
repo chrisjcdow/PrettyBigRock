@@ -63,6 +63,8 @@ fn all(f: &Files<'_>) -> Result<String, String> {
 
     step("messages and capabilities", messages(f, &echo_ep))?;
     done.push("messages and capabilities");
+    step("an interface", interface(f, &echo_ep))?;
+    done.push("an interface's generated code");
     step("isolation", isolation(f, &echo_ep))?;
     done.push("isolation");
     let faults = faults(f);
@@ -142,6 +144,12 @@ fn messages(f: &Files<'_>, ep: &Endpoint) -> Outcome {
             (role::ENDPOINT2, b.0.into_raw(), CLIENT, true),
         ],
     )
+}
+
+/// The probe calls echo through the code generated from `interfaces/pbr.test.echo.pbi`.
+fn interface(f: &Files<'_>, ep: &Endpoint) -> Outcome {
+    let a = mint(ep, 33)?;
+    probe(f, "interface", &[(role::ENDPOINT, a.0.into_raw(), CLIENT, true)])
 }
 
 fn isolation(f: &Files<'_>, ep: &Endpoint) -> Outcome {
@@ -296,7 +304,22 @@ fn budgets(f: &Files<'_>) -> Outcome {
     let me = process::self_handle();
     let used = || process::info(me).map(|i| i.used).map_err(|e| format!("{e}"));
     let budget = 512 * 1024;
-    let before = used()?;
+    // Processes from earlier steps are torn down by the kernel in the background, giving
+    // their memory back as they go: wait until that's finished, so it isn't mistaken for
+    // anything this step does.
+    let until = time::after_ms(5_000);
+    let mut before = used()?;
+    loop {
+        time::sleep_ms(20);
+        let now = used()?;
+        if now == before {
+            break;
+        }
+        if time::now() > until {
+            return Err(format!("memory use never settled ({before}, then {now})"));
+        }
+        before = now;
+    }
     let s = spawn(f.probe, "probe", &format!("budget {budget}"), &[], budget)?;
     let during = used()?;
     if during < before + budget {

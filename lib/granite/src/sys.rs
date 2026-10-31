@@ -255,6 +255,9 @@ pub unsafe fn set_system_page(page: u64) {
 #[cfg(target_arch = "x86_64")]
 pub fn raw(n: u64, a: [u64; 6]) -> (u64, u64, u64) {
     let entry = CALL.load(Ordering::Acquire);
+    if entry == 0 {
+        return NO_SYSTEM_PAGE; // not on PrettyBigRock (a host test), or before start-up
+    }
     let (status, r1, r2);
     // SAFETY: the system page's `call` follows note 0007's convention: it changes only rax,
     // rcx, r11, rdx and rsi, and the kernel checks every argument.
@@ -280,6 +283,9 @@ pub fn raw(n: u64, a: [u64; 6]) -> (u64, u64, u64) {
 #[cfg(target_arch = "aarch64")]
 pub fn raw(n: u64, a: [u64; 6]) -> (u64, u64, u64) {
     let entry = CALL.load(Ordering::Acquire);
+    if entry == 0 {
+        return NO_SYSTEM_PAGE; // not on PrettyBigRock (a host test), or before start-up
+    }
     let (status, r1, r2);
     // SAFETY: the system page's `call` follows note 0007's convention: it changes only x0 to
     // x2, x8, x16 and x17 (and x30, which `blr` sets).
@@ -302,6 +308,10 @@ pub fn raw(n: u64, a: [u64; 6]) -> (u64, u64, u64) {
     (status, r1, r2)
 }
 
+/// What a system call returns when there's no system page to make it through:
+/// `NotSupported` (15).
+const NO_SYSTEM_PAGE: (u64, u64, u64) = (15, 0, 0);
+
 /// Makes system call `n`, turning a non-zero status into an [`Error`].
 pub fn call(n: u64, a: [u64; 6]) -> Result<(u64, u64)> {
     let (s, r1, r2) = raw(n, a);
@@ -311,6 +321,9 @@ pub fn call(n: u64, a: [u64; 6]) -> Result<(u64, u64)> {
 /// The monotonic clock, in nanoseconds since start-up, from the system page.
 pub fn clock_now() -> u64 {
     let f = CLOCK.load(Ordering::Acquire);
+    if f == 0 {
+        return 0; // no system page (a host test, or before start-up)
+    }
     // SAFETY: the system page's `clock_now` is an ordinary C-convention function (note 0007).
     let clock: extern "C" fn() -> u64 = unsafe { core::mem::transmute(f as usize) };
     clock()

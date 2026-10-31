@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+[package]
+name = "pbr-interfaces"
+description = "The code generated from the interface files in interfaces/ (note 0008)"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+pbr-granite = { path = "../granite" }
+
+[build-dependencies]
+pbr-interface-compiler = { path = "../interface-compiler" }
+
+[lints]
+workspace = true

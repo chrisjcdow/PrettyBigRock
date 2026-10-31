@@ -11,6 +11,7 @@ publish.workspace = true
 
 [dependencies]
 pbr-archive = { path = "../lib/archive" }
+pbr-interface-compiler = { path = "../lib/interface-compiler" }
 pbr-elf = { path = "../lib/elf", features = ["alloc"] }
 
 [lints]

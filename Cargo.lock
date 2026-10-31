@@ -51,6 +51,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-interface-compiler"
+version = "0.0.0"
+
+[[package]]
+name = "pbr-interfaces"
+version = "0.0.0"
+dependencies = [
+ "pbr-granite",
+ "pbr-interface-compiler",
+]
+
+[[package]]
 name = "pbr-kernel"
 version = "0.0.0"
 dependencies = [
@@ -82,6 +94,7 @@ name = "pbr-test-echo"
 version = "0.0.0"
 dependencies = [
  "pbr-granite",
+ "pbr-interfaces",
  "pbr-test-protocol",
 ]
 
@@ -90,6 +103,7 @@ name = "pbr-test-probe"
 version = "0.0.0"
 dependencies = [
  "pbr-granite",
+ "pbr-interfaces",
  "pbr-test-protocol",
 ]
 
@@ -103,4 +117,5 @@ version = "0.0.0"
 dependencies = [
  "pbr-archive",
  "pbr-elf",
+ "pbr-interface-compiler",
 ]

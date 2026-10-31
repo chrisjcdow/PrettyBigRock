@@ -33,6 +33,7 @@ pub mod endpoint;
 pub mod handle;
 #[cfg(target_os = "prettybigrock")]
 mod heap;
+pub mod interface;
 pub mod lock;
 pub mod log;
 pub mod memory;

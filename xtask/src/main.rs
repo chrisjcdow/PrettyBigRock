@@ -69,8 +69,14 @@ const PROGRAMS: &[(&str, &str)] =
     &[("pbr-root", "root"), ("pbr-test-echo", "echo"), ("pbr-test-probe", "probe")];
 
 /// Crates built for the programs' targets, checked with Clippy there.
-const PROGRAM_CRATES: &[&str] =
-    &["pbr-granite", "pbr-root", "pbr-test-echo", "pbr-test-probe", "pbr-test-protocol"];
+const PROGRAM_CRATES: &[&str] = &[
+    "pbr-granite",
+    "pbr-interfaces",
+    "pbr-root",
+    "pbr-test-echo",
+    "pbr-test-probe",
+    "pbr-test-protocol",
+];
 
 /// Crates tested on this computer.
 const HOST_CRATES: &[&str] = &[
@@ -80,6 +86,8 @@ const HOST_CRATES: &[&str] = &[
     "pbr-captree",
     "pbr-elf",
     "pbr-granite",
+    "pbr-interface-compiler",
+    "pbr-interfaces",
     "pbr-platform",
     "xtask",
 ];
@@ -152,6 +160,7 @@ fn run(args: &[String]) -> Result {
             Ok(())
         }
         "classic" => classic(&root),
+        "interfaces" => interfaces(&root),
         "doctor" => Toolchain::find(&root).map(|tc| tc.report()),
         "help" | "--help" | "-h" => {
             println!("{}", HELP.trim());
@@ -171,6 +180,7 @@ PrettyBigRock build tool
   cargo xtask check                      formatting and lints
   cargo xtask test                       unit tests on this computer
   cargo xtask ci                         check, test, build and boot everything
+  cargo xtask interfaces                 print the code generated from interfaces/
   cargo xtask classic                    build and test PrettyBigRock 1.x
   cargo xtask doctor                     show how the Rust toolchain was found
 
@@ -707,6 +717,45 @@ fn test(root: &Path) -> Result {
     Ok(())
 }
 
+/// The interface files in `interfaces/`, in order.
+fn interface_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut files: Vec<PathBuf> = fs::read_dir(root.join("interfaces"))
+        .map_err(|e| format!("interfaces/: {e}"))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "pbi"))
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// Prints the Rust generated from every interface file (formatted, if `rustfmt` is there), to
+/// review what `lib/interfaces` builds.
+fn interfaces(root: &Path) -> Result {
+    let mut out = pbr_interface_compiler::rust::header();
+    for f in interface_files(root)? {
+        let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let src = fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()))?;
+        let code = pbr_interface_compiler::compile(&src, &name)
+            .map_err(|d| format!("interfaces/{name}:{d}"))?;
+        out.push('\n');
+        out.push_str(&code);
+    }
+    let formatted = Command::new("rustfmt")
+        .args(["--edition", "2024", "--emit", "stdout", "--quiet"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .ok()
+        .and_then(|mut child| {
+            use std::io::Write as _;
+            child.stdin.take()?.write_all(out.as_bytes()).ok()?;
+            let o = child.wait_with_output().ok()?;
+            o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+        });
+    print!("{}", formatted.unwrap_or(out));
+    Ok(())
+}
+
 fn classic(root: &Path) -> Result {
     let dir = root.join("classic");
     status(Command::new("sh").current_dir(&dir).arg("build.sh"))?;
@@ -877,6 +926,30 @@ mod tests {
         assert!(!out.status.success());
         assert!(pbr_archive::Archive::parse(&bad).is_err());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The interface compiler's layouts agree with `tools/pbi_check.py`, which was written
+    /// from note 0008 alone, for every interface file and the compiler's own awkward cases.
+    #[test]
+    fn interface_cross_check() {
+        let root = repo_root().unwrap();
+        let mut files = interface_files(&root).unwrap();
+        files.push(root.join("lib/interface-compiler/tests/layouts.pbi"));
+        let mut ours = String::new();
+        for f in &files {
+            let src = fs::read_to_string(f).unwrap();
+            let i = pbr_interface_compiler::load(&src)
+                .unwrap_or_else(|d| panic!("{}:{d}", f.display()));
+            ours.push_str(&pbr_interface_compiler::layout_report(&i));
+        }
+        let out = Command::new("python3")
+            .arg(root.join("tools/pbi_check.py"))
+            .args(&files)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), ours);
+        assert!(ours.lines().filter(|l| l.starts_with("op ")).count() >= 12);
     }
 
     #[test]

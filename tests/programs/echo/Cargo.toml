@@ -18,6 +18,7 @@ bench = false
 [dependencies]
 pbr-test-protocol = { path = "../protocol" }
 pbr-granite = { path = "../../../lib/granite" }
+pbr-interfaces = { path = "../../../lib/interfaces" }
 
 [lints]
 workspace = true

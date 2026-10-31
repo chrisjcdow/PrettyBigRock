@@ -16,6 +16,8 @@ members = [
     "lib/captree",
     "lib/elf",
     "lib/granite",
+    "lib/interface-compiler",
+    "lib/interfaces",
     "lib/platform",
     "services/root",
     "tests/programs/echo",

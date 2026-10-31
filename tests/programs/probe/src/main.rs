@@ -30,6 +30,7 @@ fn main(mut start: granite::Start) -> i32 {
     let num = |i: usize| args.get(i).and_then(|a| a.parse::<u64>().ok()).unwrap_or(0);
     let r = match mode {
         "messages" => messages(&mut start, num(1), num(2)),
+        "interface" => interface(&mut start),
         "isolation" => isolation(&mut start),
         "fault-readonly" => fault_readonly(),
         "fault-kernel" => fault_kernel(),
@@ -63,6 +64,112 @@ fn endpoint(start: &mut granite::Start, r: u32) -> Result<Endpoint, i32> {
 
 fn call(ep: &Endpoint, label: u32, data: &[u8]) -> Result<granite::message::Incoming, Error> {
     ep.call(&Outgoing::new(label, data), &mut [], 0, time::after_ms(10_000))
+}
+
+// ------------------------------------------------------------------------------------------
+// An interface: the code generated from interfaces/pbr.test.echo.pbi, against echo
+
+fn interface(start: &mut granite::Start) -> Result<(), i32> {
+    use granite::interface::{CallError, STATUS_MALFORMED, STATUS_UNKNOWN};
+    use pbr_interfaces::pbr_test_echo::{self as echo, EchoError, Flags, Item, Pair, Shape};
+
+    let mut client = echo::Client::new(endpoint(start, role::ENDPOINT)?);
+    // Calls have a deadline, so a broken service fails the check instead of hanging it.
+    client.set_deadline(time::after_ms(30_000));
+    let pair = |left: i16, right: Option<&str>| Pair { left, right: right.map(Into::into) };
+
+    // 1: strings, including one of the largest size.
+    check(1, client.reverse("héllo, wörld").as_deref() == Ok("dlröw ,olléh"))?;
+    let long: alloc::string::String = (0..200).map(|i| (b'a' + (i % 26) as u8) as char).collect();
+    let back: alloc::string::String = long.chars().rev().collect();
+    check(1, client.reverse(&long) == Ok(back))?;
+    check(1, client.reverse("") == Ok(alloc::string::String::new()))?;
+    // 2: an operation's own error, from a flexible enum.
+    check(2, client.add(2, 3) == Ok(5))?;
+    check(2, client.add(u32::MAX, 1) == Err(CallError::Service(EchoError::Overflow)))?;
+    // 3: structs, options, bits and enums both ways.
+    let r = client.swap(&pair(-7, Some("abc")), Flags::LOUD | Flags::TWICE).map_err(|_| 3)?;
+    check(
+        3,
+        r.pair == pair(3, Some("-7"))
+            && r.flags == Flags::LOUD | Flags::TWICE
+            && r.shape == Shape::Whole,
+    )?;
+    let r = client.swap(&pair(5, None), Flags::default()).map_err(|_| 3)?;
+    check(
+        3,
+        r.pair == pair(-1, Some("5")) && r.flags == Flags::default() && r.shape == Shape::LeftOnly,
+    )?;
+    // 4: capabilities: a notification goes there and back (signalled on the way), and an
+    // optional memory object goes there.
+    let n = Notification::create().map_err(|_| 4)?;
+    let m = Memory::create(8192).map_err(|_| 4)?;
+    let r = client.pass(0x81, n, Some(m)).map_err(|_| 4)?;
+    check(4, r.note.wait(time::NOW) == Ok(0x81) && r.size == Some(8192))?;
+    let r = client.pass(2, r.note, None).map_err(|_| 4)?;
+    check(4, r.note.wait(time::NOW) == Ok(2) && r.size.is_none())?;
+    // 5: lists of numbers, of structs with lists inside, and of strings; arrays of arrays.
+    let values: Vec<i64> = (1..=64).collect();
+    let items = [
+        Item { name: "short".into(), weight: 1, tags: vec![1] },
+        Item { name: "a longer name".into(), weight: 2, tags: vec![1, 2, 3, 4] },
+        Item { name: "x".repeat(32), weight: 3, tags: vec![] },
+    ];
+    let r = client.total(&values, &items, 5).map_err(|_| 5)?;
+    check(5, r.sum == 64 * 65 / 2)?;
+    check(
+        5,
+        r.long_names.len() == 2
+            && r.long_names[0] == "a longer name"
+            && r.long_names[1] == "x".repeat(32),
+    )?;
+    check(5, r.grid == [[64, 65, 66], [67, 68, 69]])?;
+    // 6: the service failing.
+    check(6, client.fail() == Err(CallError::Failed))?;
+    // 7: an operation, or a version, the service doesn't know.
+    let ep = client.endpoint();
+    check(7, call(ep, 0x1_0000 | 99, &[]).map(|r| r.label) == Ok(STATUS_UNKNOWN))?;
+    check(7, call(ep, 0x2_0000 | 1, &[]).map(|r| r.label) == Ok(STATUS_UNKNOWN))?;
+    check(7, call(ep, 0x1_0007, &[]).map(|r| r.label) == Ok(STATUS_UNKNOWN))?; // reserved
+    // 8: malformed requests: the wrong size, a bool that isn't 0 or 1, a string that isn't
+    // UTF-8, a reference outside the buffer.
+    check(8, call(ep, echo::add::LABEL, &[0; 4]).map(|r| r.label) == Ok(STATUS_MALFORMED))?;
+    check(8, call(ep, echo::add::LABEL, &[0; 12]).map(|r| r.label) == Ok(STATUS_MALFORMED))?;
+    let (mut fixed, _, _) = echo::swap::encode_request(&pair(1, None), Flags::default());
+    fixed[4] = 2; // the option's tag
+    check(8, call(ep, echo::swap::LABEL, &fixed).map(|r| r.label) == Ok(STATUS_MALFORMED))?;
+    let (fixed, _, _) = echo::reverse::encode_request("ab");
+    let mut bad = *b"\xFF\xFE";
+    let r =
+        ep.call(&Outgoing::new(echo::reverse::LABEL, &fixed), &mut bad, 2, time::after_ms(10_000));
+    check(8, r.map(|r| r.label) == Ok(STATUS_MALFORMED))?;
+    let r =
+        ep.call(&Outgoing::new(echo::reverse::LABEL, &fixed), &mut [], 0, time::after_ms(10_000));
+    check(8, r.map(|r| r.label) == Ok(STATUS_MALFORMED))?;
+    // 9: a capability of the wrong kind where a notification belongs is malformed, and the
+    // service closes it: a moved endpoint capability is its endpoint's last sender, and the
+    // endpoint's watcher hears when it goes.
+    let (lone, gone) = (Endpoint::create().map_err(|_| 9)?, Notification::create().map_err(|_| 9)?);
+    lone.watch(&gone, 1).map_err(|_| 9)?;
+    let sender = lone.mint(0, rights::SEND | rights::TRANSFER).map_err(|_| 9)?;
+    let _receiver = lone.0.duplicate(rights::RECEIVE).map_err(|_| 9)?;
+    drop(lone);
+    check(9, gone.wait(time::NOW) == Err(Error::TimedOut))?;
+    let (fixed, _, caps) = echo::pass::encode_request(0, Notification(sender.0), None);
+    let out = Outgoing { label: echo::pass::LABEL, data: &fixed, caps: &caps };
+    let r = ep.call(&out, &mut [], 0, time::after_ms(10_000));
+    check(9, r.map(|r| r.label) == Ok(STATUS_MALFORMED))?;
+    check(9, gone.wait(time::after_ms(10_000)) == Ok(1))?;
+    // 10: a call that times out (to an endpoint no one receives on) closes the capabilities
+    // it would have moved.
+    let nobody = Endpoint::create().map_err(|_| 10)?;
+    let mut quiet = echo::Client::new(nobody.mint(0, rights::SEND).map_err(|_| 10)?);
+    quiet.set_deadline(time::after_ms(50));
+    let n = Notification::create().map_err(|_| 10)?;
+    let raw = n.0.raw();
+    check(10, quiet.pass(1, n, None).err() == Some(CallError::Call(Error::TimedOut)))?;
+    check(10, sys::call(num::HANDLE_INFO, [raw.into(), 0, 0, 0, 0, 0]) == Err(Error::BadHandle))?;
+    Ok(())
 }
 
 // ------------------------------------------------------------------------------------------

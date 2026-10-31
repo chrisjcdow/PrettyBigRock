@@ -4,18 +4,26 @@
 //! `echo`: a small service for the program self-test (docs/design/0009-programs-and-granite.md,
 //! section 9). It answers calls on the endpoint it's given (role 1000), with as many threads
 //! as its arguments say (`threads=N`), all receiving on the same endpoint.
+//!
+//! It speaks two protocols on the endpoint: the raw messages of `pbr-test-protocol` (labels
+//! with version 0), and the `pbr.test.echo` interface (version 1) through its generated
+//! dispatcher.
 
 #![no_std]
 #![no_main]
 
 extern crate alloc;
 
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use granite::endpoint::{Endpoint, Event};
+use granite::memory::Memory;
 use granite::message::{CapSend, Outgoing};
+use granite::notification::Notification;
 use granite::{thread, time};
+use pbr_interfaces::pbr_test_echo::{self as echo, EchoError, Flags, Item, Pair, Shape};
 use pbr_test_protocol::{op, role};
 
 granite::main!(main);
@@ -63,6 +71,12 @@ fn serve(ep: u32) {
             }
         };
         CALLS.fetch_add(1, Ordering::SeqCst);
+        if msg.label >> 16 != 0 {
+            if let Some((_, reply)) = echo::dispatch(&mut Service, msg, &buffer, reply) {
+                granite::interface::unknown(reply);
+            }
+            continue;
+        }
         let n = msg.buffer_len.min(buffer.len());
         let result = match msg.label {
             op::ECHO => {
@@ -100,5 +114,68 @@ fn serve(ep: u32) {
         if let Err(e) = result {
             granite::println!("echo: reply failed: {e}");
         }
+    }
+}
+
+/// The `pbr.test.echo` interface.
+struct Service;
+
+/// Reports a failed answer (the caller may have gone, which is no fault of ours).
+fn answered(r: granite::Result<()>) {
+    if let Err(e) = r
+        && e != granite::Error::PeerGone
+    {
+        granite::println!("echo: answer failed: {e}");
+    }
+}
+
+impl echo::Server for Service {
+    fn reverse(&mut self, text: String, reply: echo::reverse::Reply) {
+        let back: String = text.chars().rev().collect();
+        answered(reply.ok(&back));
+    }
+
+    fn add(&mut self, a: u32, b: u32, reply: echo::add::Reply) {
+        answered(match a.checked_add(b) {
+            Some(sum) => reply.ok(sum),
+            None => reply.err(EchoError::Overflow),
+        });
+    }
+
+    fn swap(&mut self, pair: Pair, flags: Flags, reply: echo::swap::Reply) {
+        let shape = if pair.right.is_some() { Shape::Whole } else { Shape::LeftOnly };
+        let out = Pair {
+            left: pair.right.as_ref().map_or(-1, |r| r.len() as i16),
+            right: Some(pair.left.to_string()),
+        };
+        answered(reply.ok(&out, flags, shape));
+    }
+
+    fn pass(
+        &mut self,
+        bits: u64,
+        note: Notification,
+        memory: Option<Memory>,
+        reply: echo::pass::Reply,
+    ) {
+        if note.signal(bits).is_err() {
+            answered(reply.fail());
+            return;
+        }
+        let size = memory.and_then(|m| m.size().ok());
+        answered(reply.ok(note, size));
+    }
+
+    fn total(&mut self, values: Vec<i64>, items: Vec<Item>, min: u16, reply: echo::total::Reply) {
+        let sum = values.iter().fold(0i64, |a, v| a.wrapping_add(*v));
+        let long: Vec<String> =
+            items.into_iter().filter(|i| i.name.len() > usize::from(min)).map(|i| i.name).collect();
+        let base = values.len() as u8;
+        let grid = [[base, base + 1, base + 2], [base + 3, base + 4, base + 5]];
+        answered(reply.ok(sum, &long, &grid));
+    }
+
+    fn fail(&mut self, reply: echo::fail::Reply) {
+        answered(reply.fail());
     }
 }
