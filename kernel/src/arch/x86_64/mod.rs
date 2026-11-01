@@ -8,6 +8,7 @@ mod clock;
 mod context;
 mod cpu;
 mod interrupts;
+pub mod irqchip;
 mod serial;
 mod smp;
 mod user;
@@ -25,6 +26,49 @@ use crate::{hw, percpu, time};
 
 /// The name used in messages.
 pub const NAME: &str = "x86-64";
+
+/// Reads `width` bytes (1, 2 or 4) from I/O port `port`.
+pub fn port_in(port: u16, width: u8) -> u32 {
+    // SAFETY: the callers (the I/O port capability) have checked the port isn't one the
+    // kernel uses. Reading a port has no effect on memory.
+    unsafe {
+        match width {
+            1 => {
+                let v: u8;
+                core::arch::asm!("in al, dx", out("al") v, in("dx") port, options(nomem, nostack));
+                u32::from(v)
+            }
+            2 => {
+                let v: u16;
+                core::arch::asm!("in ax, dx", out("ax") v, in("dx") port, options(nomem, nostack));
+                u32::from(v)
+            }
+            _ => {
+                let v: u32;
+                core::arch::asm!("in eax, dx", out("eax") v, in("dx") port, options(nomem, nostack));
+                v
+            }
+        }
+    }
+}
+
+/// Writes `width` bytes (1, 2 or 4) to I/O port `port`.
+pub fn port_out(port: u16, width: u8, value: u32) {
+    // SAFETY: as for `port_in`.
+    unsafe {
+        match width {
+            1 => {
+                core::arch::asm!("out dx, al", in("dx") port, in("al") value as u8, options(nomem, nostack))
+            }
+            2 => {
+                core::arch::asm!("out dx, ax", in("dx") port, in("ax") value as u16, options(nomem, nostack))
+            }
+            _ => {
+                core::arch::asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack))
+            }
+        }
+    }
+}
 
 /// The page-table format.
 pub const PAGE_FORMAT: pbr_platform::paging::Format = pbr_platform::paging::Format::X86_64;
@@ -152,6 +196,7 @@ pub fn init_boot_core(m: &hw::Machine) {
     interrupts::build_idt();
     cpu::init_this_core(percpu::this());
     apic::init(m.lapic);
+    irqchip::init(m);
     let freq = clock::init(m.hpet);
     time::init(freq);
     apic::start_timer();

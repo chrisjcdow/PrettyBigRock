@@ -37,6 +37,15 @@ pub struct Machine {
     pub vtimer_irq: u32,
     /// Arm: PSCI is available, and is called with HVC (otherwise SMC).
     pub psci: Option<bool>,
+    /// x86: the I/O APICs: (physical address, first global system interrupt).
+    pub ioapics: Vec<(u64, u32)>,
+    /// x86: ISA interrupt source overrides: (ISA interrupt, global system interrupt, flags).
+    pub overrides: Vec<(u8, u32, u16)>,
+    /// Arm: the GICv2m MSI frame: (physical address, first interrupt ID, how many), where
+    /// the count is 0 if the frame has to be asked.
+    pub msi_frame: Option<(u64, u16, u16)>,
+    /// x86: the firmware says a legacy PS/2 (8042) controller exists.
+    pub ps2: bool,
 }
 
 /// Reads the ACPI tables. `boot_hw_id` is the boot core's hardware ID, put first in the list.
@@ -65,6 +74,13 @@ pub fn discover(rsdp: u64, boot_hw_id: u64) -> Machine {
                 m.gicd = base;
                 m.gic_version = version;
             }
+            MadtEntry::IoApic { address, gsi_base } => m.ioapics.push((address, gsi_base)),
+            MadtEntry::InterruptOverride { source, gsi, flags } => {
+                m.overrides.push((source, gsi, flags))
+            }
+            MadtEntry::GicMsiFrame { base, flags, spi_count, spi_base } => {
+                m.msi_frame = Some((base, spi_base, if flags & 1 != 0 { spi_count } else { 0 }));
+            }
             _ => {}
         });
         m.lapic = lapic_override.or(header).unwrap_or(0xFEE0_0000);
@@ -77,6 +93,8 @@ pub fn discover(rsdp: u64, boot_hw_id: u64) -> Machine {
     }
     if let Some(t) = acpi::find_table(&mem, rsdp, b"FACP") {
         m.psci = acpi::fadt_psci(&mem, t).and_then(|(psci, hvc)| psci.then_some(hvc));
+        m.ps2 = cfg!(target_arch = "x86_64")
+            && acpi::fadt_iapc_flags(&mem, t).is_some_and(|f| f & 2 != 0);
     }
     // The boot core goes first, so core numbers match start-up order.
     if let Some(i) = m.cores.iter().position(|c| c.hw_id == boot_hw_id) {

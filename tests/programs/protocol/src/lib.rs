@@ -35,6 +35,10 @@ pub mod role {
     pub const MEMORY_NO_MAP: u32 = 1004;
     /// `probe`: an endpoint capability without the send right.
     pub const NO_SEND: u32 = 1005;
+    /// `probe`: a slice of device memory.
+    pub const DEVICE: u32 = 1006;
+    /// `probe`: a slice of interrupts.
+    pub const INTERRUPT: u32 = 1007;
 }
 
 /// Exit statuses: 0 means the probe's checks passed; anything else is the number of the

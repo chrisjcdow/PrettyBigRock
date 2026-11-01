@@ -35,6 +35,9 @@ impl Serial {
 struct Console {
     serial: Serial,
     screen: Option<fb::FbConsole>,
+    /// Set when the display stack has taken the screen: text is no longer drawn on it, except
+    /// a panic's (note 0010, section 7).
+    screen_released: bool,
 }
 
 // SAFETY: the console's raw pointers are to device memory that only the console uses, and the
@@ -49,15 +52,37 @@ impl Write for Console {
             }
             self.serial.write_byte(b);
         }
-        if let Some(screen) = &mut self.screen {
+        if !self.screen_released
+            && let Some(screen) = &mut self.screen
+        {
             screen.write_str(s);
         }
         Ok(())
     }
 }
 
-static CONSOLE: IrqSpinLock<Console> =
-    IrqSpinLock::new(Level::Console, "console", Console { serial: Serial::None, screen: None });
+static CONSOLE: IrqSpinLock<Console> = IrqSpinLock::new(
+    Level::Console,
+    "console",
+    Console { serial: Serial::None, screen: None, screen_released: false },
+);
+
+static UART_KIND: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static UART_ADDRESS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// The physical address and length of the early console's registers, if it's memory-mapped:
+/// no program may be given them (docs/design/0010-device-access.md, section 1).
+pub fn uart_registers() -> Option<(u64, u64)> {
+    use core::sync::atomic::Ordering::Relaxed;
+    matches!(UART_KIND.load(Relaxed), 2 | 3).then(|| (UART_ADDRESS.load(Relaxed), 0x1000))
+}
+
+/// The I/O port of the early console, if it's a port.
+#[cfg(target_arch = "x86_64")]
+pub fn uart_port() -> Option<u16> {
+    use core::sync::atomic::Ordering::Relaxed;
+    (UART_KIND.load(Relaxed) == 1).then(|| UART_ADDRESS.load(Relaxed) as u16)
+}
 
 /// Sets up the console from the boot information.
 ///
@@ -66,6 +91,8 @@ static CONSOLE: IrqSpinLock<Console> =
 /// where the loader mapped physical memory.
 pub unsafe fn init(info: &BootInfo, direct_map_base: u64) {
     let ec = info.early_console;
+    UART_KIND.store(u64::from(ec.kind), core::sync::atomic::Ordering::Relaxed);
+    UART_ADDRESS.store(ec.address, core::sync::atomic::Ordering::Relaxed);
     let serial = match ec.kind {
         // SAFETY: the loader described this UART and mapped it in the direct map as device
         // memory; nothing else uses it.
@@ -98,6 +125,7 @@ pub fn print(args: fmt::Arguments<'_>) {
 pub fn print_panic(args: fmt::Arguments<'_>) {
     for _ in 0..10_000_000 {
         if let Some(mut c) = CONSOLE.try_lock() {
+            c.screen_released = false; // a panic is drawn over whatever is on the screen
             let _ = c.write_fmt(args);
             return;
         }
@@ -105,7 +133,14 @@ pub fn print_panic(args: fmt::Arguments<'_>) {
     }
     // SAFETY: the system is stopping; whoever held the console will never release it.
     unsafe { CONSOLE.force_unlock() };
-    let _ = CONSOLE.lock().write_fmt(args);
+    let mut c = CONSOLE.lock();
+    c.screen_released = false;
+    let _ = c.write_fmt(args);
+}
+
+/// Stops the kernel drawing text on the screen; serial output carries on.
+pub fn release_screen() {
+    CONSOLE.lock().screen_released = true;
 }
 
 /// Prints to the console.

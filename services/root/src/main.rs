@@ -11,6 +11,7 @@
 
 extern crate alloc;
 
+mod devtest;
 mod selftest;
 
 use granite::memory::Memory;
@@ -45,7 +46,7 @@ fn main(mut start: granite::Start) -> i32 {
         }
     };
     if start.args().split_whitespace().any(|w| w == "selftest") {
-        return selftest::run(&archive);
+        return selftest::run(&archive, &mut start);
     }
     granite::println!(
         "The root program is running, with {} files in the start-up archive. There's nothing \

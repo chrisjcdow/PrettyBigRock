@@ -89,6 +89,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-interface-compiler",
     "pbr-interfaces",
     "pbr-platform",
+    "pbr-ranges",
     "xtask",
 ];
 

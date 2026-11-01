@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! The system calls of interface version 1.0 (docs/design/0007-system-calls.md, section 6).
+//! The system calls of interface version 1.1 (docs/design/0007-system-calls.md, section 6, and
+//! docs/design/0010-device-access.md, section 9).
 //!
 //! The architecture layer passes the call number and six arguments, and returns the status
 //! (0, or an error code) and two results. Every argument is checked; a call that fails changes
@@ -21,7 +22,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 
 /// The interface version (note 0007, section 7).
-pub const VERSION: (u64, u64) = (1, 0);
+pub const VERSION: (u64, u64) = (1, 1);
 
 type R = Result<(u64, u64), Error>;
 
@@ -77,6 +78,35 @@ fn memory(p: &Process, h: u64, need: u32) -> Result<Arc<MemoryObject>, Error> {
     Ok(x)
 }
 
+fn device_memory(
+    p: &Process,
+    h: u64,
+    need: u32,
+) -> Result<Arc<crate::obj::device::DeviceMemory>, Error> {
+    let e = get(p, h)?;
+    let Object::DeviceMemory(x) = e.object else { return Err(Error::WrongType) };
+    require(e.rights, need)?;
+    Ok(x)
+}
+
+fn interrupts(
+    p: &Process,
+    h: u64,
+    need: u32,
+) -> Result<Arc<crate::obj::device::Interrupts>, Error> {
+    let e = get(p, h)?;
+    let Object::Interrupts(x) = e.object else { return Err(Error::WrongType) };
+    require(e.rights, need)?;
+    Ok(x)
+}
+
+fn io_ports(p: &Process, h: u64, need: u32) -> Result<Arc<crate::obj::device::IoPorts>, Error> {
+    let e = get(p, h)?;
+    let Object::IoPorts(x) = e.object else { return Err(Error::WrongType) };
+    require(e.rights, need)?;
+    Ok(x)
+}
+
 fn notification(p: &Process, h: u64, need: u32) -> Result<Arc<Notification>, Error> {
     let e = get(p, h)?;
     let Object::Notification(x) = e.object else { return Err(Error::WrongType) };
@@ -96,6 +126,16 @@ fn endpoint(
     require(e.rights, need)?;
     let (q, node) = (p.clone(), e.node);
     Ok((x, e.badge, move || q.table.lock().holds(hv, node)))
+}
+
+/// Splits `memory_map`'s permission word into the permissions and the cache mode (bits 8 and
+/// 9; only device memory accepts a mode other than 0). Returns (permissions, write-combining).
+fn map_perms(x: u64) -> Result<(u32, bool), Error> {
+    let cache = (x >> 8) & 3;
+    if x >> 10 != 0 || cache > 1 {
+        return Err(Error::InvalidArgument);
+    }
+    Ok((perms(x & 0xFF)?, cache == 1))
 }
 
 /// Mapping permissions: readable, readable and writable, or readable and executable.
@@ -186,11 +226,13 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
         }
         31 => {
             let target = process(p, a[0], rights::MANAGE)?;
-            let (offset, len, addr, pm) = (a[2], a[3], a[4], perms(a[5])?);
+            let (offset, len, addr) = (a[2], a[3], a[4]);
+            let (pm, combining) = map_perms(a[5])?;
             page_aligned(offset)?;
             page_aligned(len)?;
             page_aligned(addr)?;
-            caps::map(p, handle_arg(a[1])?, &target, offset, len, addr, pm).map(|at| (at, 0))
+            caps::map(p, handle_arg(a[1])?, &target, offset, len, addr, pm, combining)
+                .map(|at| (at, 0))
         }
         32 => {
             let target = process(p, a[0], rights::MANAGE)?;
@@ -227,6 +269,23 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
             Ok((0, 0))
         }
         36 => Ok((memory(p, a[0], 0)?.size(), 0)),
+        37 => {
+            let d = device_memory(p, a[0], rights::DMA)?;
+            if a[2] & !1 != 0 {
+                return Err(Error::InvalidArgument);
+            }
+            let _ = d;
+            let m = MemoryObject::contiguous(a[1], a[2] & 1 != 0, &p.budget)?;
+            let r = Object::Memory(m.clone()).all_rights() | rights::BUS;
+            let mut tree = caps::lock();
+            caps::insert(&mut tree, p, Object::Memory(m), r, 0, None).map(|h| (u64::from(h), 0))
+        }
+        38 => {
+            let m = memory(p, a[0], rights::BUS)?;
+            let _ = device_memory(p, a[1], rights::DMA)?;
+            let page = (a[2] / user::PAGE).min(u64::MAX / user::PAGE);
+            m.page(page).map(|phys| (phys, 0)).ok_or(Error::InvalidArgument)
+        }
 
         // Threads.
         40 => {
@@ -339,6 +398,92 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
             let text = core::str::from_utf8(&text).map_err(|_| Error::InvalidArgument)?;
             kprintln!("[{}] {}", p.name, text.trim_end_matches('\n'));
             Ok((0, 0))
+        }
+
+        72 => {
+            let e = get(p, a[0])?;
+            if !matches!(e.object, Object::Log) {
+                return Err(Error::WrongType);
+            }
+            require(e.rights, rights::CONTROL)?;
+            crate::console::release_screen();
+            Ok((0, 0))
+        }
+
+        // Device memory, interrupts and I/O ports (note 0010).
+        80 => {
+            let (offset, length) = (a[1], a[2]);
+            let mask = u32::try_from(a[3]).unwrap_or(u32::MAX);
+            let c = p.budget.charge(charge::NOTIFICATION)?;
+            caps::derive(p, handle_arg(a[0])?, mask, |e| {
+                let Object::DeviceMemory(d) = &e.object else { return Err(Error::WrongType) };
+                d.slice(offset, length, c).map(Object::DeviceMemory)
+            })
+            .map(|h| (u64::from(h), 0))
+        }
+        81 => {
+            let d = device_memory(p, a[0], rights::INSPECT)?;
+            Ok((d.range.start(), d.range.len()))
+        }
+        82 => {
+            let (first, count) = (a[1], a[2]);
+            let mask = u32::try_from(a[3]).unwrap_or(u32::MAX);
+            let c = p.budget.charge(charge::NOTIFICATION)?;
+            caps::derive(p, handle_arg(a[0])?, mask, |e| {
+                let Object::Interrupts(i) = &e.object else { return Err(Error::WrongType) };
+                i.slice(first, count, c).map(Object::Interrupts)
+            })
+            .map(|h| (u64::from(h), 0))
+        }
+        83 => {
+            let i = interrupts(p, a[0], rights::INSPECT)?;
+            Ok((i.kind as u64 | i.range.len() << 32, i.range.start()))
+        }
+        84 => {
+            let i = interrupts(p, a[0], rights::BIND)?;
+            let _ = i;
+            let n = notification(p, a[2], rights::SIGNAL)?;
+            caps::bind_interrupt(p, handle_arg(a[0])?, a[1], n, a[3]).map(|()| (0, 0))
+        }
+        85 => caps::unbind_interrupt(p, handle_arg(a[0])?, a[1]).map(|()| (0, 0)),
+        86 => {
+            let i = interrupts(p, a[0], rights::ACKNOWLEDGE)?;
+            crate::irq::acknowledge(i.number(a[1])?);
+            Ok((0, 0))
+        }
+        87 => {
+            let mask = u32::MAX;
+            let c = p.budget.charge(charge::NOTIFICATION)?;
+            caps::derive(p, handle_arg(a[0])?, mask, |e| {
+                let Object::Interrupts(i) = &e.object else { return Err(Error::WrongType) };
+                i.allocate(c).map(Object::Interrupts)
+            })
+            .map(|h| (u64::from(h), 0))
+        }
+        88 => {
+            let i = interrupts(p, a[0], rights::INSPECT)?;
+            let v = i.msi.as_ref().ok_or(Error::WrongType)?;
+            Ok((v.address, u64::from(v.data)))
+        }
+        90 => {
+            let (first, count) = (a[1], a[2]);
+            let mask = u32::try_from(a[3]).unwrap_or(u32::MAX);
+            let c = p.budget.charge(charge::NOTIFICATION)?;
+            caps::derive(p, handle_arg(a[0])?, mask, |e| {
+                let Object::IoPorts(i) = &e.object else { return Err(Error::WrongType) };
+                i.slice(first, count, c).map(Object::IoPorts)
+            })
+            .map(|h| (u64::from(h), 0))
+        }
+        91 => io_ports(p, a[0], rights::READ)?.read(a[1], a[2]).map(|v| (v, 0)),
+        92 => io_ports(p, a[0], rights::WRITE)?.write(a[1], a[2], a[3]).map(|()| (0, 0)),
+        93 => {
+            let i = io_ports(p, a[0], rights::INSPECT)?;
+            Ok((i.range.start(), i.range.len()))
+        }
+        99 => {
+            let i = interrupts(p, a[0], rights::ACKNOWLEDGE)?;
+            crate::irq::trigger(i.number(a[1])?).map(|()| (0, 0))
         }
 
         _ => Err(Error::InvalidCall),

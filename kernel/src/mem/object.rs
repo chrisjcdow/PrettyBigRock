@@ -14,6 +14,9 @@ use alloc::vec::Vec;
 /// The largest memory object, in bytes.
 pub const MAX_SIZE: u64 = 4 << 30;
 
+/// The largest object of contiguous pages, in bytes (note 0010, section 6).
+pub const MAX_DMA_SIZE: u64 = 4 << 20;
+
 /// A set of pages.
 pub struct MemoryObject {
     pages: Vec<u64>,
@@ -32,6 +35,26 @@ impl MemoryObject {
         let count = size.div_ceil(PAGE);
         let charge = budget.charge(count * PAGE)?;
         Self::allocate(count, Some(charge))
+    }
+
+    /// An object of `size` bytes (rounded up to whole pages) in physically contiguous pages,
+    /// zeroed and charged to `budget`: for memory a device reads and writes itself. With
+    /// `below_4g`, every page is below 4 GiB.
+    pub fn contiguous(size: u64, below_4g: bool, budget: &Arc<Budget>) -> Result<Arc<Self>, Error> {
+        if size == 0 {
+            return Err(Error::InvalidArgument);
+        }
+        if size > MAX_DMA_SIZE {
+            return Err(Error::TooBig);
+        }
+        let count = size.div_ceil(PAGE);
+        let charge = budget.charge(count * PAGE)?;
+        let below = if below_4g { 1 << 32 } else { u64::MAX };
+        let base = pmm::alloc(count, 1, below).ok_or(Error::OutOfMemory)?;
+        Ok(Arc::new(MemoryObject {
+            pages: (0..count).map(|i| base + i * PAGE).collect(),
+            _charge: Some(charge),
+        }))
     }
 
     /// An object the kernel itself owns, charged to nobody (the system pages).

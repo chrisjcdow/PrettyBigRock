@@ -109,6 +109,17 @@ pub enum MadtEntry {
         /// The first interrupt it handles.
         gsi_base: u32,
     },
+    /// An x86 interrupt source override: the old ISA interrupt `source` is really global
+    /// system interrupt `gsi`, with the polarity and trigger in `flags` (bits 0-1 polarity:
+    /// 1 high, 3 low; bits 2-3 trigger: 1 edge, 3 level; 0 means "as the bus usually does").
+    InterruptOverride {
+        /// The ISA interrupt number.
+        source: u8,
+        /// The global system interrupt it is wired to.
+        gsi: u32,
+        /// Polarity and trigger.
+        flags: u16,
+    },
     /// A 64-bit address for the local APICs, overriding the header's.
     LapicAddress(u64),
     /// An Arm core and its GIC CPU interface.
@@ -121,6 +132,18 @@ pub enum MadtEntry {
         base: u64,
         /// Usable now.
         enabled: bool,
+    },
+    /// An Arm GICv2m frame: where message-signalled interrupts are raised, and which shared
+    /// interrupts it can raise.
+    GicMsiFrame {
+        /// The frame's physical address.
+        base: u64,
+        /// Bit 0: `spi_count` and `spi_base` are valid (otherwise ask the frame).
+        flags: u32,
+        /// How many interrupts the frame can raise.
+        spi_count: u16,
+        /// The first interrupt ID.
+        spi_base: u16,
     },
     /// The Arm GIC distributor.
     Gicd {
@@ -152,6 +175,11 @@ pub fn madt(mem: &impl PhysMemory, table: u64, mut f: impl FnMut(MadtEntry)) -> 
                 address: u64::from(mem.read_u32(a + 4)?),
                 gsi_base: mem.read_u32(a + 8)?,
             }),
+            2 if elen >= 10 => Some(MadtEntry::InterruptOverride {
+                source: mem.read_u8(a + 3)?,
+                gsi: mem.read_u32(a + 4)?,
+                flags: u16::from_le_bytes([mem.read_u8(a + 8)?, mem.read_u8(a + 9)?]),
+            }),
             5 => Some(MadtEntry::LapicAddress(mem.read_u64(a + 4)?)),
             9 => Some(MadtEntry::X2Apic {
                 apic_id: mem.read_u32(a + 4)?,
@@ -162,6 +190,12 @@ pub fn madt(mem: &impl PhysMemory, table: u64, mut f: impl FnMut(MadtEntry)) -> 
                 enabled: mem.read_u32(a + 12)? & 1 != 0,
                 base: mem.read_u64(a + 32)?,
                 mpidr: mem.read_u64(a + 68)?,
+            }),
+            0xD if elen >= 24 => Some(MadtEntry::GicMsiFrame {
+                base: mem.read_u64(a + 8)?,
+                flags: mem.read_u32(a + 16)?,
+                spi_count: u16::from_le_bytes([mem.read_u8(a + 20)?, mem.read_u8(a + 21)?]),
+                spi_base: u16::from_le_bytes([mem.read_u8(a + 22)?, mem.read_u8(a + 23)?]),
             }),
             0xC => {
                 Some(MadtEntry::Gicd { base: mem.read_u64(a + 8)?, version: mem.read_u8(a + 20)? })
@@ -194,6 +228,16 @@ pub fn fadt_psci(mem: &impl PhysMemory, fadt: u64) -> Option<(bool, bool)> {
     }
     let flags = mem.read_u16(fadt + 129)?;
     Some((flags & 1 != 0, flags & 2 != 0))
+}
+
+/// From the FADT on x86: the "IA-PC boot architecture flags" (bit 1: an 8042 keyboard
+/// controller is present). `None` if the table is too short to have them.
+pub fn fadt_iapc_flags(mem: &impl PhysMemory, fadt: u64) -> Option<u16> {
+    let len = mem.read_u32(fadt + 4)?;
+    if len < 111 {
+        return None;
+    }
+    mem.read_u16(fadt + 109)
 }
 
 #[cfg(test)]
@@ -294,6 +338,16 @@ pub(crate) mod tests {
         gicd[8..16].copy_from_slice(&0x0800_0000u64.to_le_bytes());
         gicd[20] = 2;
         body.extend_from_slice(&gicd);
+        // An override: ISA interrupt 0 is really interrupt 2, edge-triggered, active high.
+        body.extend_from_slice(&[2, 10, 0, 0, 2, 0, 0, 0, 0b0101, 0]);
+        let mut frame = vec![0u8; 24];
+        frame[0] = 0xD;
+        frame[1] = 24;
+        frame[8..16].copy_from_slice(&0x0802_0000u64.to_le_bytes());
+        frame[16] = 1;
+        frame[20..22].copy_from_slice(&64u16.to_le_bytes());
+        frame[22..24].copy_from_slice(&80u16.to_le_bytes());
+        body.extend_from_slice(&frame);
         mem.put(0x7000, &table(b"APIC", &body));
         let mut seen = vec![];
         assert_eq!(madt(&mem, 0x7000, |e| seen.push(e)), Some(0xFEE0_0000));
@@ -304,6 +358,8 @@ pub(crate) mod tests {
                 MadtEntry::LocalApic { apic_id: 3, enabled: false },
                 MadtEntry::Gicc { interface: 2, mpidr: 0x102, base: 0x0801_0000, enabled: true },
                 MadtEntry::Gicd { base: 0x0800_0000, version: 2 },
+                MadtEntry::InterruptOverride { source: 0, gsi: 2, flags: 0b0101 },
+                MadtEntry::GicMsiFrame { base: 0x0802_0000, flags: 1, spi_count: 64, spi_base: 80 },
             ]
         );
     }

@@ -65,6 +65,11 @@ pub struct Mapping {
 }
 
 impl Mapping {
+    /// A mapping made some other way, such as of device memory.
+    pub(crate) fn from_raw(addr: u64, len: u64) -> Mapping {
+        Mapping { addr, len }
+    }
+
     /// Where it is.
     pub fn addr(&self) -> u64 {
         self.addr

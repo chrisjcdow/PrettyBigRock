@@ -242,6 +242,7 @@ extern "C" fn dispatch(f: &mut Frame) {
             super::user::shootdown_interrupt();
         }
         SPURIOUS => {}
+        v if super::irqchip::is_device_vector(v) => super::irqchip::interrupt(v),
         _ => apic::eoi(),
     }
     if v >= 32 {

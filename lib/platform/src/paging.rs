@@ -80,6 +80,14 @@ const X_US: u64 = 1 << 2;
 const X_PWT: u64 = 1 << 3;
 const X_PCD: u64 = 1 << 4;
 const X_PS: u64 = 1 << 7;
+/// The PAT bit of a 4 KiB entry (the same bit position as `X_PS` in larger entries).
+const X_PAT_4K: u64 = 1 << 7;
+/// The PAT bit of a 2 MiB or 1 GiB entry.
+const X_PAT_LARGE: u64 = 1 << 12;
+/// The value the kernel writes to `IA32_PAT` on every core: the power-on defaults, except that
+/// entry 4 (selected by the PAT bit alone) is write-combining. Page-table entries use `Memory::
+/// Framebuffer` to ask for it.
+pub const X86_PAT: u64 = 0x0007_0401_0007_0406;
 const X_NX: u64 = 1 << 63;
 
 // AArch64 descriptor bits
@@ -120,8 +128,11 @@ impl Format {
                 if large {
                     e |= X_PS;
                 }
-                if attr.mem == Memory::Device {
-                    e |= X_PCD | X_PWT;
+                match attr.mem {
+                    Memory::Device => e |= X_PCD | X_PWT,
+                    // PAT entry 4: write-combining (see `X86_PAT`).
+                    Memory::Framebuffer => e |= if large { X_PAT_LARGE } else { X_PAT_4K },
+                    Memory::Normal => {}
                 }
                 if attr.user {
                     e |= X_US;
@@ -175,14 +186,23 @@ impl Format {
         }
     }
 
-    fn decode(self, e: u64) -> Attr {
+    fn decode(self, e: u64, level: u32) -> Attr {
         match self {
-            Format::X86_64 => Attr {
-                write: e & X_RW != 0,
-                exec: e & X_NX == 0,
-                mem: if e & X_PCD != 0 { Memory::Device } else { Memory::Normal },
-                user: e & X_US != 0,
-            },
+            Format::X86_64 => {
+                let pat = if level == 0 { X_PAT_4K } else { X_PAT_LARGE };
+                Attr {
+                    write: e & X_RW != 0,
+                    exec: e & X_NX == 0,
+                    mem: if e & X_PCD != 0 {
+                        Memory::Device
+                    } else if e & pat != 0 {
+                        Memory::Framebuffer
+                    } else {
+                        Memory::Normal
+                    },
+                    user: e & X_US != 0,
+                }
+            }
             Format::Aarch64 => Attr {
                 write: e & A_AP_RO == 0,
                 exec: if e & A_AP_EL0 != 0 { e & A_UXN == 0 } else { e & A_PXN == 0 },
@@ -398,7 +418,7 @@ impl PageTables {
                 let size = PAGE << (9 * level);
                 return Some((
                     (e & ADDR_MASK & !(size - 1)) | (virt & (size - 1)),
-                    self.format.decode(e),
+                    self.format.decode(e, level),
                 ));
             }
             table = e & ADDR_MASK;

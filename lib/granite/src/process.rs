@@ -39,6 +39,16 @@ pub mod role {
     pub const ARCHIVE: u32 = 4;
     /// An endpoint to whoever started it.
     pub const PARENT: u32 = 5;
+    /// Device memory: all physical addresses (the root program only; note 0010, section 8).
+    pub const DEVICE_MEMORY: u32 = 7;
+    /// Interrupts: every interrupt line (the root program only).
+    pub const INTERRUPTS: u32 = 8;
+    /// The pool message-signalled interrupts come from (the root program only).
+    pub const MSI_POOL: u32 = 9;
+    /// I/O ports: all of them (the root program only, x86-64 only).
+    pub const IO_PORTS: u32 = 10;
+    /// The machine description, a read-only memory object (the root program only).
+    pub const MACHINE: u32 = 11;
     /// The first role a launcher and its program agree between themselves.
     pub const OWN: u32 = 1000;
 }

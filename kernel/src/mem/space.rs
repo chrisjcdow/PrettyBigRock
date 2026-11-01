@@ -38,14 +38,41 @@ pub mod perm {
     pub const EXECUTE: u32 = 4;
 }
 
-/// Part of a memory object, mapped into a space.
+/// What a mapping shows.
+pub enum Backing {
+    /// Pages of a memory object.
+    Memory(Arc<MemoryObject>),
+    /// Device registers or other physical addresses that are not RAM (note 0010, section 3):
+    /// the physical address of the range's first page, and whether to map it write-combining
+    /// instead of uncached. The kernel never reads or writes these through the mapping.
+    Device {
+        /// Where the range starts.
+        phys: u64,
+        /// Write-combining rather than uncached.
+        combining: bool,
+        /// Keeps the capability's object alive while it's mapped.
+        _owner: Arc<dyn core::any::Any + Send + Sync>,
+    },
+}
+
+impl Backing {
+    /// The physical address of page `i`, if there is one.
+    fn page(&self, i: u64, pages: u64) -> Option<u64> {
+        match self {
+            Backing::Memory(m) => m.page(i),
+            Backing::Device { phys, .. } => (i < pages).then_some(phys + i * PAGE),
+        }
+    }
+}
+
+/// Part of a memory object (or of device memory), mapped into a space.
 pub struct Mapping {
     /// The first address.
     pub start: u64,
     /// Its length in bytes (whole pages).
     pub len: u64,
-    /// The memory object.
-    pub mem: Arc<MemoryObject>,
+    /// What it shows.
+    pub mem: Backing,
     /// Where in the memory object it starts (whole pages).
     pub offset: u64,
     /// What it allows now (`perm` bits).
@@ -89,11 +116,15 @@ pub struct Space {
     dead: bool,
 }
 
-fn attr(perms: u32) -> Attr {
+fn attr(perms: u32, backing: &Backing) -> Attr {
     Attr {
         write: perms & perm::WRITE != 0,
         exec: perms & perm::EXECUTE != 0,
-        mem: Memory::Normal,
+        mem: match backing {
+            Backing::Memory(_) => Memory::Normal,
+            Backing::Device { combining: true, .. } => Memory::Framebuffer,
+            Backing::Device { .. } => Memory::Device,
+        },
         user: true,
     }
 }
@@ -155,10 +186,13 @@ impl Space {
         if !self.free(m.start, m.len) {
             return Err(Error::AlreadyExists);
         }
-        let a = attr(m.perms);
+        let a = attr(m.perms, &m.mem);
         let pages = m.len / PAGE;
         for i in 0..pages {
-            let phys = m.mem.page(m.offset / PAGE + i).ok_or(Error::InvalidArgument)?;
+            let phys = m
+                .mem
+                .page(m.offset / PAGE + i, m.offset / PAGE + pages)
+                .ok_or(Error::InvalidArgument)?;
             let r =
                 self.tables.map(&mut Frames(&mut self.charge), m.start + i * PAGE, phys, PAGE, a);
             if r.is_err() {
@@ -221,8 +255,9 @@ impl Space {
             let m = self.maps.get_mut(&s).expect("listed just now");
             m.perms = perms;
             let (ms, pages) = (m.start, m.len / PAGE);
+            let a = attr(perms, &m.mem);
             for i in 0..pages {
-                self.tables.protect(&mut Frames(&mut self.charge), ms + i * PAGE, attr(perms));
+                self.tables.protect(&mut Frames(&mut self.charge), ms + i * PAGE, a);
             }
             arch::flush_user_pages(self.tables.root, ms, pages);
         }
@@ -235,8 +270,12 @@ impl Space {
         if m.perms & need != need {
             return Err(Error::BadAddress);
         }
+        // The kernel doesn't touch device registers on a program's behalf.
+        if matches!(m.mem, Backing::Device { .. }) {
+            return Err(Error::BadAddress);
+        }
         let off = addr - m.start + m.offset;
-        let page = m.mem.page(off / PAGE).ok_or(Error::BadAddress)?;
+        let page = m.mem.page(off / PAGE, u64::MAX).ok_or(Error::BadAddress)?;
         Ok(page + off % PAGE)
     }
 

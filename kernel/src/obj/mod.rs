@@ -11,6 +11,7 @@
 
 pub mod budget;
 pub mod caps;
+pub mod device;
 pub mod endpoint;
 pub mod notification;
 pub mod process;
@@ -73,6 +74,12 @@ pub mod kind {
     pub const REPLY: u32 = 6;
     /// The kernel log.
     pub const LOG: u32 = 7;
+    /// A range of interrupt numbers.
+    pub const INTERRUPTS: u32 = 8;
+    /// A range of device memory.
+    pub const DEVICE_MEMORY: u32 = 9;
+    /// A range of I/O ports.
+    pub const IO_PORTS: u32 = 10;
 }
 
 /// Rights (note 0006, section 4). Bits 0 to 7 mean the same for every type; 8 to 15 depend
@@ -110,6 +117,16 @@ pub mod rights {
     pub const SIGNAL: u32 = 1 << 8;
     /// Notification: wait on it.
     pub const WAIT: u32 = 1 << 9;
+    /// Device memory: create DMA memory for the device. Memory: learn its bus address.
+    pub const DMA: u32 = 1 << 8;
+    /// See [`DMA`]; the memory object's name for the same bit.
+    pub const BUS: u32 = 1 << 8;
+    /// Interrupts: bind to a notification.
+    pub const BIND: u32 = 1 << 8;
+    /// Interrupts: unmask after handling.
+    pub const ACKNOWLEDGE: u32 = 1 << 9;
+    /// The kernel log: take over the screen.
+    pub const CONTROL: u32 = 1 << 8;
 
     /// The rights every type shares.
     pub const COMMON: u32 = DUPLICATE | TRANSFER | REVOKE | INSPECT;
@@ -151,6 +168,12 @@ pub enum Object {
     Reply(Arc<endpoint::Reply>),
     /// The kernel log.
     Log,
+    /// A range of interrupt numbers.
+    Interrupts(Arc<device::Interrupts>),
+    /// A range of device memory.
+    DeviceMemory(Arc<device::DeviceMemory>),
+    /// A range of I/O ports.
+    IoPorts(Arc<device::IoPorts>),
 }
 
 impl Object {
@@ -164,6 +187,9 @@ impl Object {
             Object::Notification(_) => kind::NOTIFICATION,
             Object::Reply(_) => kind::REPLY,
             Object::Log => kind::LOG,
+            Object::Interrupts(_) => kind::INTERRUPTS,
+            Object::DeviceMemory(_) => kind::DEVICE_MEMORY,
+            Object::IoPorts(_) => kind::IO_PORTS,
         }
     }
 
@@ -177,7 +203,10 @@ impl Object {
             Object::Endpoint(_) => COMMON | SEND | RECEIVE | ENDPOINT_WATCH,
             Object::Notification(_) => COMMON | SIGNAL | WAIT,
             Object::Reply(_) => 0,
-            Object::Log => COMMON | WRITE,
+            Object::Log => COMMON | WRITE | CONTROL,
+            Object::Interrupts(_) => COMMON | BIND | ACKNOWLEDGE,
+            Object::DeviceMemory(_) => COMMON | READ | WRITE | MAP | DMA,
+            Object::IoPorts(_) => COMMON | READ | WRITE,
         }
     }
 }

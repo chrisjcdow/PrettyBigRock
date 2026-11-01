@@ -30,14 +30,17 @@ pub enum Level {
     RunQueue = 2,
     /// A core's timer list.
     Timers = 3,
+    /// The interrupt controllers' state (taken by interrupt handlers, which then take nothing
+    /// else, and by calls that bind and release interrupts).
+    InterruptController = 4,
     /// The kernel's page tables and virtual areas.
-    KernelMemory = 4,
+    KernelMemory = 5,
     /// The kernel heap (which takes pages from the page allocator).
-    Heap = 5,
+    Heap = 6,
     /// The physical page allocator.
-    PageAllocator = 6,
+    PageAllocator = 7,
     /// The console.
-    Console = 7,
+    Console = 8,
 }
 
 fn raw_lock(flag: &AtomicBool) {

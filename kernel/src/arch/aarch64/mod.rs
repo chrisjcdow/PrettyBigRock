@@ -6,6 +6,7 @@
 mod context;
 mod exceptions;
 mod gic;
+pub mod irqchip;
 mod smp;
 mod timer;
 mod user;
@@ -22,6 +23,16 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 /// The name used in messages.
 pub const NAME: &str = "ARM64";
+
+/// I/O ports don't exist on Arm: no I/O port capability is ever made.
+pub fn port_in(_port: u16, _width: u8) -> u32 {
+    unreachable!("there are no I/O ports on Arm")
+}
+
+/// See [`port_in`].
+pub fn port_out(_port: u16, _width: u8, _value: u32) {
+    unreachable!("there are no I/O ports on Arm")
+}
 
 /// The page-table format.
 pub const PAGE_FORMAT: pbr_platform::paging::Format = pbr_platform::paging::Format::Aarch64;
@@ -195,6 +206,7 @@ pub fn init_boot_core(m: &hw::Machine) {
     user::init_this_core();
     exceptions::set_timer_irq(m.vtimer_irq);
     gic::init(m);
+    irqchip::init(m);
     time::init(timer::frequency());
     timer::start(m.vtimer_irq);
 }

@@ -13,7 +13,7 @@
 use super::process::Process;
 use super::table::Entry;
 use super::{Error, Object, require, rights};
-use crate::mem::space::{Mapping, perm};
+use crate::mem::space::{Backing, Mapping, perm};
 use crate::sync::{Mutex, MutexGuard};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -36,6 +36,11 @@ pub enum Owner {
         process: Weak<Process>,
         /// Where the mapping starts.
         addr: u64,
+    },
+    /// An interrupt bound to a notification (see `crate::irq`).
+    Binding {
+        /// The interrupt number.
+        id: u32,
     },
 }
 
@@ -172,6 +177,7 @@ pub fn revoke(p: &Arc<Process>, h: u32) -> Result<(), Error> {
                     gone_maps.push(m);
                 }
             }
+            Owner::Binding { id: irq } => crate::irq::release_node(irq, id),
             Owner::Nowhere => {}
         }
     }
@@ -216,9 +222,11 @@ pub fn give(
     Ok((nh, moved.rights))
 }
 
-/// Maps part of the memory object `mem` (a capability in `caller`'s table) into `target`.
-/// Returns where. The mapping gets a hidden node under the capability, so revoking that
-/// capability, or one it came from, unmaps it.
+/// Maps part of the memory object or device memory `mem` (a capability in `caller`'s table)
+/// into `target`. Returns where. The mapping gets a hidden node under the capability, so
+/// revoking that capability, or one it came from, unmaps it. `combining` asks for
+/// write-combining caching (device memory only).
+#[allow(clippy::too_many_arguments)]
 pub fn map(
     caller: &Arc<Process>,
     mem: u32,
@@ -227,11 +235,14 @@ pub fn map(
     len: u64,
     addr: u64,
     perms: u32,
+    combining: bool,
 ) -> Result<u64, Error> {
     let mut tree = TREE.lock();
     let e = lookup(caller, mem)?;
-    let Object::Memory(m) = &e.object else { return Err(Error::WrongType) };
     require(e.rights, rights::MAP)?;
+    if matches!(e.object, Object::DeviceMemory(_)) && perms & perm::EXECUTE != 0 {
+        return Err(Error::InvalidArgument); // device memory is never executable
+    }
     let mut max = 0;
     for (p, r) in
         [(perm::READ, rights::READ), (perm::WRITE, rights::WRITE), (perm::EXECUTE, rights::EXECUTE)]
@@ -244,7 +255,29 @@ pub fn map(
         return Err(Error::NoRight);
     }
     let end = offset.checked_add(len).ok_or(Error::InvalidArgument)?;
-    if len == 0 || end > m.size() {
+    let (backing, size) = match &e.object {
+        Object::Memory(m) => {
+            if combining {
+                return Err(Error::InvalidArgument);
+            }
+            (Backing::Memory(m.clone()), m.size())
+        }
+        Object::DeviceMemory(d) => {
+            if perms & perm::EXECUTE != 0 {
+                return Err(Error::InvalidArgument);
+            }
+            if len != 0 && end <= d.range.len() {
+                let r = pbr_ranges::Range::new(d.range.start() + offset, len)
+                    .map_err(|_| Error::InvalidArgument)?;
+                if super::device::memory_is_owned(&r) {
+                    return Err(Error::InvalidArgument);
+                }
+            }
+            (Backing::Device { phys: d.range.start(), combining, _owner: d.clone() }, d.range.len())
+        }
+        _ => return Err(Error::WrongType),
+    };
+    if len == 0 || end > size {
         return Err(Error::InvalidArgument);
     }
     let node = tree.insert_child(e.node, Owner::Nowhere).map_err(|_| Error::OutOfMemory)?;
@@ -253,7 +286,7 @@ pub fn map(
         let start = if addr == 0 { space.choose(len) } else { Ok(addr) };
         start.and_then(|start| {
             space
-                .map(Mapping { start, len, mem: m.clone(), offset, perms, max, node: Some(node) })
+                .map(Mapping { start, len, mem: backing, offset, perms, max, node: Some(node) })
                 .map(|()| start)
         })
     };
@@ -271,6 +304,64 @@ pub fn map(
     }
 }
 
+/// Makes a new object from the capability `h` (which needs `DUPLICATE`), as a child of it in
+/// the derivation tree, with `h`'s rights masked by `mask`: slices of ranges, and interrupts
+/// made from a pool. `make` gets the capability's entry.
+pub fn derive(
+    p: &Arc<Process>,
+    h: u32,
+    mask: u32,
+    make: impl FnOnce(&Entry) -> Result<Object, Error>,
+) -> Result<u32, Error> {
+    let mut tree = TREE.lock();
+    let e = lookup(p, h)?;
+    require(e.rights, rights::DUPLICATE)?;
+    let object = make(&e)?;
+    insert(&mut tree, p, object, e.rights & mask, 0, Some(e.node))
+}
+
+/// Binds interrupt number `index` of the range `h` to `notification`, signalling `bits`.
+pub fn bind_interrupt(
+    p: &Arc<Process>,
+    h: u32,
+    index: u64,
+    notification: Arc<super::notification::Notification>,
+    bits: u64,
+) -> Result<(), Error> {
+    let mut tree = TREE.lock();
+    let e = lookup(p, h)?;
+    let Object::Interrupts(irq) = &e.object else { return Err(Error::WrongType) };
+    require(e.rights, rights::BIND)?;
+    let number = irq.number(index)?;
+    let node = tree.insert_child(e.node, Owner::Nowhere).map_err(|_| Error::OutOfMemory)?;
+    let binding =
+        crate::irq::Binding { process: p.id, notification, bits, node, _object: irq.clone() };
+    match crate::irq::bind(number, binding) {
+        Ok(()) => {
+            if let Some(o) = tree.get_mut(node) {
+                *o = Owner::Binding { id: number };
+            }
+            Ok(())
+        }
+        Err(err) => {
+            let _ = tree.remove(node);
+            Err(err)
+        }
+    }
+}
+
+/// Releases the binding of interrupt `index` of the range `h`, which `p` must have made.
+pub fn unbind_interrupt(p: &Arc<Process>, h: u32, index: u64) -> Result<(), Error> {
+    let mut tree = TREE.lock();
+    let e = lookup(p, h)?;
+    let Object::Interrupts(irq) = &e.object else { return Err(Error::WrongType) };
+    require(e.rights, rights::BIND)?;
+    let number = irq.number(index)?;
+    let node = crate::irq::unbind(number, Some(p.id))?;
+    let _ = tree.remove(node);
+    Ok(())
+}
+
 /// Maps a memory object the kernel holds directly (not through a capability) into `target`:
 /// for the root program, before it has any capabilities. The mapping has no node.
 pub fn map_kernel(
@@ -282,7 +373,15 @@ pub fn map_kernel(
     let len = mem.size();
     let mut space = target.space.lock();
     let start = if addr == 0 { space.choose(len)? } else { addr };
-    space.map(Mapping { start, len, mem, offset: 0, perms, max: perms, node: None })?;
+    space.map(Mapping {
+        start,
+        len,
+        mem: Backing::Memory(mem),
+        offset: 0,
+        perms,
+        max: perms,
+        node: None,
+    })?;
     Ok(start)
 }
 
@@ -312,6 +411,9 @@ pub fn teardown(p: &Arc<Process>) {
         if let Some(n) = m.node {
             let _ = tree.remove(n);
         }
+    }
+    for n in crate::irq::release_process(p.id) {
+        let _ = tree.remove(n);
     }
     drop(tree);
     for (_, e) in &entries {

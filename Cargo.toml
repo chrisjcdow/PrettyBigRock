@@ -19,6 +19,7 @@ members = [
     "lib/interface-compiler",
     "lib/interfaces",
     "lib/platform",
+    "lib/ranges",
     "services/root",
     "tests/programs/echo",
     "tests/programs/probe",

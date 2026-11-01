@@ -134,6 +134,12 @@ pub mod kind {
     pub const REPLY: u32 = 6;
     /// The kernel log.
     pub const LOG: u32 = 7;
+    /// A range of interrupt numbers.
+    pub const INTERRUPTS: u32 = 8;
+    /// A range of device memory.
+    pub const DEVICE_MEMORY: u32 = 9;
+    /// A range of I/O ports.
+    pub const IO_PORTS: u32 = 10;
 }
 
 /// Rights (note 0006, section 4).
@@ -170,6 +176,16 @@ pub mod rights {
     pub const SIGNAL: u32 = 1 << 8;
     /// Notification: wait on it.
     pub const WAIT: u32 = 1 << 9;
+    /// Device memory: create DMA memory for the device. Memory: ask for its bus address.
+    pub const DMA: u32 = 1 << 8;
+    /// The same bit as [`DMA`], on a memory object.
+    pub const BUS: u32 = 1 << 8;
+    /// Interrupts: bind to a notification.
+    pub const BIND: u32 = 1 << 8;
+    /// Interrupts: unmask after handling.
+    pub const ACKNOWLEDGE: u32 = 1 << 9;
+    /// The kernel log: take over the screen.
+    pub const CONTROL: u32 = 1 << 8;
     /// Every right.
     pub const ALL: u32 = 0x07FF;
 }
@@ -182,6 +198,8 @@ pub mod perm {
     pub const READ_WRITE: u64 = 3;
     /// Readable and executable.
     pub const READ_EXECUTE: u64 = 5;
+    /// Device memory only: write-combining instead of uncached (bits 8 and 9 of the word).
+    pub const WRITE_COMBINING: u64 = 1 << 8;
 }
 
 /// System call numbers (note 0007, section 6).
@@ -206,6 +224,8 @@ pub mod num {
     pub const MEMORY_READ: u64 = 34;
     pub const MEMORY_WRITE: u64 = 35;
     pub const MEMORY_INFO: u64 = 36;
+    pub const MEMORY_CREATE_DMA: u64 = 37;
+    pub const MEMORY_BUS_ADDRESS: u64 = 38;
     pub const THREAD_CREATE: u64 = 40;
     pub const THREAD_START: u64 = 41;
     pub const THREAD_EXIT: u64 = 42;
@@ -226,11 +246,26 @@ pub mod num {
     pub const NOTIFICATION_SIGNAL: u64 = 61;
     pub const NOTIFICATION_WAIT: u64 = 62;
     pub const LOG_WRITE: u64 = 70;
+    pub const CONSOLE_SCREEN_RELEASE: u64 = 72;
+    pub const DEVICE_MEMORY_SLICE: u64 = 80;
+    pub const DEVICE_MEMORY_INFO: u64 = 81;
+    pub const INTERRUPT_SLICE: u64 = 82;
+    pub const INTERRUPT_INFO: u64 = 83;
+    pub const INTERRUPT_BIND: u64 = 84;
+    pub const INTERRUPT_UNBIND: u64 = 85;
+    pub const INTERRUPT_ACKNOWLEDGE: u64 = 86;
+    pub const INTERRUPT_MSI_ALLOCATE: u64 = 87;
+    pub const INTERRUPT_MSI_INFO: u64 = 88;
+    pub const IOPORT_SLICE: u64 = 90;
+    pub const IOPORT_IN: u64 = 91;
+    pub const IOPORT_OUT: u64 = 92;
+    pub const IOPORT_INFO: u64 = 93;
+    pub const INTERRUPT_TRIGGER: u64 = 99;
 }
 
 /// The interface version this `granite` is built for, recorded in every program's
 /// PrettyBigRock note.
-pub const VERSION: (u16, u16) = (1, 0);
+pub const VERSION: (u16, u16) = (1, 1);
 
 static CALL: AtomicU64 = AtomicU64::new(0);
 static CLOCK: AtomicU64 = AtomicU64::new(0);

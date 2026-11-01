@@ -13,6 +13,7 @@ extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
+use granite::device::{DeviceMemory, Interrupts};
 use granite::endpoint::Endpoint;
 use granite::memory::Memory;
 use granite::message::{CapSend, Outgoing};
@@ -42,6 +43,8 @@ fn main(mut start: granite::Start) -> i32 {
         "crash-service" => crash_service(&mut start),
         "budget" => budget(num(1)),
         "load" => load(&mut start, num(1), num(2)),
+        "device-revoke" => device_revoke(&mut start),
+        "interrupt-hold" => interrupt_hold(&mut start),
         _ => Err(99),
     };
     match r {
@@ -451,4 +454,37 @@ fn load(start: &mut granite::Start, threads: u64, calls: u64) -> Result<(), i32>
     }
     drop(Handle::from_raw(raw));
     check(3, failures.load(core::sync::atomic::Ordering::SeqCst) == 0)
+}
+
+// ------------------------------------------------------------------------------------------
+// Device access (note 0010)
+
+/// Maps a page of device memory, then reads it until the root program revokes the capability,
+/// which unmaps it and makes the next read fault.
+fn device_revoke(start: &mut granite::Start) -> Result<(), i32> {
+    let d = DeviceMemory(start.take(role::DEVICE).ok_or(1)?);
+    let ready = Notification(start.take(role::READY).ok_or(1)?);
+    let page = d.map(0, 4096, perm::READ).map_err(|_| 2)?;
+    ready.signal(1).map_err(|_| 3)?;
+    let until = time::after_ms(20_000);
+    let mut sum = 0u64;
+    while time::now() < until {
+        // SAFETY: mapped until it's revoked; then this faults, which is the point.
+        sum = sum.wrapping_add(unsafe { core::ptr::read_volatile(page.as_ptr()) }.into());
+        time::sleep_ms(1);
+    }
+    core::hint::black_box(sum);
+    Err(4)
+}
+
+/// Binds an interrupt, says it's ready, and crashes with the interrupt still bound: the kernel
+/// must release the binding when the process ends.
+fn interrupt_hold(start: &mut granite::Start) -> Result<(), i32> {
+    let i = Interrupts(start.take(role::INTERRUPT).ok_or(1)?);
+    let ready = Notification(start.take(role::READY).ok_or(1)?);
+    let n = Notification::create().map_err(|_| 2)?;
+    i.bind(0, &n, 1).map_err(|_| 3)?;
+    ready.signal(1).map_err(|_| 4)?;
+    time::sleep_ms(50);
+    fault_null()
 }

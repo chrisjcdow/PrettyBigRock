@@ -21,6 +21,7 @@ pbr-bootinfo = { path = "../lib/bootinfo" }
 pbr-captree = { path = "../lib/captree" }
 pbr-elf = { path = "../lib/elf", features = ["alloc"] }
 pbr-platform = { path = "../lib/platform" }
+pbr-ranges = { path = "../lib/ranges" }
 
 [lints]
 workspace = true

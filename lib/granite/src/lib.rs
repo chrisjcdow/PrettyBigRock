@@ -29,6 +29,7 @@
 
 extern crate alloc;
 
+pub mod device;
 pub mod endpoint;
 pub mod handle;
 #[cfg(target_os = "prettybigrock")]

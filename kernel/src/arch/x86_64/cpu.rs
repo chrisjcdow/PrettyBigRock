@@ -80,8 +80,21 @@ struct Pointer {
     base: u64,
 }
 
+/// Makes entry 4 of this core's page attribute table write-combining (note 0010, section 3),
+/// which page-table entries with `Memory::Framebuffer` select. The caches are written back and
+/// emptied afterwards, so no line cached under the old meaning of the entry is left behind.
+fn init_pat() {
+    // SAFETY: IA32_PAT (MSR 0x277) exists on every x86-64 processor; the value changes only the
+    // meaning of entry 4, which the kernel's tables use only for framebuffers.
+    unsafe {
+        wrmsr(0x277, pbr_platform::paging::X86_PAT);
+        core::arch::asm!("wbinvd", options(nomem, nostack));
+    }
+}
+
 /// Loads this core's GDT (with its TSS) and the shared IDT.
 pub fn init_this_core(cpu: &PerCpu) {
+    init_pat();
     // Separate stacks for double faults, NMIs and machine checks (IST 1 to 3).
     // SAFETY: only this core touches its own GDT and TSS, before loading them.
     let (gdt, tss) = unsafe { (&mut *cpu.arch.gdt.get(), &mut *cpu.arch.tss.get()) };

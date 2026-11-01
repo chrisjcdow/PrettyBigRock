@@ -13,7 +13,7 @@ use super::budget::{Budget, Charge};
 use super::notification::Notification;
 use super::table::Table;
 use super::{Error, charge};
-use crate::mem::space::{Mapping, Space, perm};
+use crate::mem::space::{Backing, Mapping, Space, perm};
 use crate::sched::{self, Thread, WaitQueue};
 use crate::sync::{Once, SpinLock};
 use crate::{kprintln, syspage};
@@ -112,7 +112,7 @@ impl Process {
             space.map(Mapping {
                 start: at + i as u64 * crate::mem::PAGE,
                 len: crate::mem::PAGE,
-                mem,
+                mem: Backing::Memory(mem),
                 offset: 0,
                 perms,
                 max: perms,

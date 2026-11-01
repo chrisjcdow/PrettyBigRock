@@ -71,6 +71,7 @@ dependencies = [
  "pbr-captree",
  "pbr-elf",
  "pbr-platform",
+ "pbr-ranges",
 ]
 
 [[package]]
@@ -79,6 +80,10 @@ version = "0.0.0"
 dependencies = [
  "pbr-bootinfo",
 ]
+
+[[package]]
+name = "pbr-ranges"
+version = "0.0.0"
 
 [[package]]
 name = "pbr-root"

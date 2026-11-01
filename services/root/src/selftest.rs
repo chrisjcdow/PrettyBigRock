@@ -18,27 +18,27 @@ use granite::time;
 use pbr_archive::Archive;
 use pbr_test_protocol::{op, role};
 
-const MIB: u64 = 1024 * 1024;
-const MEMORY_FAULT: u64 = 1;
+pub(crate) const MIB: u64 = 1024 * 1024;
+pub(crate) const MEMORY_FAULT: u64 = 1;
 const INSTRUCTION_FAULT: u64 = 2;
 /// Rights a client's endpoint capability gets.
 const CLIENT: u32 = rights::SEND | rights::TRANSFER | rights::DUPLICATE;
 
-type Outcome = Result<(), String>;
+pub(crate) type Outcome = Result<(), String>;
 
-struct Files<'a> {
-    echo: &'a [u8],
-    probe: &'a [u8],
+pub(crate) struct Files<'a> {
+    pub echo: &'a [u8],
+    pub probe: &'a [u8],
 }
 
 /// Runs every test; returns the process's exit status (0 if all passed).
-pub fn run(archive: &Archive<'_>) -> i32 {
+pub fn run(archive: &Archive<'_>, start: &mut granite::Start) -> i32 {
     let (Some(echo), Some(probe)) = (archive.find("echo"), archive.find("probe")) else {
         granite::println!("Program self-test FAILED: the test programs aren't in the archive");
         return 1;
     };
     let f = Files { echo: echo.data, probe: probe.data };
-    match all(&f) {
+    match all(&f, start) {
         Ok(summary) => {
             granite::println!("Program self-test passed: {summary}");
             0
@@ -50,7 +50,7 @@ pub fn run(archive: &Archive<'_>) -> i32 {
     }
 }
 
-fn all(f: &Files<'_>) -> Result<String, String> {
+fn all(f: &Files<'_>, start: &mut granite::Start) -> Result<String, String> {
     let echo_ep = Endpoint::create().map_err(|e| format!("creating an endpoint: {e}"))?;
     let echo = spawn(
         f.echo,
@@ -79,6 +79,9 @@ fn all(f: &Files<'_>) -> Result<String, String> {
     done.push("a crashing service");
     step("budgets", budgets(f))?;
     done.push("budgets");
+    let devices = crate::devtest::run(f, start);
+    step("device access", devices.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("device access");
     let calls = load(f, &echo_ep);
     step("load", calls.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("calls on 4 threads to a service with 4 threads");
@@ -95,7 +98,7 @@ fn step(name: &str, r: Outcome) -> Outcome {
     r.map_err(|e| format!("{name}: {e}"))
 }
 
-fn spawn(
+pub(crate) fn spawn(
     file: &[u8],
     name: &str,
     args: &str,
@@ -107,7 +110,7 @@ fn spawn(
 }
 
 /// Waits up to `secs` seconds for a process to end.
-fn wait(s: &Spawned, secs: u64) -> Result<State, String> {
+pub(crate) fn wait(s: &Spawned, secs: u64) -> Result<State, String> {
     let n = Notification::create().map_err(|e| format!("{e}"))?;
     s.process.watch(&n, 1).map_err(|e| format!("{e}"))?;
     match n.wait(time::after_ms(secs * 1000)) {

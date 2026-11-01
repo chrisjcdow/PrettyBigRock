@@ -23,6 +23,7 @@ extern crate alloc;
 mod arch;
 mod console;
 mod hw;
+mod irq;
 mod mem;
 mod obj;
 mod percpu;
@@ -87,6 +88,17 @@ pub fn kernel_image() -> (u64, u64, u64) {
 /// What the kernel learnt about the machine at start-up.
 pub fn hw_machine() -> &'static hw::Machine {
     MACHINE.get().expect("the machine hasn't been described yet")
+}
+
+/// The firmware's memory map, as the loader gave it.
+pub fn memory_map() -> &'static [MemoryRegion] {
+    &BOOT.get().expect("boot information copied").map
+}
+
+/// The framebuffers the loader described, and the ACPI root pointer (0 if none).
+pub fn boot_description() -> (&'static [Framebuffer], u64) {
+    let b = BOOT.get().expect("boot information copied");
+    (&b.framebuffers, b.acpi_rsdp)
 }
 
 /// True once some core has panicked.
@@ -189,6 +201,7 @@ extern "C" fn continue_start_up() -> ! {
     }
     percpu::install(percpu::all()[0]);
     arch::init_boot_core(m);
+    obj::device::init(&boot.map, m);
     sched::init_this_core();
     percpu::all()[0].online.store(true, Ordering::Release);
     arch::irq_enable();
@@ -198,6 +211,7 @@ extern "C" fn continue_start_up() -> ! {
     obj::process::start_reaper();
     syspage::init();
     let selftest = boot.command_line.split_whitespace().any(|w| w == "selftest");
+    irq::start(selftest);
     sched::spawn("start-up", sched::NORMAL, move || {
         if selftest {
             match selftest::run() {
