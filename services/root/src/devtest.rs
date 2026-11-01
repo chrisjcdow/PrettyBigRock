@@ -56,6 +56,10 @@ pub fn run(f: &Files<'_>, start: &mut granite::Start) -> Result<String, String> 
     if caps.pool.is_some() {
         msi(&caps)?;
         parts.push("message-signalled interrupts".into());
+    } else if cfg!(target_arch = "aarch64") {
+        // The self-test only runs on QEMU's `virt` machine, whose GICv2m the firmware tables
+        // describe; a missing pool would mean the kernel failed to find it.
+        return Err("the ARM test machine should have message-signalled interrupts".into());
     } else {
         // The machine description's flag must agree.
         if flags & 2 != 0 {
