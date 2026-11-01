@@ -97,6 +97,7 @@ impl Gen<'_> {
             HandleKind::Notification => "::granite::notification::Notification".into(),
             HandleKind::Process => "::granite::process::Process".into(),
             HandleKind::Thread => "::granite::thread::Thread".into(),
+            HandleKind::DeviceMemory => "::granite::device::DeviceMemory".into(),
             HandleKind::Any => "::granite::Handle".into(),
         }
     }
@@ -148,6 +149,7 @@ impl Gen<'_> {
             HandleKind::Notification => ("NOTIFICATION", false),
             HandleKind::Process => ("PROCESS", false),
             HandleKind::Thread => ("THREAD", false),
+            HandleKind::DeviceMemory => ("DEVICE_MEMORY", false),
             HandleKind::Any => return None,
         };
         Some(format!("{GI}::check_kind(&{h}, ::granite::sys::kind::{kind}, {endpoint})?;"))

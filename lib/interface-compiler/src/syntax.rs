@@ -143,6 +143,8 @@ pub enum HandleKind {
     Process,
     /// A thread.
     Thread,
+    /// Device memory (a frame buffer, say).
+    DeviceMemory,
     /// Any capability.
     Any,
 }
@@ -433,11 +435,12 @@ impl Parser {
                         "notification" => HandleKind::Notification,
                         "process" => HandleKind::Process,
                         "thread" => HandleKind::Thread,
+                        "device_memory" => HandleKind::DeviceMemory,
                         "any" => HandleKind::Any,
                         _ => {
                             return Err(Diagnostic::new(
                                 q[0].pos,
-                                "a handle's kind is `memory`, `notification`, `process`, `thread`, `any`, \
+                                "a handle's kind is `memory`, `notification`, `process`, `thread`, `device_memory`, `any`, \
                                  or an interface's qualified name (such as `pbr.file`)",
                             ));
                         }

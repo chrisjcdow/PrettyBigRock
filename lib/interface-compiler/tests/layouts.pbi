@@ -10,7 +10,7 @@ interface pbr.test.layouts version 3;
 @3 fn lists(a: list<list<string<9>, 3>, 2>, b: list<option<bytes<5>>, 4>, c: i8)
     -> (d: list<array<u16, 3>, 5>, e: Wide);
 @4 fn handles(a: u8, b: handle<any>, c: option<handle<pbr.test.layouts>>, d: u8)
-    -> (e: option<handle<memory>>, f: Flags16, g: Flags64, h: Choice);
+    -> (e: option<handle<memory>>, i: option<handle<device_memory>>, f: Flags16, g: Flags64, h: Choice);
 @65535 fn empty();
 @9 fn tail(a: u64, b: u8) -> (c: array<array<u8, 3>, 5>, d: option<array<u32, 2>>);
 
