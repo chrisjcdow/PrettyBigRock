@@ -284,10 +284,12 @@ impl Gen<'_> {
                     self.dec(t)
                 )
             }
-            Ty::Handle(k) => {
-                let check = self.handle_check(k, "h_").unwrap_or_default();
-                format!("{{ let h_ = d_.handle()?; {check} {} }}", self.wrap_handle(k, "h_"))
-            }
+            Ty::Handle(k) => match self.handle_check(k, "h_") {
+                None => self.wrap_handle(k, "d_.handle()?"),
+                Some(check) => {
+                    format!("{{ let h_ = d_.handle()?; {check} {} }}", self.wrap_handle(k, "h_"))
+                }
+            },
         }
     }
 

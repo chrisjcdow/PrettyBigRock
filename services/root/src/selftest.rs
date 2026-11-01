@@ -32,13 +32,13 @@ pub(crate) struct Files<'a> {
 }
 
 /// Runs every test; returns the process's exit status (0 if all passed).
-pub fn run(archive: &Archive<'_>, start: &mut granite::Start) -> i32 {
+pub fn run(archive: &Archive<'_>, archive_mem: u32, start: &mut granite::Start) -> i32 {
     let (Some(echo), Some(probe)) = (archive.find("echo"), archive.find("probe")) else {
         granite::println!("Program self-test FAILED: the test programs aren't in the archive");
         return 1;
     };
     let f = Files { echo: echo.data, probe: probe.data };
-    match all(&f, start) {
+    match all(archive, archive_mem, &f, start) {
         Ok(summary) => {
             granite::println!("Program self-test passed: {summary}");
             0
@@ -50,7 +50,12 @@ pub fn run(archive: &Archive<'_>, start: &mut granite::Start) -> i32 {
     }
 }
 
-fn all(f: &Files<'_>, start: &mut granite::Start) -> Result<String, String> {
+fn all(
+    archive: &Archive<'_>,
+    archive_mem: u32,
+    f: &Files<'_>,
+    start: &mut granite::Start,
+) -> Result<String, String> {
     let echo_ep = Endpoint::create().map_err(|e| format!("creating an endpoint: {e}"))?;
     let echo = spawn(
         f.echo,
@@ -79,13 +84,20 @@ fn all(f: &Files<'_>, start: &mut granite::Start) -> Result<String, String> {
     done.push("a crashing service");
     step("budgets", budgets(f))?;
     done.push("budgets");
+    // The device manager gets copies of the device capabilities; the device tests then take
+    // the root program's own.
+    let devmgr = crate::blocktest::start(archive, archive_mem, start, true)?;
     let devices = crate::devtest::run(f, start);
     step("device access", devices.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("device access");
+    let block = crate::blocktest::run(&devmgr);
+    step("block device", block.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("a block device (2048 sectors, reads, writes and refusals)");
     let calls = load(f, &echo_ep);
     step("load", calls.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("calls on 4 threads to a service with 4 threads");
 
+    devmgr.process.process.stop(0).map_err(|e| format!("stopping devmgr: {e}"))?;
     echo.process.stop(0).map_err(|e| format!("stopping echo: {e}"))?;
     match wait(&echo, 30)? {
         State::Stopped(0) => {}

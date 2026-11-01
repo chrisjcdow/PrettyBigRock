@@ -44,6 +44,38 @@ name = "pbr-devices"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-devmgr"
+version = "0.0.0"
+dependencies = [
+ "pbr-archive",
+ "pbr-devices",
+ "pbr-driver",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-platform",
+]
+
+[[package]]
+name = "pbr-driver"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-granite",
+ "pbr-interfaces",
+]
+
+[[package]]
+name = "pbr-driver-virtio-blk"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-driver",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-virtio",
+]
+
+[[package]]
 name = "pbr-elf"
 version = "0.0.0"
 
@@ -95,6 +127,7 @@ version = "0.0.0"
 dependencies = [
  "pbr-archive",
  "pbr-granite",
+ "pbr-interfaces",
  "pbr-test-protocol",
 ]
 

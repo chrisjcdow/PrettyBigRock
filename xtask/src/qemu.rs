@@ -50,6 +50,7 @@ pub const TESTS: &[Config] = &[
             "Randomness:    seeded",
             "Self-test passed",
             "Program self-test passed",
+            "a block device (2048 sectors, reads, writes and refusals)",
             "exited with status 0.",
         ],
     },
@@ -68,6 +69,7 @@ pub const TESTS: &[Config] = &[
             "Time:          2",
             "Self-test passed",
             "Program self-test passed",
+            "a block device (2048 sectors, reads, writes and refusals)",
             "exited with status 0.",
         ],
     },
@@ -86,6 +88,7 @@ pub const TESTS: &[Config] = &[
             "Randomness:    seeded",
             "Self-test passed",
             "Program self-test passed",
+            "a block device (2048 sectors, reads, writes and refusals)",
             "exited with status 0.",
         ],
     },
@@ -103,6 +106,7 @@ pub const TESTS: &[Config] = &[
             "EL2 stub:      present and answering",
             "Self-test passed",
             "Program self-test passed",
+            "a block device (2048 sectors, reads, writes and refusals)",
             "exited with status 0.",
         ],
     },
@@ -110,6 +114,25 @@ pub const TESTS: &[Config] = &[
 
 fn first_existing(paths: &[&str]) -> Option<PathBuf> {
     paths.iter().map(PathBuf::from).find(|p| p.is_file())
+}
+
+/// The sectors on the test disk.
+const TEST_DISK_SECTORS: u64 = 2048;
+
+/// Writes the disk the block device test reads and writes (`snapshot=on` throws the writes
+/// away). What each byte is must match `pattern` in `services/root/src/blocktest.rs`.
+fn test_disk(work: &Path) -> Result<PathBuf, String> {
+    let path = work.join("test-disk.img");
+    let mut data = Vec::with_capacity(TEST_DISK_SECTORS as usize * 512);
+    for s in 0..TEST_DISK_SECTORS {
+        for i in 0..512usize {
+            data.push(
+                (s.wrapping_mul(31) as u8).wrapping_add((i as u8).wrapping_mul(7)).wrapping_add(3),
+            );
+        }
+    }
+    fs::write(&path, data).map_err(|e| format!("writing the test disk: {e}"))?;
+    Ok(path)
 }
 
 /// The QEMU command for a configuration, with the firmware found on this computer.
@@ -163,6 +186,10 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
         cmd.arg("-drive").arg(format!("if=none,id=disk,{drive}"));
         cmd.args(["-device", "virtio-blk-pci,drive=disk", "-device", "virtio-rng-pci"]);
     }
+    let disk = test_disk(work)?;
+    cmd.arg("-drive")
+        .arg(format!("if=none,id=testdisk,format=raw,file={},snapshot=on", disk.display()));
+    cmd.args(["-device", "virtio-blk-pci,drive=testdisk"]);
     cmd.arg("-no-reboot");
     Ok(cmd)
 }

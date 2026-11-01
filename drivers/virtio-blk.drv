@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+
+# The virtio disk driver (docs/design/0011-device-manager-and-drivers.md).
+class block
+match pci 1af4:1001
+match pci 1af4:1042
+budget 8M
+dma 1M
+irqs 1

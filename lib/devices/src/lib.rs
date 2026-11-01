@@ -14,6 +14,7 @@
 
 extern crate alloc;
 
+pub mod machine;
 pub mod manifest;
 pub mod msix;
 pub mod pci;

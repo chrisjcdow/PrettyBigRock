@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-devmgr"
+description = "The device manager: finds devices, starts their drivers, hands out their endpoints"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "devmgr"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-archive = { path = "../../lib/archive" }
+pbr-devices = { path = "../../lib/devices" }
+pbr-driver = { path = "../../lib/driver" }
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-platform = { path = "../../lib/platform" }
+
+[lints]
+workspace = true

@@ -19,6 +19,7 @@ bench = false
 pbr-test-protocol = { path = "../../tests/programs/protocol" }
 pbr-archive = { path = "../../lib/archive" }
 pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
 
 [lints]
 workspace = true

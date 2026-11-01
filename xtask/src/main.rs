@@ -65,11 +65,23 @@ const ARCHES: &[Arch] = &[
 
 /// The programs in the start-up archive: (package, program name). The root program must be
 /// first (docs/design/0009-programs-and-granite.md).
-const PROGRAMS: &[(&str, &str)] =
-    &[("pbr-root", "root"), ("pbr-test-echo", "echo"), ("pbr-test-probe", "probe")];
+const PROGRAMS: &[(&str, &str, &str)] = &[
+    ("pbr-root", "root", "root"),
+    ("pbr-devmgr", "devmgr", "devmgr"),
+    ("pbr-driver-virtio-blk", "virtio-blk", "drivers/virtio-blk"),
+    ("pbr-test-echo", "echo", "echo"),
+    ("pbr-test-probe", "probe", "probe"),
+];
+
+/// Text files in the start-up archive: (name in the archive, path from the repository root).
+/// Drivers' manifests sit beside their programs (note 0011, section 5).
+const ARCHIVE_FILES: &[(&str, &str)] = &[("drivers/virtio-blk.drv", "drivers/virtio-blk.drv")];
 
 /// Crates built for the programs' targets, checked with Clippy there.
 const PROGRAM_CRATES: &[&str] = &[
+    "pbr-devmgr",
+    "pbr-driver",
+    "pbr-driver-virtio-blk",
     "pbr-granite",
     "pbr-interfaces",
     "pbr-root",
@@ -431,14 +443,18 @@ fn build_program(
 fn build_archive(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Result<Vec<u8>> {
     let profile = if release { "release" } else { "debug" };
     let mut files = Vec::new();
-    for (package, bin) in PROGRAMS {
+    for (package, bin, name) in PROGRAMS {
         let full = build_program(root, tc, arch, package, bin, release)?;
         write_out(root, &format!("build/{}/{profile}/{bin}", arch.name), &full)?;
         let stripped = elf::strip(&full).map_err(|e| format!("{bin}: {e}"))?;
         // Stripping must leave a valid program.
         pbr_elf::Program::parse(&stripped, arch.elf_machine)
             .map_err(|e| format!("{bin} after stripping: {e}"))?;
-        files.push((*bin, stripped));
+        files.push((*name, stripped));
+    }
+    for (name, path) in ARCHIVE_FILES {
+        let bytes = fs::read(root.join(path)).map_err(|e| format!("{path}: {e}"))?;
+        files.push((*name, bytes));
     }
     let refs: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
     let archive = pbr_archive::build(&refs).map_err(|e| format!("the start-up archive: {e}"))?;
