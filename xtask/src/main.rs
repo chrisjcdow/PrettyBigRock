@@ -84,12 +84,14 @@ const HOST_CRATES: &[&str] = &[
     "pbr-bootinfo",
     "pbr-boot-common",
     "pbr-captree",
+    "pbr-devices",
     "pbr-elf",
     "pbr-granite",
     "pbr-interface-compiler",
     "pbr-interfaces",
     "pbr-platform",
     "pbr-ranges",
+    "pbr-virtio",
     "xtask",
 ];
 

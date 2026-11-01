@@ -240,6 +240,47 @@ pub fn fadt_iapc_flags(mem: &impl PhysMemory, fadt: u64) -> Option<u16> {
     mem.read_u16(fadt + 109)
 }
 
+/// One entry of the MCFG table: a region of PCI Express configuration space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EcamRegion {
+    /// Physical address of the region (bus `start_bus`, device 0, function 0).
+    pub base: u64,
+    /// The PCI segment group.
+    pub segment: u16,
+    /// The first bus the region covers.
+    pub start_bus: u8,
+    /// The last bus the region covers.
+    pub end_bus: u8,
+}
+
+/// Calls `f` for each configuration space region in the MCFG table at `table`. Returns how
+/// many there were, or `None` if the table can't be read. Entries that run past the table's
+/// length, or whose bus range is backwards, are skipped. Reads at most 32 entries.
+pub fn mcfg(mem: &impl PhysMemory, table: u64, mut f: impl FnMut(EcamRegion)) -> Option<usize> {
+    let len = u64::from(mem.read_u32(table.checked_add(4)?)?);
+    let mut count = 0;
+    let mut at = 44u64;
+    while count < 32 && at.checked_add(16)? <= len {
+        let e = table.checked_add(at)?;
+        let base = mem.read_u64(e)?;
+        let segment = mem.read_u16(e.checked_add(8)?)?;
+        let (start_bus, end_bus) =
+            (mem.read_u8(e.checked_add(10)?)?, mem.read_u8(e.checked_add(11)?)?);
+        at += 16;
+        if start_bus > end_bus || base == 0 {
+            continue;
+        }
+        // The region must fit in the physical address space.
+        let size = (u64::from(end_bus) - u64::from(start_bus) + 1) << 20;
+        if base.checked_add(size).is_none() {
+            continue;
+        }
+        count += 1;
+        f(EcamRegion { base, segment, start_bus, end_bus });
+    }
+    Some(count)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -371,5 +412,48 @@ pub(crate) mod tests {
         mem.put(rsdp + 9, b"X");
         assert!(!rsdp_valid(&mem, rsdp));
         assert_eq!(find_rsdp_bios(&mem), None);
+    }
+
+    #[test]
+    fn reads_the_mcfg() {
+        let mut mem = FakeMem::default();
+        let mut body = vec![0u8; 8]; // reserved
+        let mut entry = |base: u64, seg: u16, a: u8, b: u8| {
+            body.extend_from_slice(&base.to_le_bytes());
+            body.extend_from_slice(&seg.to_le_bytes());
+            body.extend_from_slice(&[a, b, 0, 0, 0, 0]);
+        };
+        entry(0xB000_0000, 0, 0, 255);
+        entry(0xC000_0000, 1, 4, 3); // backwards: skipped
+        entry(0, 0, 0, 1); // no base: skipped
+        entry(u64::MAX - 0xFFFF, 2, 0, 1); // runs off the end of memory: skipped
+        entry(0xD000_0000, 3, 8, 9);
+        mem.put(0x6000, &table(b"MCFG", &body));
+        let mut got = Vec::new();
+        assert_eq!(mcfg(&mem, 0x6000, |r| got.push(r)), Some(2));
+        assert_eq!(
+            got,
+            [
+                EcamRegion { base: 0xB000_0000, segment: 0, start_bus: 0, end_bus: 255 },
+                EcamRegion { base: 0xD000_0000, segment: 3, start_bus: 8, end_bus: 9 },
+            ]
+        );
+        // A table that claims to be longer than it is just yields what it has.
+        mem.put(0x6004, &0x10_0000u32.to_le_bytes());
+        let mut n = 0;
+        assert!(mcfg(&mem, 0x6000, |_| n += 1).is_some());
+        assert!(n <= 32);
+    }
+
+    #[test]
+    fn reads_the_fadt_boot_flags() {
+        let mut mem = FakeMem::default();
+        let mut body = vec![0u8; 80]; // the table is 36 + 80 = 116 bytes
+        body[109 - 36..111 - 36].copy_from_slice(&0x0002u16.to_le_bytes());
+        mem.put(0x7000, &table(b"FACP", &body));
+        assert_eq!(fadt_iapc_flags(&mem, 0x7000), Some(2));
+        // Too short to have the field (an ACPI 1.0 table).
+        mem.put(0x8000, &table(b"FACP", &[0u8; 40]));
+        assert_eq!(fadt_iapc_flags(&mem, 0x8000), None);
     }
 }

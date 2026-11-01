@@ -40,6 +40,10 @@ name = "pbr-captree"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-devices"
+version = "0.0.0"
+
+[[package]]
 name = "pbr-elf"
 version = "0.0.0"
 
@@ -115,6 +119,13 @@ dependencies = [
 [[package]]
 name = "pbr-test-protocol"
 version = "0.0.0"
+
+[[package]]
+name = "pbr-virtio"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+]
 
 [[package]]
 name = "xtask"
