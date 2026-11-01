@@ -531,13 +531,24 @@ pub fn wait_event(deadline: u64, mut ready: impl FnMut() -> bool) -> Woken {
             arch::irq_restore(irq);
             return o;
         }
+        // The timer that will end this wait: on this core's list, where it stays until it
+        // fires or the wait ends.
+        let mut armed = None;
         if deadline != u64::MAX {
             let seq = me.wait_seq.fetch_add(1, Ordering::SeqCst) + 1;
-            let mut timers = percpu::this().sched.timers.lock();
+            let cpu = percpu::this();
+            let mut timers = cpu.sched.timers.lock();
             let at = timers.partition_point(|(d, _, _)| *d <= deadline);
             timers.insert(at, (deadline, me.clone(), seq));
+            armed = Some((cpu, seq));
         }
         schedule(Action::Block);
+        // Take the timer back if it didn't fire. Left there, it would keep the thread (and so
+        // its process, and the process's whole budget) alive until its deadline, which for a
+        // driver's request timeout is seconds after the thread has gone.
+        if let Some((cpu, seq)) = armed {
+            cpu.sched.timers.lock().retain(|(_, t, s)| !(*s == seq && Arc::ptr_eq(t, &me)));
+        }
         arch::irq_restore(irq);
     }
 }

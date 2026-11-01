@@ -242,6 +242,9 @@ impl Space {
             self.tables.unmap(&mut Frames(&mut self.charge), m.start + i * PAGE);
         }
         arch::flush_user_pages(self.root(), m.start, pages);
+        // Tables the mapping has emptied go back (only after the flush, so no core still has
+        // them cached).
+        self.tables.prune(&mut Frames(&mut self.charge), m.start, m.len);
         Some(m)
     }
 

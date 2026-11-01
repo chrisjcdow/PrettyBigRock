@@ -18,6 +18,7 @@ use granite::time;
 use pbr_archive::Archive;
 use pbr_interfaces::pbr_block::{self as block, BlockError};
 use pbr_interfaces::pbr_devices::{self as devices, DeviceClass, DeviceState};
+use pbr_interfaces::pbr_devices_debug as devices_debug;
 
 /// The role of the device manager's public endpoint.
 const PUBLIC: u32 = start_role::OWN;
@@ -44,10 +45,13 @@ fn sectors(first: u64, count: u32) -> Vec<u8> {
 pub struct Devmgr {
     pub process: Spawned,
     pub client: devices::Client,
+    /// `pbr.devices.debug`, served in self-test runs.
+    pub debug: devices_debug::Client,
 }
 
 /// Starts the device manager. With `keep` the root program keeps its device capabilities (the
-/// device tests use them); without, they move to the device manager.
+/// device tests use them) and the device manager is started in self-test mode; without, the
+/// capabilities move to the device manager.
 pub fn start(
     archive: &Archive<'_>,
     archive_mem: u32,
@@ -75,7 +79,7 @@ pub fn start(
         priority: 2,
         caps: &caps,
         log: true,
-        args: "",
+        args: if keep { "selftest" } else { "" },
     })
     .map_err(|e| format!("starting devmgr: {e}"))?;
     let client = devices::Client::new(Endpoint(
@@ -84,7 +88,13 @@ pub fn start(
             .duplicate(rights::SEND | rights::TRANSFER | rights::DUPLICATE)
             .map_err(|e| format!("{e}"))?,
     ));
-    Ok(Devmgr { process, client })
+    let debug = devices_debug::Client::new(Endpoint(
+        public
+            .0
+            .duplicate(rights::SEND | rights::TRANSFER | rights::DUPLICATE)
+            .map_err(|e| format!("{e}"))?,
+    ));
+    Ok(Devmgr { process, client, debug })
 }
 
 fn call<T>(what: &str, r: Result<T, CallError<BlockError>>) -> Result<T, String> {
@@ -104,7 +114,7 @@ fn refused<T>(
 }
 
 /// Waits for the test disk to be served, and opens it.
-fn find_disk(d: &Devmgr) -> Result<block::Client, String> {
+pub(crate) fn find_disk(d: &Devmgr) -> Result<(u32, block::Client), String> {
     let end = time::after_ms(30_000);
     loop {
         let list = d.client.list().map_err(|e| format!("listing devices: {e}"))?;
@@ -129,7 +139,7 @@ fn find_disk(d: &Devmgr) -> Result<block::Client, String> {
             let c = block::Client::new(Endpoint(h));
             let info = call("info", c.info())?;
             if info.sector_count == TEST_SECTORS {
-                return Ok(c);
+                return Ok((dev.id, c));
             }
         }
         if !waiting || time::now() > end {
@@ -141,7 +151,7 @@ fn find_disk(d: &Devmgr) -> Result<block::Client, String> {
 
 /// The block device test. Returns a short summary.
 pub fn run(d: &Devmgr) -> Result<String, String> {
-    let mut c = find_disk(d)?;
+    let (_, mut c) = find_disk(d)?;
     c.set_deadline(time::after_ms(60_000));
     let info = call("info", c.info())?;
     if info.sector_size != SECTOR as u32 || info.read_only {

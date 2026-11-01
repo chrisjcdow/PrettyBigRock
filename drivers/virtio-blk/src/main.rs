@@ -231,7 +231,9 @@ impl block::Server for Disk {
 
 impl Service for Disk {
     fn call(&mut self, msg: Incoming, buffer: &[u8], reply: ReplyCap) {
-        if let Some((_, reply)) = block::dispatch(self, msg, buffer, reply) {
+        if pbr_driver::debug::enabled(&self.dev.args) && pbr_driver::debug::is_debug(&msg) {
+            pbr_driver::debug::dispatch(msg, buffer, reply);
+        } else if let Some((_, reply)) = block::dispatch(self, msg, buffer, reply) {
             granite::interface::unknown(reply);
         }
     }

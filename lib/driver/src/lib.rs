@@ -24,6 +24,7 @@ pub use pbr_devices::pci::Config;
 pub use pbr_devices::record::{self, Kind, Message, Record};
 pub use pbr_devices::regs::Registers;
 
+pub mod debug;
 mod device;
 mod regions;
 mod serve;

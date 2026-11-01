@@ -192,6 +192,7 @@ PrettyBigRock build tool
   cargo xtask run [--arch NAME] [--bios] [--el2] [--selftest] [--cores N] [--release]
                                          start PrettyBigRock in QEMU, in a window
   cargo xtask qemu-test [--release]      boot every configuration; check the kernel starts
+                                         (PBR_QEMU_ONLY=<text> picks configurations by name)
   cargo xtask check                      formatting and lints
   cargo xtask test                       unit tests on this computer
   cargo xtask ci                         check, test, build and boot everything
@@ -635,7 +636,10 @@ fn payload(files: &[(&str, &[u8])]) -> Vec<u8> {
 fn qemu_test(root: &Path, img: &Path) -> Result {
     let work = work_dir(root)?;
     let mut failed = Vec::new();
-    for cfg in qemu::TESTS {
+    // PBR_QEMU_ONLY=<text> runs only the configurations whose name contains it (to save time
+    // while working on one).
+    let only = std::env::var("PBR_QEMU_ONLY").unwrap_or_default();
+    for cfg in qemu::TESTS.iter().filter(|c| c.name.contains(&only)) {
         print!("boot test: {} ... ", cfg.name);
         use std::io::Write as _;
         let _ = std::io::stdout().flush();

@@ -277,6 +277,54 @@ impl PageTables {
         Some(phys)
     }
 
+    /// Frees the tables below the top level that hold no mapping now, among those covering
+    /// `[start, start + len)`: what is left once the mappings there have been removed. Without
+    /// it, a program that maps and unmaps at random addresses leaves a few table pages behind
+    /// every time, for as long as it lives. The caller must have flushed the TLB for the range
+    /// first (a table that may still be cached must not be reused). Only for 4 KiB mappings
+    /// in a half of the address space that belongs to this tree alone.
+    pub fn prune(&mut self, fa: &mut impl FrameAlloc, start: u64, len: u64) {
+        if len == 0 {
+            return;
+        }
+        let end = start.saturating_add(len);
+        self.prune_table(fa, self.root, 3, 0, start, end);
+    }
+
+    /// Prunes the table at `phys`, which has entries of level `level`, covering from `base`.
+    /// Returns true if it is empty afterwards.
+    fn prune_table(
+        &self,
+        fa: &mut impl FrameAlloc,
+        phys: u64,
+        level: u32,
+        base: u64,
+        start: u64,
+        end: u64,
+    ) -> bool {
+        if level > 0 {
+            let span = 1u64 << (12 + 9 * level);
+            for i in 0..512usize {
+                let from = base.wrapping_add(i as u64 * span);
+                // Skip entries that don't touch the range. (The top level's span would
+                // overflow past the end of the address space; entries there are not ours.)
+                if from >= end || from.saturating_add(span) <= start {
+                    continue;
+                }
+                let e = fa.table(phys)[i];
+                if !self.format.present(e) || self.format.is_leaf(e, level) {
+                    continue;
+                }
+                let child = e & ADDR_MASK;
+                if self.prune_table(fa, child, level - 1, from, start, end) {
+                    fa.table(phys)[i] = 0;
+                    fa.free(child);
+                }
+            }
+        }
+        fa.table(phys).iter().all(|&e| e == 0)
+    }
+
     /// Changes what the 4 KiB mapping at `virt` allows, keeping where it points. Returns false
     /// if nothing is mapped there. (The caller flushes the TLB.)
     pub fn protect(&mut self, fa: &mut impl FrameAlloc, virt: u64, attr: Attr) -> bool {
@@ -565,6 +613,82 @@ pub(crate) mod tests {
         }
         fn table(&mut self, phys: u64) -> &mut [u64; 512] {
             &mut self.0[((phys - 0x1000_0000) / PAGE - 1) as usize]
+        }
+    }
+
+    /// Frames that count how many are in use.
+    struct Counting {
+        frames: Vec<Box<[u64; 512]>>,
+        live: usize,
+    }
+
+    impl FrameAlloc for Counting {
+        fn alloc(&mut self) -> Option<u64> {
+            self.frames.push(Box::new([0; 512]));
+            self.live += 1;
+            Some(0x1000_0000 + (self.frames.len() as u64) * PAGE)
+        }
+        fn table(&mut self, phys: u64) -> &mut [u64; 512] {
+            &mut self.frames[((phys - 0x1000_0000) / PAGE - 1) as usize]
+        }
+        fn free(&mut self, _phys: u64) {
+            self.live -= 1;
+        }
+    }
+
+    #[test]
+    fn pruning_gives_back_every_table_that_empties() {
+        for format in [Format::X86_64, Format::Aarch64] {
+            let mut fa = Counting { frames: vec![], live: 0 };
+            let mut t = PageTables::new(&mut fa, format).unwrap();
+            let base = fa.live; // the root
+            let data = Attr { write: true, exec: false, mem: Memory::Normal, user: true };
+            let mut rng = crate::paging::tests::Lcg(7);
+            // Map and unmap at scattered addresses, pruning each time: nothing builds up.
+            for _ in 0..200 {
+                let va = (rng.next() % (1 << 35)) * PAGE;
+                let pages = 1 + rng.next() % 40;
+                t.map(&mut fa, va, 0x20_0000, pages * PAGE, data).unwrap();
+                assert!(fa.live > base);
+                for i in 0..pages {
+                    assert!(t.unmap(&mut fa, va + i * PAGE).is_some());
+                }
+                t.prune(&mut fa, va, pages * PAGE);
+                assert_eq!(fa.live, base, "{format:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn pruning_keeps_tables_that_are_still_used() {
+        for format in [Format::X86_64, Format::Aarch64] {
+            let mut fa = Counting { frames: vec![], live: 0 };
+            let mut t = PageTables::new(&mut fa, format).unwrap();
+            let data = Attr { write: true, exec: false, mem: Memory::Normal, user: true };
+            // Two pages in the same last-level table; one goes.
+            t.map(&mut fa, 0x4000_0000, 0x20_0000, PAGE, data).unwrap();
+            t.map(&mut fa, 0x4000_1000, 0x30_0000, PAGE, data).unwrap();
+            let before = fa.live;
+            t.unmap(&mut fa, 0x4000_0000);
+            t.prune(&mut fa, 0x4000_0000, PAGE);
+            assert_eq!(fa.live, before, "{format:?}");
+            assert_eq!(t.translate(&mut fa, 0x4000_1008), Some((0x30_0008, data)));
+            // The other goes too: now everything below the root is freed.
+            t.unmap(&mut fa, 0x4000_1000);
+            t.prune(&mut fa, 0x4000_0000, 2 * PAGE);
+            assert_eq!(fa.live, 1, "{format:?}");
+            // Pruning where nothing was ever mapped does nothing.
+            t.prune(&mut fa, 0x8000_0000, 64 * PAGE);
+            assert_eq!(fa.live, 1);
+        }
+    }
+
+    /// A small random number generator.
+    pub struct Lcg(pub u64);
+    impl Lcg {
+        pub fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 >> 33
         }
     }
 

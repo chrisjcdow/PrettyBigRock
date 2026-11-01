@@ -12,6 +12,7 @@
 extern crate alloc;
 
 mod blocktest;
+mod crashtest;
 mod devtest;
 mod selftest;
 

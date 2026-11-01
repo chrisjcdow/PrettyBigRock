@@ -93,6 +93,12 @@ fn all(
     let block = crate::blocktest::run(&devmgr);
     step("block device", block.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("a block device (2048 sectors, reads, writes and refusals)");
+    let crash = crate::crashtest::run(&devmgr);
+    if let Ok(summary) = &crash {
+        granite::println!("Crash test: {summary}");
+    }
+    step("crash and restart", crash.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("a driver crashed and restarted");
     let calls = load(f, &echo_ep);
     step("load", calls.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("calls on 4 threads to a service with 4 threads");

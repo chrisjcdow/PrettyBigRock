@@ -17,8 +17,10 @@ extern crate alloc;
 mod drivers;
 mod ecam;
 mod phys;
+mod supervise;
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use granite::Handle;
 use granite::device::{DeviceMemory, Interrupts};
@@ -33,8 +35,10 @@ use pbr_archive::Archive;
 use pbr_devices::machine::Machine;
 use pbr_devices::manifest::{Class, Manifest, Target, choose};
 use pbr_devices::pci::{self, Function};
+use pbr_devices::restart::History;
 use pbr_driver::{Service, serve};
 use pbr_interfaces::pbr_devices::{self as devices, DeviceInfo, DeviceState, DevicesError};
+use pbr_interfaces::pbr_devices_debug::{self as devices_debug, DebugError};
 use pbr_interfaces::pbr_driver_host::{self as host, HostError};
 use pbr_platform::acpi;
 
@@ -54,13 +58,21 @@ struct Entry {
     restarts: u32,
     /// The driver's endpoint, once it has said it is ready.
     service: Option<Handle>,
-    /// The driver's process (used by restart, Stage 3).
-    #[allow(dead_code)]
+    /// The driver's process.
     process: Option<Spawned>,
     /// What the driver was started with, kept for as long as the device exists: it keeps the
     /// interrupts and DMA memory alive, and a restarted driver is given the same ones.
-    #[allow(dead_code)]
     plan: Option<drivers::Plan>,
+    /// Which driver (in the list `drivers::load` made) serves it.
+    driver: usize,
+    /// Where it is, for stopping it.
+    function: pci::Address,
+    /// When it crashed before.
+    history: History,
+    /// When (milliseconds on the clock) the next start is due, while it is waiting.
+    due: Option<u64>,
+    /// When the driver was last started (milliseconds on the clock).
+    started_at: u64,
 }
 
 struct Registry {
@@ -84,6 +96,7 @@ fn take(start: &mut granite::Start, r: u32, what: &str) -> Result<Handle, String
 }
 
 fn run(start: &mut granite::Start) -> Result<(), String> {
+    let selftest = start.args().split_whitespace().any(|w| w == "selftest");
     let archive_mem = Memory(take(start, role::ARCHIVE, "the start-up archive")?);
     let memory = DeviceMemory(take(start, role::DEVICE_MEMORY, "device memory")?);
     let machine_mem = Memory(take(start, role::MACHINE, "the machine description")?);
@@ -176,7 +189,9 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
             };
             let id = next_id;
             next_id += 1;
-            let started = start_pci(d, f, config, &memory, pool.as_ref(), &host_ep, id);
+            let started = start_pci(d, f, config, &memory, pool.as_ref(), &host_ep, id, selftest);
+            let mut history = History::new();
+            history.started(supervise::now_ms());
             let (state, process, plan) = match started {
                 Ok((s, p)) => (DeviceState::Starting, Some(s), Some(p)),
                 Err(why) => {
@@ -193,17 +208,27 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
                 service: None,
                 process,
                 plan,
+                driver: i,
+                function: a,
+                history,
+                due: None,
+                started_at: supervise::now_ms(),
             });
         }
     }
 
-    // Serve drivers on one thread and clients on this one.
-    thread::spawn(move || serve(&host_ep, 0, &mut Host))
+    // Serve drivers on one thread and clients on another; this one watches the drivers.
+    let host_ep = Arc::new(host_ep);
+    let for_host = host_ep.clone();
+    thread::spawn(move || serve(&for_host, 0, &mut Host))
+        .map_err(|e| alloc::format!("can't start a thread: {e}"))?;
+    thread::spawn(move || serve(&public, devices::REQUEST_BUFFER, &mut Public { selftest }))
         .map_err(|e| alloc::format!("can't start a thread: {e}"))?;
     granite::println!("devmgr: ready.");
-    serve(&public, devices::REQUEST_BUFFER, &mut Public)
+    supervise::run(&drivers, &host_ep, selftest)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_pci(
     d: &drivers::Driver<'_>,
     f: &Function,
@@ -212,9 +237,10 @@ fn start_pci(
     pool: Option<&Interrupts>,
     host_ep: &Endpoint,
     id: u32,
+    selftest: bool,
 ) -> Result<(Spawned, drivers::Plan), String> {
     let plan = drivers::plan(f, config, &d.manifest, memory, pool).map_err(|e| e.0)?;
-    let spawned = drivers::start(d, &plan, host_ep, id, f.addr).map_err(|e| e.0)?;
+    let spawned = drivers::start(d, &plan, host_ep, id, f.addr, selftest).map_err(|e| e.0)?;
     Ok((spawned, plan))
 }
 
@@ -227,12 +253,25 @@ fn answered(r: granite::Result<()>) {
     }
 }
 
-/// What clients call: `pbr.devices`.
-struct Public;
+/// What clients call: `pbr.devices` (and, in self-test runs, `pbr.devices.debug`).
+struct Public {
+    selftest: bool,
+}
 
 impl Service for Public {
     fn call(&mut self, msg: Incoming, buffer: &[u8], reply: ReplyCap) {
-        if let Some((_, reply)) = devices::dispatch(self, msg, buffer, reply) {
+        // Both interfaces are version 1, so the debug one is told apart by its operation
+        // numbers; `devices::dispatch` would answer them as unknown.
+        let debug = msg.label >> 16 == u32::from(devices_debug::VERSION)
+            && matches!(
+                (msg.label & 0xFFFF) as u16,
+                devices_debug::stop::OP | devices_debug::forgive::OP
+            );
+        if self.selftest && debug {
+            if let Some((_, reply)) = devices_debug::dispatch(self, msg, buffer, reply) {
+                granite::interface::unknown(reply);
+            }
+        } else if let Some((_, reply)) = devices::dispatch(self, msg, buffer, reply) {
             granite::interface::unknown(reply);
         }
     }
@@ -263,9 +302,13 @@ impl devices::Server for Public {
             match g.devices.iter().find(|e| e.id == id) {
                 None => Err(DevicesError::NoSuchDevice),
                 Some(e) if e.state == DeviceState::Disabled => Err(DevicesError::Disabled),
+                // A driver that has ended but hasn't been noticed yet is not ready either.
+                Some(e) if !e.process.as_ref().is_some_and(supervise::alive) => {
+                    Err(DevicesError::NotReady)
+                }
                 Some(e) => match (&e.service, e.state) {
                     (Some(h), DeviceState::Running) => h
-                        .duplicate(rights::SEND | rights::TRANSFER)
+                        .duplicate(rights::SEND | rights::TRANSFER | rights::DUPLICATE)
                         .map_err(|_| DevicesError::NotReady),
                     _ => Err(DevicesError::NotReady),
                 },
@@ -275,6 +318,28 @@ impl devices::Server for Public {
             Ok(h) => reply.ok(h),
             Err(e) => reply.err(e),
         });
+    }
+}
+
+impl devices_debug::Server for Public {
+    fn stop(&mut self, id: u32, reply: devices_debug::stop::Reply) {
+        let ok = {
+            let g = REGISTRY.lock();
+            g.devices
+                .iter()
+                .find(|e| e.id == id)
+                .and_then(|e| e.process.as_ref())
+                .is_some_and(|p| p.process.stop(9).is_ok())
+        };
+        answered(if ok { reply.ok() } else { reply.err(DebugError::NoSuchDevice) });
+    }
+
+    fn forgive(&mut self, id: u32, reply: devices_debug::forgive::Reply) {
+        let ok = {
+            let mut g = REGISTRY.lock();
+            g.devices.iter_mut().find(|e| e.id == id).map(|e| e.history.forgive()).is_some()
+        };
+        answered(if ok { reply.ok() } else { reply.err(DebugError::NoSuchDevice) });
     }
 }
 
@@ -298,10 +363,17 @@ impl host::Server for Host {
         let result = {
             let mut g = REGISTRY.lock();
             match g.devices.iter_mut().find(|e| e.id == id) {
-                Some(e) if sound && e.state == DeviceState::Starting => {
+                Some(e)
+                    if sound
+                        && matches!(e.state, DeviceState::Starting | DeviceState::Restarting) =>
+                {
                     e.service = Some(service);
                     e.state = DeviceState::Running;
-                    granite::println!("devmgr: {} is running.", e.name);
+                    granite::println!(
+                        "devmgr: {} is running ({} ms after it started).",
+                        e.name,
+                        supervise::now_ms().saturating_sub(e.started_at)
+                    );
                     Ok(())
                 }
                 _ => Err(HostError::BadState),

@@ -11,12 +11,13 @@ use granite::device::{DeviceMemory, Interrupts, bus_address};
 use granite::endpoint::Endpoint;
 use granite::memory::Memory;
 use granite::process::{self, Spawn, Spawned};
+use granite::sys::perm;
 use granite::sys::rights;
 use pbr_archive::Archive;
 use pbr_devices::manifest::{Class, Manifest};
 use pbr_devices::pci::{Address, Bar, BarKind, Function};
 use pbr_devices::record::{Kind, MAX_BARS, Message, Record};
-use pbr_driver::role;
+use pbr_driver::{ConfigPage, Mmio, role};
 
 /// The BARs larger than this are not given to drivers (graphics apertures and the like are
 /// for drivers written for them).
@@ -74,8 +75,16 @@ pub fn device_class(c: Class) -> pbr_interfaces::pbr_devices::DeviceClass {
 pub struct Plan {
     /// The device record.
     pub record: Memory,
-    /// The function's configuration space.
+    /// The function's configuration space, as the driver gets it: a copy kept apart from the one
+    /// the device manager maps, so that revoking what the driver was given (which takes any
+    /// copies it passed on) leaves the device manager's own mapping alone.
     pub config: DeviceMemory,
+    /// The capability the mapping below hangs from.
+    pub _own_config: DeviceMemory,
+    /// The device manager's own mapping of it, made once: mapping and unmapping at every
+    /// restart would leave page-table pages behind each time (the kernel keeps a process's
+    /// page tables until the process ends).
+    pub config_page: ConfigPage,
     /// The BARs given, by index.
     pub bars: Vec<(usize, DeviceMemory)>,
     /// The interrupts given.
@@ -146,9 +155,14 @@ pub fn plan(
         None
     };
 
+    let page = config.map(0, 4096, perm::READ_WRITE).map_err(err("mapping configuration space"))?;
+    let own = config;
+    let config =
+        DeviceMemory(own.0.duplicate(rights::ALL).map_err(err("copying configuration space"))?);
+    let config_page = ConfigPage(Mmio::new(page));
     let rec = Memory::create(4096).map_err(err("making the record"))?;
     rec.write(0, &record.encode()).map_err(err("writing the record"))?;
-    Ok(Plan { record: rec, config, bars, msis, dma })
+    Ok(Plan { record: rec, config, _own_config: own, config_page, bars, msis, dma })
 }
 
 /// Starts the driver for `plan`. `host` is the endpoint drivers report to; the driver's copy is
@@ -159,6 +173,7 @@ pub fn start(
     host: &Endpoint,
     id: u32,
     function: Address,
+    selftest: bool,
 ) -> Result<Spawned, PlanError> {
     let name =
         format!("{}@{:02x}:{:02x}.{}", d.name, function.bus, function.device, function.function);
@@ -198,6 +213,9 @@ pub fn start(
             false,
         ));
     }
+    // In self-test runs the driver also serves `pbr.driver.debug`.
+    let args =
+        if selftest { format!("{} selftest", d.manifest.args) } else { d.manifest.args.clone() };
     let spawned = process::spawn(&Spawn {
         name: &name,
         program: d.program,
@@ -205,7 +223,7 @@ pub fn start(
         priority: PRIORITY,
         caps: &grants,
         log: true,
-        args: &d.manifest.args,
+        args: &args,
     });
     spawned.map_err(|e| PlanError(format!("starting {name}: {e}")))
 }
