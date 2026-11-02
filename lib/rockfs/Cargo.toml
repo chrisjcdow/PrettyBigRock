@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-rockfs"
+description = "RockFS version 1 in Rust: the filesystem library behind the RockFS server (notes 0016, ROCKFS.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pbr-crc = { path = "../crc" }
+pbr-fs = { path = "../fs" }
+
+[lints]
+workspace = true

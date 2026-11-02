@@ -35,6 +35,7 @@ members = [
     "lib/partition",
     "lib/platform",
     "lib/ranges",
+    "lib/rockfs",
     "lib/virtio",
     "services/devmgr",
     "services/root",

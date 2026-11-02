@@ -129,6 +129,15 @@ name = "pbr-elf"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-files"
+version = "0.0.0"
+dependencies = [
+ "pbr-filetree",
+ "pbr-granite",
+ "pbr-interfaces",
+]
+
+[[package]]
 name = "pbr-filetree"
 version = "0.0.0"
 
@@ -196,6 +205,14 @@ name = "pbr-ranges"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-rockfs"
+version = "0.0.0"
+dependencies = [
+ "pbr-crc",
+ "pbr-fs",
+]
+
+[[package]]
 name = "pbr-root"
 version = "0.0.0"
 dependencies = [
@@ -227,6 +244,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-test-fileprobe"
+version = "0.0.0"
+dependencies = [
+ "pbr-files",
+ "pbr-granite",
+ "pbr-test-protocol",
+]
+
+[[package]]
+name = "pbr-test-memfs"
+version = "0.0.0"
+dependencies = [
+ "pbr-fsserve",
+ "pbr-granite",
+]
+
+[[package]]
 name = "pbr-test-probe"
 version = "0.0.0"
 dependencies = [
@@ -244,6 +278,16 @@ name = "pbr-virtio"
 version = "0.0.0"
 dependencies = [
  "pbr-devices",
+]
+
+[[package]]
+name = "rockfs-rs"
+version = "0.0.0"
+dependencies = [
+ "pbr-crc",
+ "pbr-fs",
+ "pbr-partition",
+ "pbr-rockfs",
 ]
 
 [[package]]

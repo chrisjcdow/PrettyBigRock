@@ -131,6 +131,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-partition",
     "pbr-platform",
     "pbr-ranges",
+    "pbr-rockfs",
     "pbr-virtio",
     "xtask",
 ];
