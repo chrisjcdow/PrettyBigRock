@@ -33,6 +33,7 @@ members = [
     "lib/virtio",
     "services/devmgr",
     "services/root",
+    "services/storage",
     "tests/programs/echo",
     "tests/programs/probe",
     "tests/programs/protocol",

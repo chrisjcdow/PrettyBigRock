@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-storage"
+description = "The storage service: disks, partitions, volumes and the shared block cache (note 0015)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "storage"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-blockcache = { path = "../../lib/blockcache" }
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-partition = { path = "../../lib/partition" }
+
+[lints]
+workspace = true

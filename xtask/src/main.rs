@@ -69,6 +69,7 @@ const ARCHES: &[Arch] = &[
 const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-root", "root", "root"),
     ("pbr-devmgr", "devmgr", "devmgr"),
+    ("pbr-storage", "storage", "storage"),
     ("pbr-driver-framebuffer", "framebuffer", "drivers/framebuffer"),
     ("pbr-driver-ps2", "ps2", "drivers/ps2"),
     ("pbr-driver-serial16550", "serial16550", "drivers/serial16550"),
@@ -100,6 +101,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-granite",
     "pbr-interfaces",
     "pbr-root",
+    "pbr-storage",
     "pbr-test-echo",
     "pbr-test-probe",
     "pbr-test-protocol",

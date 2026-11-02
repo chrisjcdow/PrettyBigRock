@@ -185,7 +185,18 @@ dependencies = [
  "pbr-devices",
  "pbr-granite",
  "pbr-interfaces",
+ "pbr-partition",
  "pbr-test-protocol",
+]
+
+[[package]]
+name = "pbr-storage"
+version = "0.0.0"
+dependencies = [
+ "pbr-blockcache",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-partition",
 ]
 
 [[package]]
@@ -224,4 +235,5 @@ dependencies = [
  "pbr-archive",
  "pbr-elf",
  "pbr-interface-compiler",
+ "pbr-partition",
 ]
