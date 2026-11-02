@@ -304,7 +304,7 @@ fn gpt_header(disk: &mut impl Disk, at: u64, total: u64) -> Result<Option<GptHea
         entries_crc: u32_at(&s, 88),
     };
     // The entry list must be a sane size, and lie on the disk outside the usable area.
-    let size_ok = header.size >= 128 && header.size <= 1024 && header.size % 8 == 0;
+    let size_ok = header.size >= 128 && header.size <= 1024 && header.size.is_multiple_of(8);
     let bytes = u64::from(header.count) * u64::from(header.size);
     let usable_ok = header.first_usable <= header.last_usable && header.last_usable < total;
     if !size_ok || header.count == 0 || bytes > 128 * 1024 || !usable_ok {

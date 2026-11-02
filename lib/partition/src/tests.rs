@@ -107,7 +107,7 @@ fn gpt(disk: &mut Mem, parts: &[([u8; 16], u64, u64)]) {
         h[32..40].copy_from_slice(&other.to_le_bytes());
         h[40..48].copy_from_slice(&34u64.to_le_bytes());
         h[48..56].copy_from_slice(&(total - 34).to_le_bytes());
-        h[72..80].copy_from_slice(&(entries_at as u64).to_le_bytes());
+        h[72..80].copy_from_slice(&entries_at.to_le_bytes());
         h[80..84].copy_from_slice(&128u32.to_le_bytes());
         h[84..88].copy_from_slice(&128u32.to_le_bytes());
         h[88..92].copy_from_slice(&list_crc.to_le_bytes());
