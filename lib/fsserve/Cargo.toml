@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-fsserve"
+description = "The capability half of every filesystem server: records, rights, paths, pbr.file (note 0014)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pbr-fs = { path = "../fs" }
+pbr-granite = { path = "../granite" }
+pbr-interfaces = { path = "../interfaces" }
+
+[lints]
+workspace = true

@@ -133,6 +133,15 @@ name = "pbr-fs"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-fsserve"
+version = "0.0.0"
+dependencies = [
+ "pbr-fs",
+ "pbr-granite",
+ "pbr-interfaces",
+]
+
+[[package]]
 name = "pbr-granite"
 version = "0.0.0"
 dependencies = [
