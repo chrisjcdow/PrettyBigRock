@@ -22,8 +22,9 @@ use pbr_interfaces::pbr_devices_debug as devices_debug;
 
 /// The role of the device manager's public endpoint.
 const PUBLIC: u32 = start_role::OWN;
-/// What the device manager may use.
-const BUDGET: u64 = 64 * 1024 * 1024;
+/// What the device manager may use: enough for every driver of the self-test's machines (five
+/// disks, two input devices, and on x86-64 PS/2 and a serial port).
+const BUDGET: u64 = 96 * 1024 * 1024;
 const SECTOR: usize = 512;
 /// The size of the test disk, in sectors.
 const TEST_SECTORS: u64 = 2048;

@@ -59,7 +59,7 @@ fn put64(b: &mut [u8], o: usize, v: u64) {
     b[o..o + 8].copy_from_slice(&v.to_le_bytes());
 }
 
-fn protective_mbr(s: &mut [u8], total: u64) {
+pub fn protective_mbr(s: &mut [u8], total: u64) {
     let p = 446;
     s[p] = 0x00; // not "active" (see the open question in note 0004)
     s[p + 1..p + 4].copy_from_slice(&[0x00, 0x02, 0x00]);
@@ -100,8 +100,6 @@ fn guid(s: &str) -> [u8; 16] {
 }
 
 fn gpt(disk: &mut [u8], total: u64) {
-    let last = total - 1;
-    let mut entries = vec![0u8; 128 * 128];
     let parts = [
         (
             "21686148-6449-6E6F-744E-656564454649",
@@ -118,6 +116,17 @@ fn gpt(disk: &mut [u8], total: u64) {
             "EFI system",
         ),
     ];
+    gpt_table(disk, total, &parts);
+}
+
+/// A GPT partition: (type GUID, partition GUID, first sector, sectors, name).
+pub type GptPart<'a> = (&'a str, &'a str, u64, u64, &'a str);
+
+/// Writes a GPT (both copies) describing `parts` onto `disk` of `total` sectors. The protective
+/// MBR is the caller's.
+pub fn gpt_table(disk: &mut [u8], total: u64, parts: &[GptPart<'_>]) {
+    let last = total - 1;
+    let mut entries = vec![0u8; 128 * 128];
     for (i, (ty, id, start, len, name)) in parts.iter().enumerate() {
         let e = &mut entries[i * 128..(i + 1) * 128];
         e[..16].copy_from_slice(&guid(ty));
@@ -267,6 +276,16 @@ fn write_dir(
 /// Builds a FAT32 volume `sectors` long holding `files`. `hidden` is the volume's first sector
 /// on the disk.
 pub fn fat32(files: &[(&str, &[u8])], hidden: u64, sectors: u64) -> Result<Vec<u8>, String> {
+    fat32_labelled(files, hidden, sectors, b"PBR BOOT   ")
+}
+
+/// [`fat32`], with the volume label `label` (11 bytes, padded with spaces).
+pub fn fat32_labelled(
+    files: &[(&str, &[u8])],
+    hidden: u64,
+    sectors: u64,
+    label: &[u8; 11],
+) -> Result<Vec<u8>, String> {
     let total = sectors as u32;
     // FAT size: each cluster needs 4 bytes; solve for the size that covers what's left.
     let mut fat_sectors = 1u32;
@@ -314,7 +333,7 @@ pub fn fat32(files: &[(&str, &[u8])], hidden: u64, sectors: u64) -> Result<Vec<u
     bs[64] = 0x80;
     bs[66] = 0x29;
     put32(bs, 67, 0x5042_5221);
-    bs[71..82].copy_from_slice(b"PBR BOOT   ");
+    bs[71..82].copy_from_slice(label);
     bs[82..90].copy_from_slice(b"FAT32   ");
     bs[510] = 0x55;
     bs[511] = 0xAA;

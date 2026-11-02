@@ -145,8 +145,9 @@ fn scan(d: &Devmgr, m: &Machine) -> Result<Vec<DeviceInfo>, String> {
     };
     let x86 = cfg!(target_arch = "x86_64");
     let want = [
-        // The test disk, and on ARM64 the boot disk too (on x86-64 that is an AHCI disk).
-        ("virtio disks", count(DeviceClass::Block, "virtio-blk"), if x86 { 1 } else { 2 }),
+        // The test disk and the storage tests' three (M5), and on ARM64 the boot disk too (on
+        // x86-64 that is an AHCI disk).
+        ("virtio disks", count(DeviceClass::Block, "virtio-blk"), if x86 { 4 } else { 5 }),
         ("virtio input devices", count(DeviceClass::Input, "virtio-input"), 2),
         ("PS/2 controllers", count(DeviceClass::Input, "ps2"), usize::from(x86 && m.ps2)),
         ("serial ports", count(DeviceClass::Serial, "serial16550"), usize::from(x86)),

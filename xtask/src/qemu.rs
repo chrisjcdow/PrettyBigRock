@@ -218,6 +218,12 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     cmd.arg("-drive")
         .arg(format!("if=none,id=testdisk,format=raw,file={},snapshot=on", disk.display()));
     cmd.args(["-device", "virtio-blk-pci,drive=testdisk"]);
+    // The storage service's test disks (note 0018, section 7, test 2).
+    for (i, disk) in crate::testdisks::make(work)?.iter().enumerate() {
+        cmd.arg("-drive")
+            .arg(format!("if=none,id=storage{i},format=raw,file={},snapshot=on", disk.display()));
+        cmd.arg("-device").arg(format!("virtio-blk-pci,drive=storage{i}"));
+    }
     cmd.args(["-device", "virtio-keyboard-pci,id=vkbd,display=gpu"]);
     cmd.args(["-device", "virtio-mouse-pci,id=vmouse,display=gpu"]);
     cmd.arg("-no-reboot");

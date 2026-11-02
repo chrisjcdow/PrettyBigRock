@@ -26,6 +26,7 @@ use std::time::Duration;
 mod elf;
 mod image;
 mod qemu;
+mod testdisks;
 
 /// A processor family PrettyBigRock is built for.
 struct Arch {
