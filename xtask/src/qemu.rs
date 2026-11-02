@@ -283,14 +283,28 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
         if text.contains(REPORT_DONE) {
             break Ok(text);
         }
+        // A kernel exception or panic: give it a moment to finish its report, then ask QEMU
+        // what every core is doing, since the report may never finish.
+        if text.contains("\nException on core") || text.contains("The kernel stopped because") {
+            std::thread::sleep(Duration::from_secs(3));
+            let text = fs::read_to_string(&log).unwrap_or_default();
+            let regs = qmp.registers(cfg.cores);
+            let _ = fs::write(log.with_extension("registers.txt"), &regs);
+            break Err(format!(
+                "the kernel stopped.\n--- serial output ---\n{text}\n--- registers ---\n{regs}"
+            ));
+        }
         if let Ok(Some(st)) = child.try_wait() {
             break Err(format!(
                 "QEMU stopped ({st}) before the kernel finished.\n--- serial output ---\n{text}"
             ));
         }
         if start.elapsed() > limit {
+            let regs = qmp.registers(cfg.cores);
+            let _ = fs::write(log.with_extension("registers.txt"), &regs);
             break Err(format!(
-                "no start-up report after {} seconds.\n--- serial output ---\n{text}",
+                "no start-up report after {} seconds.\n--- serial output ---\n{text}\n--- \
+                 registers ---\n{regs}",
                 limit.as_secs()
             ));
         }
@@ -373,6 +387,11 @@ impl Qmp {
 
     /// Sends one command and waits for its answer (skipping events).
     fn command(&mut self, json: &str) -> Result<(), String> {
+        self.query(json).map(|_| ())
+    }
+
+    /// Sends one command and returns its answer line (skipping events).
+    fn query(&mut self, json: &str) -> Result<String, String> {
         use std::io::{BufRead, Write};
         let (w, r) = self.conn.as_mut().ok_or("not connected")?;
         writeln!(w, "{json}").map_err(|e| format!("writing to QEMU: {e}"))?;
@@ -386,8 +405,52 @@ impl Qmp {
                 return Err(format!("QEMU refused {json:.200}: {line}"));
             }
             if line.contains("\"return\"") {
-                return Ok(());
+                return Ok(line);
             }
+        }
+    }
+
+    /// What every core was doing, for a run that failed: QEMU's own view of each virtual
+    /// processor's registers, which works even when the kernel can no longer print. (A kernel
+    /// that faults on a broken stack often stops halfway through its own report.)
+    fn registers(&mut self, cores: u32) -> String {
+        if let Err(e) = self.connect() {
+            return format!("(couldn't ask QEMU for the registers: {e})");
+        }
+        let mut out = String::new();
+        for cpu in 0..cores {
+            let regs = self.hmp(cpu, "info registers");
+            out.push_str(&format!("--- core {cpu}: registers (QEMU's view) ---\n{regs}\n"));
+            // The top of its stack too, which holds the return addresses: AArch64 calls the
+            // stack pointer SP, x86-64 RSP.
+            let sp = regs
+                .split(|c: char| c.is_whitespace())
+                .find_map(|w| w.strip_prefix("SP=").or_else(|| w.strip_prefix("RSP=")));
+            if let Some(sp) = sp {
+                let stack = self.hmp(cpu, &format!("x /48xg 0x{sp}"));
+                out.push_str(&format!("--- core {cpu}: stack from {sp} ---\n{stack}\n"));
+            }
+        }
+        out
+    }
+
+    /// Runs one of QEMU's monitor commands as core `cpu` sees things, and returns its text.
+    fn hmp(&mut self, cpu: u32, what: &str) -> String {
+        let json = format!(
+            r#"{{"execute":"human-monitor-command","arguments":{{"command-line":"{what}","cpu-index":{cpu}}}}}"#
+        );
+        match self.query(&json) {
+            Ok(line) => {
+                // The answer is a JSON string: undo its escapes enough to read it.
+                let body = line
+                    .split_once("\"return\": \"")
+                    .map_or(line.as_str(), |(_, b)| b)
+                    .trim_end()
+                    .trim_end_matches('}')
+                    .trim_end_matches('"');
+                body.replace("\\r\\n", "\n").replace("\\n", "\n")
+            }
+            Err(e) => format!("({e})"),
         }
     }
 
