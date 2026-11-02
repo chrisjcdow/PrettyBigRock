@@ -19,6 +19,13 @@ pub mod op {
     pub const COUNT: u32 = 4;
     /// Replies with the rights each capability arrived with (4 bytes each), and closes them.
     pub const RIGHTS: u32 = 5;
+    /// Replies with a capability derived from the one the caller called through
+    /// (docs/design/0013-kernel-1.2.md, section 2): the data is the new badge (8 bytes) and the
+    /// rights to keep (4 bytes).
+    pub const DERIVE: u32 = 6;
+    /// Replies with how many gone notices the service has received, and the last badge (8
+    /// bytes each).
+    pub const GONE: u32 = 7;
 }
 
 /// Start-up roles (note 0009, section 4: 1000 and up are for programs to agree).
@@ -39,6 +46,11 @@ pub mod role {
     pub const DEVICE: u32 = 1006;
     /// `probe`: a slice of interrupts.
     pub const INTERRUPT: u32 = 1007;
+    /// `probe tied`: the probe program itself, as a memory object, to start children from.
+    pub const PROGRAM: u32 = 1008;
+    /// `probe tied`: an endpoint to the root program, to send it its children's process
+    /// capabilities.
+    pub const REPORT: u32 = 1009;
 }
 
 /// Exit statuses: 0 means the probe's checks passed; anything else is the number of the

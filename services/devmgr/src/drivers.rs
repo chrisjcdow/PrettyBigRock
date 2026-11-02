@@ -342,6 +342,7 @@ pub fn start(
         caps: &grants,
         log: true,
         args: &args,
+        tied: false,
     });
     spawned.map_err(|e| PlanError(format!("starting {name}: {e}")))
 }

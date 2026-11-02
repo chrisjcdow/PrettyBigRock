@@ -38,6 +38,8 @@ pub fn serve(ep: &Endpoint, buffer_size: usize, service: &mut impl Service) -> !
                 failures = 0;
                 service.signal(bits);
             }
+            // Drivers don't mint watched badges, so this never comes.
+            Ok(Event::Gone(_)) => failures = 0,
             Err(e) => {
                 failures += 1;
                 if failures >= MAX_FAILURES {

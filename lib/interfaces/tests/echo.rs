@@ -156,6 +156,22 @@ fn handles() {
     );
 }
 
+/// A reply's capability can be one the service holds, or derived from the caller's
+/// (docs/design/0013-kernel-1.2.md, section 2): either way the layout is the same, and the
+/// derived one is sent as the special entry with its badge.
+#[test]
+fn derived_replies() {
+    use granite::interface::OutCap;
+    use granite::message::DERIVED;
+    let held = echo::pass::encode_reply(Notification(Handle::from_raw(0x10_0005)), Some(1));
+    let derived = echo::pass::encode_reply(OutCap::derived(42, 0x300), Some(1));
+    assert_eq!(held.0, derived.0);
+    assert_eq!(held.1, derived.1);
+    assert_eq!((held.2[0].handle, held.2[0].moving), (0x10_0005, true));
+    let c = derived.2[0];
+    assert_eq!((c.handle, c.badge, c.mask), (DERIVED, 42, 0x300));
+}
+
 #[test]
 fn errors_and_enums() {
     assert_eq!(u32::from(EchoError::Overflow), 1);

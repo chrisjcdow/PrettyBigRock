@@ -130,8 +130,17 @@ pub(crate) fn spawn(
     caps: &[Grant],
     budget: u64,
 ) -> Result<Spawned, String> {
-    process::spawn(&Spawn { name, program: file, budget, priority: 1, caps, log: true, args })
-        .map_err(|e| format!("starting {name} ({args}): {e}"))
+    process::spawn(&Spawn {
+        name,
+        program: file,
+        budget,
+        priority: 1,
+        caps,
+        log: true,
+        args,
+        tied: false,
+    })
+    .map_err(|e| format!("starting {name} ({args}): {e}"))
 }
 
 /// Waits up to `secs` seconds for a process to end.

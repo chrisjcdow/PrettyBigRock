@@ -26,19 +26,32 @@ pub struct CapSend {
     pub mask: u32,
     /// Moved (the sender loses it) rather than copied.
     pub moving: bool,
+    /// For [`CapSend::derived`] only: the new capability's badge (otherwise 0).
+    pub badge: u64,
 }
 
 impl CapSend {
     /// Sends a copy of `h` with only the rights in `mask`. The sender keeps `h`.
     pub fn copy(h: &Handle, mask: u32) -> CapSend {
-        CapSend { handle: h.raw(), mask, moving: false }
+        CapSend { handle: h.raw(), mask, moving: false, badge: 0 }
     }
 
     /// Moves `h` to the receiver, with only the rights in `mask`.
     pub fn moved(h: Handle, mask: u32) -> CapSend {
-        CapSend { handle: h.into_raw(), mask, moving: true }
+        CapSend { handle: h.into_raw(), mask, moving: true, badge: 0 }
+    }
+
+    /// In a reply only: a new capability derived from the one the caller called through
+    /// (docs/design/0013-kernel-1.2.md, section 2), carrying the watched badge `badge` and the
+    /// caller's rights masked by `mask`. At most one per reply; `badge` can't be 0.
+    pub fn derived(badge: u64, mask: u32) -> CapSend {
+        // The badge travels in the reply's badge field; `moving` carries no meaning here.
+        CapSend { handle: DERIVED, mask, moving: false, badge }
     }
 }
+
+/// The capability entry that asks for a derived capability (note 0013, section 2).
+pub const DERIVED: u32 = 0xFFFF_FFFF;
 
 /// A message to send.
 #[derive(Clone, Copy, Debug, Default)]
@@ -154,7 +167,13 @@ pub(crate) fn write(
         put(page, 8 + 4 * i, &h.to_le_bytes());
         put(page, 24 + 4 * i, &mask.to_le_bytes());
     }
-    put(page, 40, &0u64.to_le_bytes());
+    // A reply's badge field carries a derived capability's badge (note 0013); one at most.
+    let mut derived = m.caps.iter().filter(|c| c.handle == DERIVED);
+    let badge = derived.next().map_or(0, |c| c.badge);
+    if derived.next().is_some() {
+        return Err(Error::InvalidArgument);
+    }
+    put(page, 40, &badge.to_le_bytes());
     put(page, 48, &(buffer as u64).to_le_bytes());
     put(page, 56, &(send as u32).to_le_bytes());
     put(page, 60, &(capacity.min(BUFFER_MAX) as u32).to_le_bytes());

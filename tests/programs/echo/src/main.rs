@@ -29,6 +29,9 @@ use pbr_test_protocol::{op, role};
 granite::main!(main);
 
 static CALLS: AtomicU64 = AtomicU64::new(0);
+/// Gone notices received (note 0013), and the badge of the last one.
+static GONE: AtomicU64 = AtomicU64::new(0);
+static LAST_GONE: AtomicU64 = AtomicU64::new(0);
 
 fn main(mut start: granite::Start) -> i32 {
     let Some(ep) = start.take(role::ENDPOINT) else {
@@ -64,6 +67,11 @@ fn serve(ep: u32) {
         let (mut msg, reply) = match ep.receive(&mut buffer, time::FOREVER) {
             Ok(Event::Call(m, r)) => (m, r),
             Ok(Event::Signal(_)) => continue,
+            Ok(Event::Gone(badge)) => {
+                LAST_GONE.store(badge, Ordering::SeqCst);
+                GONE.fetch_add(1, Ordering::SeqCst);
+                continue;
+            }
             Err(e) => {
                 granite::println!("echo: receive failed: {e}");
                 time::sleep_ms(10);
@@ -81,7 +89,7 @@ fn serve(ep: u32) {
         let result = match msg.label {
             op::ECHO => {
                 buffer[..n].reverse();
-                let mut caps = [CapSend { handle: 0, mask: 0, moving: true }; 4];
+                let mut caps = [CapSend { handle: 0, mask: 0, moving: true, badge: 0 }; 4];
                 let count = msg.cap_count();
                 for (i, c) in caps.iter_mut().enumerate().take(count) {
                     if let Some(h) = msg.take_cap(i) {
@@ -101,6 +109,21 @@ fn serve(ep: u32) {
                 for i in 0..msg.cap_count() {
                     out.extend_from_slice(&msg.cap_rights(i).to_le_bytes());
                 }
+                reply.reply(&Outgoing::new(0, &out), &[])
+            }
+            op::DERIVE => {
+                let d = msg.data();
+                let badge =
+                    d.get(..8).map_or(0, |b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8])));
+                let mask =
+                    d.get(8..12).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap_or([0; 4])));
+                let caps = [CapSend::derived(badge, mask)];
+                reply.reply(&Outgoing { label: 0, data: &[], caps: &caps }, &[])
+            }
+            op::GONE => {
+                let mut out = [0u8; 16];
+                out[..8].copy_from_slice(&GONE.load(Ordering::SeqCst).to_le_bytes());
+                out[8..].copy_from_slice(&LAST_GONE.load(Ordering::SeqCst).to_le_bytes());
                 reply.reply(&Outgoing::new(0, &out), &[])
             }
             op::CRASH => {

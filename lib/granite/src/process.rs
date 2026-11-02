@@ -99,6 +99,12 @@ pub struct Info {
     pub id: u64,
 }
 
+/// `process_create`'s flag for a tied process (note 0013, section 3).
+const TIED: u64 = 1 << 8;
+
+/// The exit status of a tied process stopped because its creator ended: "TIED" in ASCII.
+pub const TIED_STATUS: u64 = 0x5449_4544;
+
 /// A process capability.
 #[derive(Debug)]
 pub struct Process(pub Handle);
@@ -107,7 +113,15 @@ impl Process {
     /// A new, empty process named `name`, with a budget of `budget` bytes taken from this
     /// one's, whose threads may have priorities up to `max_priority`.
     pub fn create(name: &str, budget: u64, max_priority: u8) -> Result<Process> {
-        let a = [budget, max_priority.into(), name.as_ptr() as u64, name.len() as u64, 0, 0];
+        Process::create_with(name, budget, max_priority, false)
+    }
+
+    /// [`Process::create`], and with `tied` the new process ends when this one does
+    /// (docs/design/0013-kernel-1.2.md, section 3): a supervisor's way of making sure nothing
+    /// it started outlives it.
+    pub fn create_with(name: &str, budget: u64, max_priority: u8, tied: bool) -> Result<Process> {
+        let flags = u64::from(max_priority) | if tied { TIED } else { 0 };
+        let a = [budget, flags, name.as_ptr() as u64, name.len() as u64, 0, 0];
         sys::call(num::PROCESS_CREATE, a).map(|(h, _)| Process(Handle::from_raw(h as u32)))
     }
 
@@ -205,6 +219,8 @@ pub struct Spawn<'a> {
     pub log: bool,
     /// Its arguments (at most 3 KiB).
     pub args: &'a str,
+    /// It ends when this program does (note 0013, section 3).
+    pub tied: bool,
 }
 
 /// A program that has been started.
@@ -230,7 +246,7 @@ pub fn spawn(s: &Spawn<'_>) -> core::result::Result<Spawned, SpawnError> {
     if s.args.len() > 3072 {
         return Err(SpawnError::System(Error::TooBig));
     }
-    let process = Process::create(s.name, s.budget, s.priority)?;
+    let process = Process::create_with(s.name, s.budget, s.priority, s.tied)?;
     let p = process.0.raw();
 
     // One memory object holds the whole image. Mapping it once shows where the kernel puts

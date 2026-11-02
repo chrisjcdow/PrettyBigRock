@@ -242,6 +242,7 @@ pub mod num {
     pub const ENDPOINT_REPLY_RECEIVE: u64 = 55;
     pub const ENDPOINT_BIND: u64 = 56;
     pub const ENDPOINT_WATCH: u64 = 57;
+    pub const ENDPOINT_MINT_WATCHED: u64 = 58;
     pub const NOTIFICATION_CREATE: u64 = 60;
     pub const NOTIFICATION_SIGNAL: u64 = 61;
     pub const NOTIFICATION_WAIT: u64 = 62;
@@ -265,10 +266,12 @@ pub mod num {
 
 /// The interface version this `granite` is built for, recorded in every program's
 /// PrettyBigRock note.
-pub const VERSION: (u16, u16) = (1, 1);
+pub const VERSION: (u16, u16) = (1, 2);
 
 static CALL: AtomicU64 = AtomicU64::new(0);
 static CLOCK: AtomicU64 = AtomicU64::new(0);
+/// The system data page, which follows the code page (note 0007, section 1).
+static DATA: AtomicU64 = AtomicU64::new(0);
 
 /// Records where the system page is. Called once, at start-up, before any system call.
 ///
@@ -284,6 +287,20 @@ pub unsafe fn set_system_page(page: u64) {
     };
     CALL.store(page + call, Ordering::Release);
     CLOCK.store(page + clock, Ordering::Release);
+    DATA.store(page + 4096, Ordering::Release);
+}
+
+/// The wall-clock time when the monotonic clock started, in nanoseconds since 1970 UTC, from
+/// the system data page (interface 1.2, docs/design/0013-kernel-1.2.md, section 4); 0 if the
+/// kernel didn't know it, or is older than 1.2.
+pub fn wall_clock_start() -> u64 {
+    let data = DATA.load(Ordering::Acquire);
+    if data == 0 {
+        return 0;
+    }
+    // SAFETY: the kernel maps the data page readable after the code page; a 1.0 or 1.1 kernel
+    // left offset 24 as 0, which reads as "unknown".
+    unsafe { core::ptr::read_volatile((data + 24) as *const u64) }
 }
 
 /// Makes system call `n` with six arguments. Returns (status, result 1, result 2).

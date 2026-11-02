@@ -80,6 +80,41 @@ impl<E> From<Malformed> for CallError<E> {
     }
 }
 
+/// A capability a service answers with: one it holds (`Cap`), or, in a reply, a new one
+/// derived from the capability the caller called through (`Derived`; docs/design/
+/// 0013-kernel-1.2.md, section 2). The derived one is a child of the caller's in the kernel's
+/// derivation tree, so revoking the caller's capability revokes it too, and it carries a
+/// watched badge, so the service is told when it has gone.
+///
+/// Generated `Reply::ok` methods take `impl Into<OutCap<T>>` for each capability result, so a
+/// service can pass the capability itself, as before, or `OutCap::derived(badge, rights)`.
+/// (`impl Into<X>` means "any value that can be turned into an X".)
+#[derive(Debug)]
+pub enum OutCap<T> {
+    /// A capability the service holds, moved to the caller.
+    Cap(T),
+    /// A capability derived from the caller's.
+    Derived {
+        /// Its badge, which the service chooses (never 0).
+        badge: u64,
+        /// The endpoint rights to keep from the caller's capability.
+        rights: u32,
+    },
+}
+
+impl<T> OutCap<T> {
+    /// A derived capability carrying `badge`, with the caller's rights masked by `rights`.
+    pub fn derived(badge: u64, rights: u32) -> OutCap<T> {
+        OutCap::Derived { badge, rights }
+    }
+}
+
+impl<T> From<T> for OutCap<T> {
+    fn from(t: T) -> OutCap<T> {
+        OutCap::Cap(t)
+    }
+}
+
 /// A laid-out message: its fixed part, its variable part, and the capabilities it moves.
 pub type Encoded = (Vec<u8>, Vec<u8>, Vec<CapSend>);
 
@@ -180,6 +215,14 @@ impl Encoder {
     pub fn handle(&mut self, h: Handle) {
         let i = self.caps.len() as u64;
         self.caps.push(CapSend::moved(h, u32::MAX));
+        self.uint(i, 4);
+    }
+
+    /// In a reply: asks for a capability derived from the one the caller called through
+    /// ([`OutCap::Derived`]), and writes its index.
+    pub fn derived(&mut self, badge: u64, rights: u32) {
+        let i = self.caps.len() as u64;
+        self.caps.push(CapSend::derived(badge, rights));
         self.uint(i, 4);
     }
 

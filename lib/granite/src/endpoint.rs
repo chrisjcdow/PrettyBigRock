@@ -24,6 +24,9 @@ pub enum Event {
     Call(Incoming, ReplyCap),
     /// The bound notification's bits.
     Signal(u64),
+    /// Every capability carrying this watched badge has gone (docs/design/0013-kernel-1.2.md,
+    /// section 1): whatever the service kept for it can be freed.
+    Gone(u64),
 }
 
 /// A one-time capability to answer a call. Dropping it without replying tells the caller the
@@ -45,6 +48,14 @@ impl Endpoint {
     pub fn mint(&self, badge: u64, mask: u32) -> Result<Endpoint> {
         sys::call(num::ENDPOINT_MINT, [self.0.raw().into(), badge, mask.into(), 0, 0, 0])
             .map(|(h, _)| Endpoint(Handle::from_raw(h as u32)))
+    }
+
+    /// A copy carrying `badge`, with only the rights in `mask`, whose badge the kernel watches:
+    /// once every capability carrying it has gone, a receive here returns [`Event::Gone`] with
+    /// it. Needs the receive right (only a service watches its own badges). `badge` can't be 0.
+    pub fn mint_watched(&self, badge: u64, mask: u32) -> Result<Endpoint> {
+        let a = [self.0.raw().into(), badge, mask.into(), 0, 0, 0];
+        sys::call(num::ENDPOINT_MINT_WATCHED, a).map(|(h, _)| Endpoint(Handle::from_raw(h as u32)))
     }
 
     /// Calls the endpoint and waits for the reply. The first `send` bytes of `buffer` go with
@@ -89,10 +100,10 @@ impl Endpoint {
 }
 
 fn event(p: *mut u8, kind: u64, value: u64) -> Event {
-    if kind & 0xFFFF_FFFF == 2 {
-        Event::Signal(value)
-    } else {
-        Event::Call(message::read(p), ReplyCap(Handle::from_raw(value as u32)))
+    match kind & 0xFFFF_FFFF {
+        2 => Event::Signal(value),
+        3 => Event::Gone(value),
+        _ => Event::Call(message::read(p), ReplyCap(Handle::from_raw(value as u32))),
     }
 }
 

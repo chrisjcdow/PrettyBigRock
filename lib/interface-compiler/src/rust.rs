@@ -451,9 +451,22 @@ impl Gen<'_> {
 
     /// `name: type` parameters, borrowed.
     fn params(&self, fields: &[Field]) -> String {
+        self.params_for(fields, false)
+    }
+
+    /// `name: type` parameters; with `reply`, a capability result can also be answered with a
+    /// derived capability (note 0013), so it's taken as `impl Into<OutCap<…>>`.
+    fn params_for(&self, fields: &[Field], reply: bool) -> String {
         fields
             .iter()
-            .map(|f| format!("{}: {}", f.name, self.borrowed(&f.ty)))
+            .map(|f| match &f.ty {
+                Ty::Handle(k) if reply => format!(
+                    "{}: impl ::core::convert::Into<{GI}::OutCap<{}>>",
+                    f.name,
+                    self.handle_type(k)
+                ),
+                ty => format!("{}: {}", f.name, self.borrowed(ty)),
+            })
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -480,7 +493,8 @@ impl Gen<'_> {
 
     fn encode_fn(&mut self, which: &str, fields: &[Field], size_const: &str) {
         self.line(&format!("/// Lays out a {which}."));
-        let params = self.params(fields);
+        let reply = which == "reply";
+        let params = self.params_for(fields, reply);
         self.open(&format!("pub fn encode_{which}({params}) -> {GI}::Encoded {{"));
         if fields.is_empty() {
             self.line(&format!("{GI}::Encoder::new().finish({size_const})"));
@@ -488,6 +502,21 @@ impl Gen<'_> {
             self.line(&format!("let mut m_ = {GI}::Encoder::new();"));
             self.line("let e_ = &mut m_;");
             for f in fields {
+                if let (true, Ty::Handle(k)) = (reply, &f.ty) {
+                    // A capability result: one the service holds, or a derived one.
+                    let t = self.handle_type(k);
+                    let h = self.unwrap_handle(k, "v_");
+                    self.open(&format!(
+                        "match ::core::convert::Into::<{GI}::OutCap<{t}>>::into({}) {{",
+                        f.name
+                    ));
+                    self.line(&format!("{GI}::OutCap::Cap(v_) => e_.handle({h}),"));
+                    self.line(&format!(
+                        "{GI}::OutCap::Derived {{ badge, rights }} => e_.derived(badge, rights),"
+                    ));
+                    self.close("}");
+                    continue;
+                }
                 let has = if Self::by_value(&f.ty) || is_top_handle(&f.ty) {
                     Has::Place
                 } else {
@@ -631,7 +660,7 @@ impl Gen<'_> {
         self.close("}");
         self.line("");
         self.line("/// Answers with the results.");
-        let params = self.params(&op.results);
+        let params = self.params_for(&op.results, true);
         self.open(&format!(
             "pub fn ok(self{}{params}) -> ::granite::Result<()> {{",
             if params.is_empty() { "" } else { ", " }
