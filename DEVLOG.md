@@ -356,3 +356,12 @@ disks made by 1.3, including writing and reading back.
   - 0017, users, a sandbox manager per session, app manifests and rules;
   - 0018, supervision (including the device manager's death and its DMA memory), the console
     and shell, the tests, and nine stages with who builds each.
+- Chris accepted notes 0013 to 0018 ("happy for you to go ahead").
+- **Stage 1, kernel interface 1.2** (Opus): watched badges (call 58 and receive kind 3), derived
+  capabilities in replies, tied processes, and the wall clock in the system data page; their
+  support in `granite` (`mint_watched`, `Event::Gone`, `CapSend::derived`, `Spawn::tied`,
+  `time::wall_now`) and in generated code (`Reply::ok` takes `impl Into<OutCap<T>>`). The root
+  program's new `kernel12` tests, with `echo`'s new DERIVE and GONE operations and `probe`'s
+  `tied` mode, pass on all four configurations. Building it found that the system page's header
+  still said interface 1.0 under the 1.1 kernel; it is now written from the kernel's one version
+  constant. Notes 0007, 0008, 0013 and 0018 updated.
