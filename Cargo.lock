@@ -106,6 +106,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-driver-virtio-input"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-driver",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-virtio",
+]
+
+[[package]]
 name = "pbr-elf"
 version = "0.0.0"
 
@@ -156,6 +167,7 @@ name = "pbr-root"
 version = "0.0.0"
 dependencies = [
  "pbr-archive",
+ "pbr-devices",
  "pbr-granite",
  "pbr-interfaces",
  "pbr-test-protocol",

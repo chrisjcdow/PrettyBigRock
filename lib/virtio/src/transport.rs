@@ -415,6 +415,12 @@ impl<R: Registers> DeviceConfig<'_, R> {
         Ok((self.window.offset + offset) as usize)
     }
 
+    /// Writes 8 bits (some devices have selector bytes in their configuration).
+    pub fn write8(&self, offset: u32, value: u8) -> Result<(), Error> {
+        self.bar.write8(self.at(offset, 1)?, value);
+        Ok(())
+    }
+
     /// Reads 8 bits.
     pub fn read8(&self, offset: u32) -> Result<u8, Error> {
         Ok(self.bar.read8(self.at(offset, 1)?))

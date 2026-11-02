@@ -72,6 +72,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-driver-ps2", "ps2", "drivers/ps2"),
     ("pbr-driver-serial16550", "serial16550", "drivers/serial16550"),
     ("pbr-driver-virtio-blk", "virtio-blk", "drivers/virtio-blk"),
+    ("pbr-driver-virtio-input", "virtio-input", "drivers/virtio-input"),
     ("pbr-test-echo", "echo", "echo"),
     ("pbr-test-probe", "probe", "probe"),
 ];
@@ -83,6 +84,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("drivers/ps2.drv", "drivers/ps2.drv"),
     ("drivers/serial16550.drv", "drivers/serial16550.drv"),
     ("drivers/virtio-blk.drv", "drivers/virtio-blk.drv"),
+    ("drivers/virtio-input.drv", "drivers/virtio-input.drv"),
 ];
 
 /// Crates built for the programs' targets, checked with Clippy there.
@@ -93,6 +95,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-driver-ps2",
     "pbr-driver-serial16550",
     "pbr-driver-virtio-blk",
+    "pbr-driver-virtio-input",
     "pbr-granite",
     "pbr-interfaces",
     "pbr-root",

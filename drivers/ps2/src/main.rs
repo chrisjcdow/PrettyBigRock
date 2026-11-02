@@ -25,9 +25,9 @@ use pbr_interfaces::pbr_input::{self as input, InputKind};
 
 granite::main!(main);
 
-/// Ports, as offsets into the slice the driver was given (which starts at 0x60).
+/// The data port (0x60) is the first range, the status and command port (0x64) the second.
 const DATA: u64 = 0;
-const STATUS: u64 = 4; // read: status; write: command
+const STATUS: u64 = 0; // read: status; write: command
 const OBF: u64 = 1 << 0; // output buffer full: a byte is waiting
 const IBF: u64 = 1 << 1; // input buffer full: the controller isn't ready for a byte
 const AUX: u64 = 1 << 5; // the waiting byte came from the mouse
@@ -57,9 +57,10 @@ fn run(mut dev: Device) -> Result<core::convert::Infallible, &'static str> {
     if dev.record.kind != Kind::Legacy || dev.irqs.len() != 2 {
         return Err("not a PS/2 controller");
     }
-    let ports = dev.ports.take().ok_or("no ports")?;
+    let ports = dev.ports.take().ok_or("no data port")?;
+    let command = dev.ports2.take().ok_or("no command port")?;
     let host = dev.host.take().ok_or("no endpoint to the device manager")?;
-    let mut ctl = Controller { ports };
+    let mut ctl = Controller { ports, command };
     let mouse_present = ctl.start()?;
     granite::println!("ps2: controller started{}.", if mouse_present { "" } else { " (no mouse)" });
 
@@ -72,12 +73,15 @@ fn run(mut dev: Device) -> Result<core::convert::Infallible, &'static str> {
 }
 
 struct Controller {
+    /// Port 0x60.
     ports: IoPorts,
+    /// Port 0x64.
+    command: IoPorts,
 }
 
 impl Controller {
     fn status(&self) -> Result<u64, &'static str> {
-        self.ports.read(STATUS, 1).map_err(|_| "a port read failed")
+        self.command.read(STATUS, 1).map_err(|_| "a port read failed")
     }
 
     fn wait(&self, mut ready: impl FnMut(u64) -> bool) -> Result<bool, &'static str> {
@@ -101,7 +105,10 @@ impl Controller {
     }
 
     fn command(&self, c: u64) -> Result<(), &'static str> {
-        self.write(STATUS, c)
+        if !self.wait(|s| s & IBF == 0)? {
+            return Err("the controller doesn't take a command");
+        }
+        self.command.write(STATUS, 1, c).map_err(|_| "a port write failed")
     }
 
     /// The next byte from the controller, if one comes soon.

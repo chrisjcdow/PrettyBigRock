@@ -52,6 +52,12 @@ pub const TESTS: &[Config] = &[
             "Program self-test passed",
             "a block device (2048 sectors, reads, writes and refusals)",
             "a driver crashed and restarted",
+            "Device self-test passed",
+            "the framebuffer",
+            "a virtio keyboard and mouse",
+            "a full ring",
+            "COM2 (output and loopback)",
+            "a PS/2 keyboard and mouse",
             "exited with status 0.",
         ],
     },
@@ -72,6 +78,12 @@ pub const TESTS: &[Config] = &[
             "Program self-test passed",
             "a block device (2048 sectors, reads, writes and refusals)",
             "a driver crashed and restarted",
+            "Device self-test passed",
+            "the framebuffer",
+            "a virtio keyboard and mouse",
+            "a full ring",
+            "COM2 (output and loopback)",
+            "a PS/2 keyboard and mouse",
             "exited with status 0.",
         ],
     },
@@ -92,6 +104,10 @@ pub const TESTS: &[Config] = &[
             "Program self-test passed",
             "a block device (2048 sectors, reads, writes and refusals)",
             "a driver crashed and restarted",
+            "Device self-test passed",
+            "the framebuffer",
+            "a virtio keyboard and mouse",
+            "a full ring",
             "exited with status 0.",
         ],
     },
@@ -111,6 +127,10 @@ pub const TESTS: &[Config] = &[
             "Program self-test passed",
             "a block device (2048 sectors, reads, writes and refusals)",
             "a driver crashed and restarted",
+            "Device self-test passed",
+            "the framebuffer",
+            "a virtio keyboard and mouse",
+            "a full ring",
             "exited with status 0.",
         ],
     },
@@ -173,6 +193,10 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
         }
         cmd.arg("-drive").arg(drive);
         cmd.args(["-device", "virtio-rng-pci"]);
+        // The screen has a name so that the keyboard and mouse below can be tied to it: the
+        // test runner then sends them keys without the PS/2 pair getting any (and the other
+        // way round).
+        cmd.args(["-vga", "none", "-device", "VGA,id=gpu"]);
     } else {
         cmd = Command::new("qemu-system-aarch64");
         let machine = if cfg.el2 { "virt,virtualization=on" } else { "virt" };
@@ -186,7 +210,7 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
         ])
         .ok_or("can't find UEFI for ARM64 QEMU: install the `qemu-efi-aarch64` package")?;
         cmd.arg("-bios").arg(fw);
-        cmd.args(["-device", "ramfb", "-device", "qemu-xhci", "-device", "usb-kbd"]);
+        cmd.args(["-device", "ramfb,id=gpu", "-device", "qemu-xhci", "-device", "usb-kbd"]);
         cmd.arg("-drive").arg(format!("if=none,id=disk,{drive}"));
         cmd.args(["-device", "virtio-blk-pci,drive=disk", "-device", "virtio-rng-pci"]);
     }
@@ -194,6 +218,8 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     cmd.arg("-drive")
         .arg(format!("if=none,id=testdisk,format=raw,file={},snapshot=on", disk.display()));
     cmd.args(["-device", "virtio-blk-pci,drive=testdisk"]);
+    cmd.args(["-device", "virtio-keyboard-pci,id=vkbd,display=gpu"]);
+    cmd.args(["-device", "virtio-mouse-pci,id=vmouse,display=gpu"]);
     cmd.arg("-no-reboot");
     Ok(cmd)
 }
@@ -219,11 +245,41 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     let mut cmd = command(cfg, image, work)?;
     cmd.args(["-display", "none", "-monitor", "none"]);
     cmd.arg("-serial").arg(format!("file:{}", log.display()));
+    // The second serial port (x86-64: COM2) goes to a file the runner reads afterwards.
+    let com2 = work.join(format!("com2-{}.txt", if cfg.bios { "bios" } else { "uefi" }));
+    let _ = fs::remove_file(&com2);
+    if cfg.arch == "x86_64" {
+        cmd.arg("-serial").arg(format!("file:{}", com2.display()));
+    }
+    let qmp_path = work.join(format!(
+        "qmp-{}-{}{}.sock",
+        cfg.arch,
+        if cfg.bios { "bios" } else { "uefi" },
+        if cfg.el2 { "-el2" } else { "" }
+    ));
+    let _ = fs::remove_file(&qmp_path);
+    cmd.arg("-qmp").arg(format!("unix:{},server=on,wait=off", qmp_path.display()));
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("couldn't start QEMU: {e}"))?;
     let start = Instant::now();
+    let mut qmp = Qmp::new(qmp_path);
+    let mut injected = [false; STAGES.len()];
     let result = loop {
         let text = fs::read_to_string(&log).unwrap_or_default();
+        // The guest says when it is waiting for keys; the keys are pressed from here.
+        for (i, stage) in STAGES.iter().enumerate() {
+            if !injected[i] && text.contains(stage.marker) {
+                injected[i] = true;
+                eprintln!("  (sending input for: {})", stage.marker);
+                if let Err(e) = qmp.inject(stage) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "sending input to QEMU: {e}\n--- serial output ---\n{text}"
+                    ));
+                }
+            }
+        }
         if text.contains(REPORT_DONE) {
             break Ok(text);
         }
@@ -244,9 +300,143 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     let _ = child.wait();
     let text = result?.replace('\r', "");
     let missing: Vec<&str> = cfg.expect.iter().copied().filter(|e| !text.contains(e)).collect();
+    // What the guest wrote to its second serial port.
+    if cfg.arch == "x86_64" {
+        let out = fs::read_to_string(&com2).unwrap_or_default();
+        if !out.contains("PrettyBigRock COM2 test\n") {
+            return Err(format!(
+                "COM2 output was {out:?}, not the test line.\n--- serial output ---\n{text}"
+            ));
+        }
+    }
     if missing.is_empty() {
         Ok(text)
     } else {
         Err(format!("the report is missing {missing:?}.\n--- serial output ---\n{text}"))
+    }
+}
+
+/// Something to do to the guest's keyboards and mice when it prints `marker`.
+struct Stage {
+    marker: &'static str,
+    /// Send to the devices tied to the named screen (the virtio ones), or to the PS/2 pair.
+    virtio: bool,
+    /// What to send.
+    what: What,
+}
+
+enum What {
+    /// Press and release A, move the mouse 10 right and 5 down with the left button down, then
+    /// release the button. (QEMU's PS/2 mouse merges what arrives together into one packet,
+    /// so the button goes up in a call of its own.)
+    Typing,
+    /// This many one-pixel movements to the right, in one call.
+    Flood(u32),
+}
+
+/// The test's stages, in the order the guest asks for them (`services/root/src/drivertest.rs`).
+const STAGES: [Stage; 4] = [
+    Stage { marker: "Device self-test: inject virtio", virtio: true, what: What::Typing },
+    Stage { marker: "Device self-test: inject flood", virtio: true, what: What::Flood(700) },
+    Stage { marker: "Device self-test: inject once", virtio: true, what: What::Flood(1) },
+    Stage { marker: "Device self-test: inject ps2", virtio: false, what: What::Typing },
+];
+
+/// A connection to QEMU's control socket, made when first needed.
+struct Qmp {
+    path: PathBuf,
+    conn: Option<(
+        std::os::unix::net::UnixStream,
+        std::io::BufReader<std::os::unix::net::UnixStream>,
+    )>,
+}
+
+impl Qmp {
+    fn new(path: PathBuf) -> Qmp {
+        Qmp { path, conn: None }
+    }
+
+    fn connect(&mut self) -> Result<(), String> {
+        use std::io::BufRead;
+        if self.conn.is_some() {
+            return Ok(());
+        }
+        let stream = std::os::unix::net::UnixStream::connect(&self.path)
+            .map_err(|e| format!("connecting to {}: {e}", self.path.display()))?;
+        stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+        let mut reader = std::io::BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+        let mut greeting = String::new();
+        reader.read_line(&mut greeting).map_err(|e| format!("reading QEMU's greeting: {e}"))?;
+        self.conn = Some((stream, reader));
+        self.command(r#"{"execute":"qmp_capabilities"}"#)
+    }
+
+    /// Sends one command and waits for its answer (skipping events).
+    fn command(&mut self, json: &str) -> Result<(), String> {
+        use std::io::{BufRead, Write};
+        let (w, r) = self.conn.as_mut().ok_or("not connected")?;
+        writeln!(w, "{json}").map_err(|e| format!("writing to QEMU: {e}"))?;
+        loop {
+            let mut line = String::new();
+            let n = r.read_line(&mut line).map_err(|e| format!("reading QEMU's answer: {e}"))?;
+            if n == 0 {
+                return Err("QEMU closed the control socket".into());
+            }
+            if line.contains("\"error\"") {
+                return Err(format!("QEMU refused {json:.200}: {line}"));
+            }
+            if line.contains("\"return\"") {
+                return Ok(());
+            }
+        }
+    }
+
+    fn send(&mut self, virtio: bool, events: &[String]) -> Result<(), String> {
+        let target = if virtio { r#""device":"gpu","head":0,"# } else { "" };
+        let json = format!(
+            r#"{{"execute":"input-send-event","arguments":{{{target}"events":[{}]}}}}"#,
+            events.join(",")
+        );
+        self.command(&json)
+    }
+
+    fn inject(&mut self, stage: &Stage) -> Result<(), String> {
+        self.connect()?;
+        let key = |down: bool| {
+            format!(
+                r#"{{"type":"key","data":{{"down":{down},"key":{{"type":"qcode","data":"a"}}}}}}"#
+            )
+        };
+        let rel = |axis: &str, v: i32| {
+            format!(r#"{{"type":"rel","data":{{"axis":"{axis}","value":{v}}}}}"#)
+        };
+        let button =
+            |down: bool| format!(r#"{{"type":"btn","data":{{"button":"left","down":{down}}}}}"#);
+        let pause = || std::thread::sleep(Duration::from_millis(100));
+        match stage.what {
+            What::Typing => {
+                self.send(stage.virtio, &[key(true)])?;
+                pause();
+                self.send(stage.virtio, &[key(false)])?;
+                pause();
+                self.send(stage.virtio, &[rel("x", 10), rel("y", 5), button(true)])?;
+                pause();
+                self.send(stage.virtio, &[button(false)])
+            }
+            What::Flood(n) => {
+                // In calls of 50, with a pause after each so the guest can hand its buffers back:
+                // QEMU's virtio input device keeps events it has no buffer for and only
+                // delivers them when the next event arrives.
+                let mut left = n;
+                while left > 0 {
+                    let now = left.min(50);
+                    let events: Vec<String> = (0..now).map(|_| rel("x", 1)).collect();
+                    self.send(stage.virtio, &events)?;
+                    left -= now;
+                    pause();
+                }
+                Ok(())
+            }
+        }
     }
 }

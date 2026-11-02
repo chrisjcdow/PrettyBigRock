@@ -163,7 +163,7 @@ fn revoke(plan: &Plan) {
     if let Some(pci) = &plan.pci {
         let _ = pci.config.0.revoke();
     }
-    if let Some(p) = &plan.ports {
+    for p in [&plan.ports, &plan.ports2].into_iter().flatten() {
         let _ = p.0.revoke();
     }
     for (_, b) in &plan.bars {

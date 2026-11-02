@@ -87,12 +87,19 @@ fn all(
     // The device manager gets copies of the device capabilities; the device tests then take
     // the root program's own.
     let devmgr = crate::blocktest::start(archive, archive_mem, start, true)?;
+    let copies = crate::drivertest::copy_inputs(start)?;
     let devices = crate::devtest::run(f, start);
     step("device access", devices.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("device access");
     let block = crate::blocktest::run(&devmgr);
     step("block device", block.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("a block device (2048 sectors, reads, writes and refusals)");
+    let other = crate::drivertest::run(&devmgr, &copies);
+    if let Ok(summary) = &other {
+        granite::println!("Device self-test passed: {summary}");
+    }
+    step("other drivers", other.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("the other drivers");
     let crash = crate::crashtest::run(&devmgr);
     if let Ok(summary) = &crash {
         granite::println!("Crash test: {summary}");

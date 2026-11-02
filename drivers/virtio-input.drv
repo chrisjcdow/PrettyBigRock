@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+
+# Virtio keyboards and mice (docs/design/0011-device-manager-and-drivers.md).
+class input
+match pci 1af4:1052
+budget 2M
+dma 8K
+irqs 1

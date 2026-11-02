@@ -14,6 +14,7 @@ extern crate alloc;
 mod blocktest;
 mod crashtest;
 mod devtest;
+mod drivertest;
 mod selftest;
 
 use granite::memory::Memory;

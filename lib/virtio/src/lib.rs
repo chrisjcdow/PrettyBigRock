@@ -3,7 +3,7 @@
 
 //! Virtio over PCI, the modern (version 1) interface only
 //! (docs/design/0011-device-manager-and-drivers.md, section 7): finding the device's
-//! structures, the status handshake, split virtqueues, and the block device's requests.
+//! structures, the status handshake, split virtqueues, and the block and input devices.
 //!
 //! Everything a device tells the driver is checked: capability offsets and lengths, queue
 //! sizes, the indices and lengths in the used ring. An impossible value is an error, and
@@ -16,6 +16,7 @@
 extern crate alloc;
 
 pub mod blk;
+pub mod input;
 pub mod queue;
 pub mod transport;
 

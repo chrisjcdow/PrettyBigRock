@@ -65,9 +65,13 @@ pub fn start(
         (start_role::ARCHIVE, archive_mem, all, false),
         (PUBLIC, public.0.raw(), rights::RECEIVE, false),
     ];
-    for r in
-        [start_role::DEVICE_MEMORY, start_role::MSI_POOL, start_role::IO_PORTS, start_role::MACHINE]
-    {
+    for r in [
+        start_role::DEVICE_MEMORY,
+        start_role::INTERRUPTS,
+        start_role::MSI_POOL,
+        start_role::IO_PORTS,
+        start_role::MACHINE,
+    ] {
         if let Some(h) = start.peek(r) {
             caps.push((r, h, all, !keep));
         }

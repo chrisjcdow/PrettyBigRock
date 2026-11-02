@@ -32,6 +32,8 @@ pub mod role {
     pub const DMA: u32 = 1030;
     /// I/O ports.
     pub const PORTS: u32 = 1040;
+    /// A second range of I/O ports, for a device whose ports aren't together.
+    pub const PORTS_2: u32 = 1060;
     /// Legacy interrupt 0; interrupt *i* is this plus *i*.
     pub const LEGACY_IRQ: u32 = 1041;
     /// The kernel log with the right to take over the screen.
@@ -76,6 +78,8 @@ pub struct Device {
     pub dma: Option<Dma>,
     /// I/O ports (legacy devices).
     pub ports: Option<IoPorts>,
+    /// A second range of I/O ports.
+    pub ports2: Option<IoPorts>,
     /// An endpoint to the device manager.
     pub host: Option<Endpoint>,
     /// The kernel log with `CONTROL` (the display driver only).
@@ -170,6 +174,7 @@ impl Device {
             irqs,
             dma,
             ports: start.take(role::PORTS).map(IoPorts),
+            ports2: start.take(role::PORTS_2).map(IoPorts),
             host: start.take(role::HOST).map(Endpoint),
             log_control: start.take(role::LOG_CONTROL),
             args: String::from(start.args()),

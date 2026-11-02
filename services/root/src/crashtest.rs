@@ -17,8 +17,13 @@ use granite::interface::CallError;
 use granite::sys::{Error, rights};
 use granite::{thread, time};
 use pbr_interfaces::pbr_block as block;
-use pbr_interfaces::pbr_devices::{self as devices, DeviceInfo, DeviceState, DevicesError};
+use pbr_interfaces::pbr_devices::{
+    self as devices, DeviceClass, DeviceInfo, DeviceState, DevicesError,
+};
+use pbr_interfaces::pbr_display as display;
 use pbr_interfaces::pbr_driver_debug::{self as driver_debug, CrashKind};
+use pbr_interfaces::pbr_input as input;
+use pbr_interfaces::pbr_serial as serial;
 
 const SECTOR: usize = 512;
 const SECTORS: u64 = 2048;
@@ -220,7 +225,58 @@ fn load_thread(
     }
 }
 
-/// Four threads read while the driver is crashed ten times.
+/// A client of one of the other drivers.
+enum Bystander {
+    Display(display::Client),
+    Input(input::Client),
+    Serial(serial::Client),
+}
+
+impl Bystander {
+    fn ask(&self) -> bool {
+        match self {
+            Bystander::Display(c) => c.info().is_ok(),
+            Bystander::Input(c) => c.info().is_ok(),
+            Bystander::Serial(c) => c.read(0).is_ok(),
+        }
+    }
+}
+
+/// Opens every driver that isn't a disk.
+fn bystanders(d: &Devmgr) -> Result<Vec<Bystander>, String> {
+    let mut v = Vec::new();
+    let list = d.client.list().map_err(|e| format!("listing devices: {e}"))?;
+    for dev in list.iter().filter(|x| x.kind != DeviceClass::Block) {
+        let ep = Endpoint(d.client.open(dev.id).map_err(|e| format!("opening {}: {e}", dev.name))?);
+        v.push(match dev.kind {
+            DeviceClass::Display => Bystander::Display(display::Client::new(ep)),
+            DeviceClass::Input => Bystander::Input(input::Client::new(ep)),
+            DeviceClass::Serial => Bystander::Serial(serial::Client::new(ep)),
+            DeviceClass::Block => continue,
+        });
+    }
+    Ok(v)
+}
+
+/// Asks the other drivers something, over and over, until told to stop. Counts the answers
+/// and the failures.
+fn ask_others(
+    others: Vec<Bystander>,
+    stop: Arc<AtomicBool>,
+    answered: Arc<AtomicU32>,
+    failed: Arc<AtomicU32>,
+) {
+    while !stop.load(Ordering::Relaxed) {
+        for o in &others {
+            let counter = if o.ask() { &answered } else { &failed };
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+        time::sleep_ms(5);
+    }
+}
+
+/// Four threads read while the driver is crashed ten times, and a fifth keeps asking the other
+/// drivers questions: the system keeps running.
 fn under_load(d: &Devmgr, id: u32, answers: &Arc<Vec<u8>>) -> Result<String, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let tally = Arc::new(Tally::default());
@@ -238,6 +294,13 @@ fn under_load(d: &Devmgr, id: u32, answers: &Arc<Vec<u8>>) -> Result<String, Str
                 .map_err(|e| format!("starting a thread: {e}"))?,
         );
     }
+    let others = bystanders(d)?;
+    let (answered, failed) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)));
+    let (st, a, f) = (stop.clone(), answered.clone(), failed.clone());
+    threads.push(
+        thread::spawn(move || ask_others(others, st, a, f))
+            .map_err(|e| format!("starting a thread: {e}"))?,
+    );
     let mut result = Ok(());
     for i in 0..10 {
         time::sleep_ms(40);
@@ -273,20 +336,31 @@ fn under_load(d: &Devmgr, id: u32, answers: &Arc<Vec<u8>>) -> Result<String, Str
     if ok < 40 {
         return Err(format!("only {ok} reads succeeded while the driver was being crashed"));
     }
-    Ok(format!("{ok} reads right and {gone} cut off"))
+    let (answers, failures) = (answered.load(Ordering::Relaxed), failed.load(Ordering::Relaxed));
+    if failures != 0 || answers < 40 {
+        return Err(format!(
+            "the other drivers answered {answers} questions and failed {failures} while one was \
+             being crashed"
+        ));
+    }
+    Ok(format!("{ok} reads right and {gone} cut off, {answers} answers from the other drivers"))
 }
 
 /// Crashes the driver again and again, quickly: it must be given up on.
 fn storm(d: &Devmgr, id: u32) -> Result<(), String> {
     d.debug.forgive(id).map_err(|e| format!("forgiving: {e}"))?;
     // The delays before the second and third restarts (100 ms and 1 s).
+    // Measured from just before the driver was ended, so that this thread being slow to notice
+    // can't make the restart look quicker than it was.
     let lower_bounds = [0u64, 60, 700];
+    let mut ended_at = time::now();
     for (i, least) in lower_bounds.iter().enumerate() {
-        let t0 = time::now();
         let h = reconnect(d, id, 3000)?;
-        if i > 0 && ms_since(t0) < *least {
-            return Err(format!("restart {} came after only {} ms", i + 1, ms_since(t0)));
+        let took = ms_since(ended_at);
+        if i > 0 && took < *least {
+            return Err(format!("restart {} came after only {took} ms", i + 1));
         }
+        ended_at = time::now();
         end_driver(d, id, &h, How::Crash(CrashKind::Exit))?;
     }
     // The fourth instance is the last.

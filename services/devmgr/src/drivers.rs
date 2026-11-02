@@ -101,6 +101,8 @@ pub struct Plan {
     pub dma: Option<Memory>,
     /// I/O ports (legacy devices).
     pub ports: Option<IoPorts>,
+    /// A second range of I/O ports, for a device whose ports aren't together.
+    pub ports2: Option<IoPorts>,
 }
 
 /// Why a plan couldn't be made.
@@ -171,7 +173,16 @@ pub fn plan(
         DeviceMemory(own.0.duplicate(rights::ALL).map_err(err("copying configuration space"))?);
     let part = PciPart { config, _own_config: own, page: ConfigPage(Mmio::new(page)) };
     let rec = write_record(&record)?;
-    Ok(Plan { record: rec, kind: Kind::Pci, pci: Some(part), bars, irqs: msis, dma, ports: None })
+    Ok(Plan {
+        record: rec,
+        kind: Kind::Pci,
+        pci: Some(part),
+        bars,
+        irqs: msis,
+        dma,
+        ports: None,
+        ports2: None,
+    })
 }
 
 fn write_record(record: &Record) -> Result<Memory, PlanError> {
@@ -188,15 +199,19 @@ pub struct LegacySpec {
     pub port: u64,
     /// How many ports.
     pub ports: u64,
+    /// A second range (first port, how many), for a device whose ports aren't together.
+    pub more: Option<(u64, u64)>,
     /// The interrupt lines.
     pub irqs: &'static [u64],
 }
 
 /// The second serial port.
-pub const COM2: LegacySpec = LegacySpec { port: 0x2F8, ports: 8, irqs: &[3] };
-/// The 8042: data port 0x60 and command/status port 0x64 (the ports between come with them),
-/// the keyboard on line 1 and the mouse on line 12.
-pub const PS2: LegacySpec = LegacySpec { port: 0x60, ports: 5, irqs: &[1, 12] };
+pub const COM2: LegacySpec = LegacySpec { port: 0x2F8, ports: 8, more: None, irqs: &[3] };
+/// The 8042: the data port 0x60 and the command and status port 0x64 (one capability each:
+/// the ports between are not all the controller's, and the kernel keeps 0x61), the keyboard on
+/// line 1 and the mouse on line 12.
+pub const PS2: LegacySpec =
+    LegacySpec { port: 0x60, ports: 1, more: Some((0x64, 1)), irqs: &[1, 12] };
 
 /// Makes the plan for a legacy device from the root capabilities.
 pub fn plan_legacy(
@@ -214,6 +229,12 @@ pub fn plan_legacy(
         irqs.push(one);
     }
     record.interrupt_count = irqs.len() as u8;
+    let ports2 = match spec.more {
+        Some((first, count)) => {
+            Some(ports.slice(first, count, rights::ALL).map_err(err("slicing more ports"))?)
+        }
+        None => None,
+    };
     Ok(Plan {
         record: write_record(&record)?,
         kind: Kind::Legacy,
@@ -222,6 +243,7 @@ pub fn plan_legacy(
         irqs,
         dma: None,
         ports: Some(slice),
+        ports2,
     })
 }
 
@@ -246,6 +268,7 @@ pub fn plan_framebuffer(s: &Screen, memory: &DeviceMemory) -> Result<Plan, PlanE
         irqs: Vec::new(),
         dma: None,
         ports: None,
+        ports2: None,
     })
 }
 
@@ -296,6 +319,9 @@ pub fn start(
     }
     if let Some(ports) = &plan.ports {
         grants.push((role::PORTS, ports.0.raw(), rights::READ | rights::WRITE, false));
+    }
+    if let Some(ports) = &plan.ports2 {
+        grants.push((role::PORTS_2, ports.0.raw(), rights::READ | rights::WRITE, false));
     }
     if let Some(dma) = &plan.dma {
         grants.push((
