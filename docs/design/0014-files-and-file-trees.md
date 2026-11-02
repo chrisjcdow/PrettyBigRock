@@ -1,6 +1,6 @@
 # 0014: Files: file capabilities, `pbr.file`, and each program's file tree
 
-Status: Draft · 2 November 2026 · Related: DESIGN.md principles 1 and 5, sections 7.1, 7.2, 9
+Status: Accepted · 2 November 2026 · Related: DESIGN.md principles 1 and 5, sections 7.1, 7.2, 9
 and 12; notes 0006, 0008, 0013, 0015, 0016, 0017; milestone M5
 
 ## The problem
@@ -290,4 +290,4 @@ in `/Home/Documents`.
   them yet.
 
 ## Changes
-- 2 November 2026: first draft, for discussion with Chris.
+- 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.

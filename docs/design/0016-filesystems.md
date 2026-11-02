@@ -1,6 +1,6 @@
 # 0016: Filesystems: RockFS in Rust, FAT32, and checking them against 1.3
 
-Status: Draft · 2 November 2026 · Related: DESIGN.md sections 8 and 12; ROCKFS.md; notes 0002,
+Status: Accepted · 2 November 2026 · Related: DESIGN.md sections 8 and 12; ROCKFS.md; notes 0002,
 0014, 0015; milestone M5
 
 ## The problem
@@ -216,4 +216,4 @@ filesystems line by line against the specification before they go in.
 - Several threads in a filesystem server.
 
 ## Changes
-- 2 November 2026: first draft, for discussion with Chris.
+- 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.

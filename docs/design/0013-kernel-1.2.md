@@ -1,6 +1,6 @@
 # 0013: Kernel interface 1.2: derived capabilities, watched badges, tied processes and the wall clock
 
-Status: Draft · 2 November 2026 · Related: DESIGN.md sections 6.3 and 7; notes 0006, 0007,
+Status: Accepted · 2 November 2026 · Related: DESIGN.md sections 6.3 and 7; notes 0006, 0007,
 0008, 0012, 0014, 0018; milestone M5
 
 ## The problem
@@ -183,4 +183,4 @@ wall-clock field. No new error codes or rights.
 - Whether a supervisor should be able to tie a process to someone other than its creator.
 
 ## Changes
-- 2 November 2026: first draft, for discussion with Chris.
+- 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.

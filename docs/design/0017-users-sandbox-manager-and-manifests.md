@@ -1,6 +1,6 @@
 # 0017: Users, the sandbox manager and app manifests
 
-Status: Draft · 2 November 2026 · Related: DESIGN.md D5, D6, principle 5, sections 7.1 to 7.3;
+Status: Accepted · 2 November 2026 · Related: DESIGN.md D5, D6, principle 5, sections 7.1 to 7.3;
 notes 0011, 0014, 0015, 0018; milestone M5
 
 ## The problem
@@ -255,4 +255,4 @@ For an app launched by the sandbox manager, M5's tests (note 0018) check that:
 - Editing rules through `pbr.users` (with the settings app).
 
 ## Changes
-- 2 November 2026: first draft, for discussion with Chris.
+- 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.

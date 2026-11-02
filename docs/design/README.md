@@ -24,12 +24,12 @@ written to be read cold.
 | [0010](0010-device-access.md) | Device access: device memory, interrupts, I/O ports and DMA | Accepted |
 | [0011](0011-device-manager-and-drivers.md) | The device manager, drivers and their interfaces | Accepted |
 | [0012](0012-driver-restart-and-m4-tests.md) | Crashing and restarting drivers, and how M4 is tested | Accepted |
-| [0013](0013-kernel-1.2.md) | Kernel interface 1.2: derived capabilities, watched badges, tied processes, the wall clock | Draft |
-| [0014](0014-files-and-file-trees.md) | Files: file capabilities, `pbr.file`, and each program's file tree | Draft |
-| [0015](0015-storage-and-the-block-cache.md) | Storage: disks, partitions, volumes and the shared block cache | Draft |
-| [0016](0016-filesystems.md) | Filesystems: RockFS in Rust, FAT32, and checking them against 1.3 | Draft |
-| [0017](0017-users-sandbox-manager-and-manifests.md) | Users, the sandbox manager and app manifests | Draft |
-| [0018](0018-supervision-shell-and-m5-tests.md) | Supervising services, the console and text shell, and how M5 is tested | Draft |
+| [0013](0013-kernel-1.2.md) | Kernel interface 1.2: derived capabilities, watched badges, tied processes, the wall clock | Accepted |
+| [0014](0014-files-and-file-trees.md) | Files: file capabilities, `pbr.file`, and each program's file tree | Accepted |
+| [0015](0015-storage-and-the-block-cache.md) | Storage: disks, partitions, volumes and the shared block cache | Accepted |
+| [0016](0016-filesystems.md) | Filesystems: RockFS in Rust, FAT32, and checking them against 1.3 | Accepted |
+| [0017](0017-users-sandbox-manager-and-manifests.md) | Users, the sandbox manager and app manifests | Accepted |
+| [0018](0018-supervision-shell-and-m5-tests.md) | Supervising services, the console and text shell, and how M5 is tested | Accepted |
 
 ## Writing a note
 

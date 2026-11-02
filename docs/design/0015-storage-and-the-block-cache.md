@@ -1,6 +1,6 @@
 # 0015: Storage: disks, partitions, volumes and the shared block cache
 
-Status: Draft · 2 November 2026 · Related: DESIGN.md section 12; notes 0011, 0012, 0014, 0016,
+Status: Accepted · 2 November 2026 · Related: DESIGN.md section 12; notes 0011, 0012, 0014, 0016,
 0018; milestone M5
 
 ## The problem
@@ -235,4 +235,4 @@ later change inside the service.
 - Telling SSDs which blocks are free (TRIM).
 
 ## Changes
-- 2 November 2026: first draft, for discussion with Chris.
+- 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.

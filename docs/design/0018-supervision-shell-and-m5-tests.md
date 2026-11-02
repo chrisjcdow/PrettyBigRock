@@ -1,6 +1,6 @@
 # 0018: Supervising services, the console and text shell, and how M5 is tested
 
-Status: Draft · 2 November 2026 · Related: DESIGN.md principle 6, sections 8 and 11; notes 0011
+Status: Accepted · 2 November 2026 · Related: DESIGN.md principle 6, sections 8 and 11; notes 0011
 to 0017; milestone M5
 
 ## The problem
@@ -238,4 +238,4 @@ traits, which are settled first.
 - Keyboard layouts other than US (the input service, M6).
 
 ## Changes
-- 2 November 2026: first draft, for discussion with Chris.
+- 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
