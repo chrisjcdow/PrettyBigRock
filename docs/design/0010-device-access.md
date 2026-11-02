@@ -1,6 +1,6 @@
 # 0010: Device access: device memory, interrupts, I/O ports and DMA
 
-Status: **Draft for approval** · 31 October 2026 · Related: DESIGN.md sections 6.1, 6.3 and 7.1;
+Status: Accepted · 31 October 2026, built 2 November 2026 · Related: DESIGN.md sections 6.1, 6.3 and 7.1;
 notes 0005 to 0009, 0011, 0012; milestone M4
 
 ## The problem
@@ -105,8 +105,10 @@ notifications:
   anyone. Unmasks the interrupt.
 - When the interrupt fires, the kernel's handler **masks** the interrupt at the controller (a
   level-triggered line would otherwise fire again at once), tells the controller it's been
-  taken, and **signals `bits`** on the notification. It does nothing else and runs no driver
-  code.
+  taken, and records the interrupt in a bitmap. A kernel thread, `irq`, at the highest
+  priority, then **signals `bits`** on the notification. Nothing runs driver code. (Signalling
+  takes the notification's wait queue, which isn't safe to take inside an interrupt handler,
+  so the handler only sets a bit and wakes the thread: see Changes.)
 - The driver handles the device, then calls `interrupt_acknowledge(h, index)` (needs
   `ACKNOWLEDGE`, type bit 9), which unmasks it. Edge-triggered and message-signalled
   interrupts need no masking, because signalling an already-set bit changes nothing; the
@@ -114,6 +116,9 @@ notifications:
 - Because a notification can be bound to an endpoint (note 0008, section 2), **one driver
   thread can wait for requests and interrupts in a single `endpoint_receive`**, and
   interrupts are delivered first.
+- `interrupt_acknowledge` checks the capability and that the interrupt is bound, not which
+  process bound it. Only the device manager ever holds a range that overlaps another
+  driver's, so this is harmless in M4 (open questions).
 - `interrupt_unbind(h, index)` releases a binding. `interrupt_info(h)` says what kind of
   range it is (ordinary or message-signalled pool), its first number and its count (needs
   `INSPECT`).
@@ -140,11 +145,14 @@ without an MSI frame has no pool, and `interrupt_msi_allocate` fails with `NOT_S
 
 A released message-signalled vector goes to the **back of the queue** of free vectors, and is
 reused only when all the others have been, so a device that is still firing at a vector its
-dead driver owned won't disturb the next driver that gets it.
+dead driver owned won't disturb the next driver that gets it. (A *restarted* driver keeps its
+device's vectors: the device manager holds them, note 0012, section 2. The queue matters when a
+vector really is given up.)
 
-The handler takes a table lock (the interrupt table) before it signals a notification, so the
-lock-order list in note 0005 gets a new level **below the wait queues** for it. Nothing in the
-handler allocates memory.
+The handler takes only the interrupt controllers' lock (to mask a line), which is a new level in
+note 0005's lock order, between the timers and the kernel's page tables. The table of bindings
+is an ordinary lock, taken by the `irq` thread and by the calls, never by the handler. Nothing in
+the handler allocates memory.
 
 **Not in M4:** shared legacy PCI interrupt lines (INTx). On x86-64 they need the routing
 tables that only ACPI's bytecode (AML) describes. Every device M4 and M7 need supports MSI.
@@ -309,6 +317,21 @@ record doesn't change.
 - Whether very large DMA buffers need more than 4 MiB of contiguous memory; scatter-gather
   would remove the limit.
 - GICv3 and its ITS for message-signalled interrupts (with GICv3 support).
+- `interrupt_acknowledge` could also check that the caller's process made the binding, as
+  `interrupt_unbind` does. Not needed while ranges never overlap between drivers.
 
 ## Changes
-- 31 October 2026: first version, draft for approval.
+- 31 October 2026: first version, draft for approval; approved by Chris the same day.
+- 2 November 2026: built (M4 stages 1 to 4).
+  - **Delivery goes through a kernel thread.** The handler masks, acknowledges and sets a bit;
+    the `irq` thread signals the notification. Signalling from the handler itself would have
+    meant making every wait queue safe to take with interrupts masked.
+  - The interrupt controllers' lock is level 4 in note 0005's order (the draft put an
+    interrupt-table lock below the wait queues; there is no such lock in the handler now).
+  - QEMU's ACPI MADT on `virt` does describe the GICv2m frame (entry type 0xD), so the kernel
+    takes it from there; if the entry doesn't give the interrupt range, the frame's `MSI_TYPER`
+    register does. The ARM program self-test fails if there is no pool, since `virt` always has
+    one.
+  - The machine description gained the FADT's 8042 flag (the kernel reads it, x86-64 only), and
+    the kernel reads the MADT's interrupt source overrides for ISA lines' polarity and trigger.
+  - A restarted driver keeps its interrupt vectors (above, and note 0012).

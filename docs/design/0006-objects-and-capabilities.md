@@ -33,9 +33,9 @@ system call interface and never reused:
 | 5 | Notification | 64 signal bits (section 8) | M3 |
 | 6 | Reply | A one-time capability to answer one call (note 0008) | M3 |
 | 7 | Kernel log | Permission to write to the kernel's console | M3 |
-| 8 | Interrupt | One hardware interrupt, delivered as a notification | M4 |
-| 9 | Device memory | A range of physical device registers | M4 |
-| 10 | I/O ports | A range of x86 I/O ports | M4 |
+| 8 | Interrupt | A range of interrupt numbers, each delivered as a notification (note 0010) | M4 |
+| 9 | Device memory | A range of physical addresses that aren't RAM (note 0010) | M4 |
+| 10 | I/O ports | A range of x86 I/O ports (note 0010) | M4 |
 | 11 | Virtual CPU | For virtual machines (DESIGN.md Q7) | later |
 
 An object lives as long as anything refers to it: a capability, a mapping, a blocked thread,
@@ -108,7 +108,10 @@ Type-specific rights:
 | Thread | `MANAGE`: start it | `STOP` | `WATCH` | |
 | Endpoint | `SEND` | `RECEIVE` | `WATCH`: ask for the "last sender gone" signal | |
 | Notification | `SIGNAL` | `WAIT` | | |
-| Interrupt (M4) | `WAIT` | `ACKNOWLEDGE` | | |
+| Interrupt | `BIND` | `ACKNOWLEDGE` | | |
+| Device memory | `DMA` | | | |
+| Memory | `BUS` | | | |
+| Kernel log | `CONTROL` | | | |
 
 A Reply capability has no rights at all: it can only be used once, by the process that
 received it, to reply (note 0008).
@@ -253,3 +256,8 @@ Every process has a **budget** in bytes, and a count of how much of it is used.
 
 ## Changes
 - 31 October 2026: first version, accepted.
+- 2 November 2026, M4: types 8 to 10 are ranges (note 0010, section 2), sliced with
+  `*_slice`, which makes children in the derivation tree like any copy. The interrupt type's
+  bit 8 is `BIND` (it was `WAIT`, which nothing used); device memory's bit 8 is `DMA`, memory's
+  is `BUS` and the kernel log's is `CONTROL`. I/O ports use only the common rights and `READ`
+  and `WRITE`.

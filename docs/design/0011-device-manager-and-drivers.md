@@ -1,6 +1,6 @@
 # 0011: The device manager, drivers and their interfaces
 
-Status: **Draft for approval** · 31 October 2026 · Related: DESIGN.md section 8; notes 0006 to
+Status: Accepted · 31 October 2026, built 2 November 2026 · Related: DESIGN.md section 8; notes 0006 to
 0010, 0012; milestone M4
 
 ## The problem
@@ -203,14 +203,19 @@ library code, so it is not MPL) is what every driver is built on:
 - **Start-up:** reads the start-up block and the device record into a typed `Device`; reports
   anything missing before doing anything.
 - **Registers:** `Mmio`, a mapped register block with bounds-checked, volatile `read` and `write`
-  (8, 16, 32 and 64 bits) and no other way to touch the memory, and `Ports` for I/O ports. This
-  confines the `unsafe` code to one small, well-reviewed place.
-- **DMA:** an arena over the DMA memory that hands out aligned pieces with their bus
-  addresses.
-- **The event loop:** `run` waits on the driver's endpoint (with its interrupts bound to a
+  (8, 16, 32 and 64 bits) and no other way to touch the memory. Both it and `Dma` implement
+  `lib/devices`' `Registers` trait, so code that knows a device's protocol (virtio, MSI-X) is
+  written against the trait and tested on the host against a fake (`regs::Heap`). The bounds
+  rule itself (`regs::access_ok`) is in `lib/devices` too, so it is host-tested. I/O ports are
+  `granite`'s `IoPorts` (one system call per access); they needed no wrapper of their own. This
+  confines the `unsafe` code to one small place.
+- **DMA:** `Dma`, the driver's DMA memory behind the same trait, with its bus address. The
+  first-built drivers needed no allocator inside it: `lib/virtio` lays out its queues and
+  request buffers at fixed, aligned offsets.
+- **The event loop:** `serve` waits on the driver's endpoint (with its interrupts bound to a
   notification bound to the endpoint, note 0010, section 4) and calls the driver's handler for
   each request or interrupt. It sends the endpoint to the device manager when the driver says
-  it's ready (`pbr.driver.host.ready`).
+  it's ready (`host_ready`, `pbr.driver.host.ready`).
 - **Rules, as code where possible:**
   - a driver **initialises its device from reset** and never assumes what state the device is in
     when it starts, because it may be starting again after a crash (note 0012);
@@ -412,4 +417,15 @@ are later milestones (M7 to M11).
 - Typed `handle<…>` results from `pbr.devices.open`, with interface imports.
 
 ## Changes
-- 31 October 2026: first version, draft for approval.
+- 31 October 2026: first version, draft for approval; approved by Chris the same day.
+- 2 November 2026: built (M4 stages 2 and 4).
+  - The boot framebuffer is the third built-in legacy device (`match legacy framebuffer`, device
+    record kind 3), on both architectures.
+  - No DMA arena (section 7): `lib/virtio` places its queues and buffers itself. An arena comes
+    with the first driver that needs one.
+  - No `Ports` wrapper: drivers use `granite::device::IoPorts`. The register bounds rule moved to
+    `lib/devices` (`regs::access_ok`) so it could be tested on the host, since `lib/driver`
+    builds only for PrettyBigRock.
+  - The interface compiler gained the `device_memory` handle kind (note 0008).
+  - Drivers take one to two seconds from start to ready in a debug build on QEMU's emulation;
+    nothing in M4 waits on that, but it's worth measuring in a release build before M6.

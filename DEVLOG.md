@@ -270,3 +270,49 @@ but never at the cost of quality, since everything later is built on this.
 - Updated notes 0001, 0002 and 0007 to 0009 with what building taught us (for example,
   the kernel now copies through programs' mappings instead of switching SMAP off), and added
   `LICENSES/`.
+
+## Session 9: 31 October to 2 November 2026, milestone M4 (devices and drivers)
+
+**Chris** asked for M4, again with the key decisions walked through one at a time before any
+design notes or code, and tests kept small but never at the cost of quality. There were eight:
+how drivers get hardware access, DMA and the IOMMU, what the kernel keeps and what the device
+manager does, how drivers are found and started, the driver framework and class interfaces,
+crash and restart, handing over the screen, and the test plan. He asked Claude to go ahead as
+it thought best, then approved notes 0010 to 0012 ("if you're happy with the notes, please
+build"). Stages 1 to 4 were built with Claude Sonnet 5.5; Chris then switched to Claude Opus
+5.5, which reviewed them and did stage 5.
+
+**Claude:**
+- Wrote notes 0010 (device access), 0011 (the device manager, drivers and interfaces) and 0012
+  (crash and restart, and the tests). They say plainly that until an IOMMU is used, a driver
+  for a DMA-capable device is contained when it crashes but not when it is hostile.
+- **Stage 1, device access in the kernel:** device memory, interrupts and I/O ports as range
+  capabilities (`lib/ranges`, host-tested against a model), DMA memory, I/O APICs and
+  message-signalled interrupts on x86-64, GICv2 lines and the GICv2m frame on ARM64, interface
+  version 1.1, the machine description, and the hardware misuse tests in `probe`.
+- **Stage 2, the device manager and the first driver:** `lib/devices` (PCI configuration
+  space, MSI-X, manifests, the device record, all tested with hostile inputs), `lib/virtio`
+  (tested against a software device, including one that lies), `lib/driver`,
+  `services/devmgr` and `virtio-blk`, with a block test on a generated test disk.
+- **Stage 3, crash and restart, M4's "done when":** the device manager revokes, switches the
+  device off, zeroes its DMA memory and restarts the driver, backing off and then giving up.
+  The crash test crashes the disk driver four ways and stops it from outside, 20 more times to
+  look for leaks, ten times under load, and four times quickly. Two kernel bugs turned up: a
+  timed wait kept its timer (and a dead driver's whole budget) until its deadline, and emptied
+  page tables were never freed.
+- **Stage 4, the other drivers:** `virtio-input`, `framebuffer`, `ps2` and `serial16550`, the
+  input, display and serial interfaces, key tables, and the device self-test. The test runner
+  now types keys and moves the mouse through QEMU's control socket, and reads COM2's output
+  from a file.
+- **Stage 5, review and documents:**
+  - all four configurations pass;
+  - review found that the page-table fix freed tables before the TLB flush that made them
+    unreachable, which real hardware with cached table walks could trip over; they're now
+    freed after it;
+  - the register bounds rule had no host tests, because `lib/driver` only builds for
+    PrettyBigRock; it moved to `lib/devices` and is tested there;
+  - added a Stress workflow for GitHub;
+  - brought notes 0001, 0002 and 0005 to 0012, README and ROADMAP up to date.
+- One ARM boot in about 40, during stage 3, panicked in a probe thread after the crash test,
+  with the serial log cut off; it didn't come back in later stress runs. It's recorded as
+  open in `status.md`.

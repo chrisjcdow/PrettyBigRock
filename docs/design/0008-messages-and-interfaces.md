@@ -211,7 +211,8 @@ type      = uint | sint | "bool"
           | "option" "<" type ">" | "handle" "<" hkind ">" | IDENT ;
 uint      = "u8" | "u16" | "u32" | "u64" ;
 sint      = "i8" | "i16" | "i32" | "i64" ;
-hkind     = qname | "memory" | "notification" | "process" | "thread" | "any" ;
+hkind     = qname | "memory" | "notification" | "process" | "thread" | "device_memory"
+          | "any" ;
 qname     = IDENT { "." IDENT } ;
 doc       = "///" text to end of line ;
 ```
@@ -393,3 +394,9 @@ GPL-3.0-or-later, with a statement that its output is MIT-licensed.
   of a list's block and what it refers to; documentation on fields and values; naming rules
   and reserved names; receivers accept references anywhere in the buffer; what is generated;
   the Python cross-check is a layout calculator.
+- 2 November 2026, M4: the `device_memory` handle kind (checked like the others: the capability
+  must be device memory); the device manager's and the drivers' interfaces in `interfaces/`
+  (`pbr.devices`, `pbr.driver.host`, `pbr.block`, `pbr.input`, `pbr.serial`, `pbr.display`,
+  and the self-test-only `pbr.devices.debug` and `pbr.driver.debug`, notes 0011 and 0012). The
+  generated code for `handle<any>`, which has no type to check, no longer trips Clippy's
+  `let_and_return`.

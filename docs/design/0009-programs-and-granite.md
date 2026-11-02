@@ -138,6 +138,7 @@ Roles:
 | 4 | The start-up archive, as a read-only memory object (root program only) |
 | 5 | An endpoint to whoever started it (its parent) |
 | 6 | Its message page's memory object |
+| 7 to 11 | The root program only, from M4: device memory, interrupts, the message-signalled interrupt pool, I/O ports and the machine description (note 0010, section 8) |
 | 1000 and up | Specific to the program, agreed with its launcher |
 
 The arguments are a UTF-8 string, at most 3 KiB in total, so the whole block fits in one
@@ -145,8 +146,10 @@ page; anything larger is passed through a capability.
 
 **The root program starts with:** its process, its main thread, the kernel log, the start-up
 archive, and all of memory as its budget. Its arguments are the kernel command line, so it
-can see `selftest`. From M4 it also gets capabilities for every device memory range,
-interrupt and I/O port range, to hand to the device manager.
+can see `selftest`. From M4 it also gets one capability for all device memory, one for all
+interrupts, the message-signalled interrupt pool, one for all I/O ports (x86-64) and the
+machine description (roles 7 to 11; note 0010, section 8), which it hands to the device
+manager. Its kernel log capability has `CONTROL`, for the display driver.
 
 ### 5. A Rust target for programs
 
@@ -312,3 +315,6 @@ Actions.
 - 31 October 2026, while building M3: `lib/elf` and `lib/archive` are MPL-2.0 too; where the
   archive is kept in memory; stripped files on the disk; the launcher pays for a program's
   image; the test programs are `echo` and `probe`, and the interface test.
+- 2 November 2026, M4: start-up roles 7 to 11 for the root program, replacing a capability per
+  device (note 0010, section 8); the root program starts the device manager, and in self-test
+  runs adds the device, block and crash tests (note 0012).

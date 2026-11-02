@@ -21,9 +21,9 @@ written to be read cold.
 | [0007](0007-system-calls.md) | System calls (interface version 1.0) | Accepted |
 | [0008](0008-messages-and-interfaces.md) | Messages, rings and the interface language | Accepted |
 | [0009](0009-programs-and-granite.md) | Programs, the start-up archive, the root program and `granite` | Accepted |
-| [0010](0010-device-access.md) | Device access: device memory, interrupts, I/O ports and DMA | Draft |
-| [0011](0011-device-manager-and-drivers.md) | The device manager, drivers and their interfaces | Draft |
-| [0012](0012-driver-restart-and-m4-tests.md) | Crashing and restarting drivers, and how M4 is tested | Draft |
+| [0010](0010-device-access.md) | Device access: device memory, interrupts, I/O ports and DMA | Accepted |
+| [0011](0011-device-manager-and-drivers.md) | The device manager, drivers and their interfaces | Accepted |
+| [0012](0012-driver-restart-and-m4-tests.md) | Crashing and restarting drivers, and how M4 is tested | Accepted |
 
 ## Writing a note
 

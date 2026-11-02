@@ -79,13 +79,24 @@ else.
 
 - **Unit tests** run on the computer doing the build: `cargo xtask test`. Anything that can be
   written as ordinary logic (formats, data structures, parsers) lives in a library that
-  builds both for the kernel and for the host, so it can be tested here.
+  builds both for the kernel and for the host, so it can be tested here. The same goes for
+  programs and the libraries only programs use (`lib/driver`, drivers, services), which build
+  only for PrettyBigRock: their checks and parsers go in a host-built library such as
+  `lib/devices`, and the program keeps only the code that has to touch the system. A rule that
+  only exists in a crate the host can't build has no unit tests.
+- **Hardware is hostile input.** Whatever a device or the firmware says (configuration space,
+  a virtqueue's indices, ACPI tables) is tested with corrupted and lying versions, not only
+  with what QEMU happens to produce.
 - **QEMU tests** (from M1) boot the real system on every architecture and check what it prints
   to the serial port.
 - **Cross-checks**: every format gets a second, independent implementation (usually in Python,
   in `tools/`), and the two are tested against each other, as RockFS is.
 - **`cargo xtask ci`** runs all of it, and GitHub Actions runs `cargo xtask ci` on every change.
   A change isn't finished until it passes.
+- **Stress runs** boot every configuration many times, to catch what only happens now and then.
+  The Stress workflow on GitHub (`.github/workflows/stress.yml`, started by hand) runs six jobs
+  in parallel; locally, `PBR_QEMU_ONLY` picks configurations for a loop of `cargo xtask
+  qemu-test`. Each milestone ends with one.
 
 ### Commits and the DEVLOG
 
@@ -105,3 +116,6 @@ else.
 - 29 October 2026: first version.
 - 31 October 2026: program targets, and the two unstable build features they need; licence
   lines per folder.
+- 2 November 2026, after M4: logic in program-only crates goes in host-built libraries (the
+  register bounds check had no tests until it moved); hardware as hostile input; stress
+  runs.

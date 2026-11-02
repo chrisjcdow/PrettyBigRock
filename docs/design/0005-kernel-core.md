@@ -87,6 +87,8 @@ including inside interrupt handlers.
 - One shared IDT:
   - vectors 0 to 31 are exceptions;
   - 32 is the timer;
+  - 0x30 to 0xEF go to devices (from M4: I/O APIC lines and message-signalled interrupts,
+    note 0010);
   - 0xF0 is the "reschedule" inter-core interrupt;
   - 0xF1 is "stop" (used when the kernel panics);
   - 0xFF is the APIC's spurious vector.
@@ -213,10 +215,13 @@ thread's own stack.
   1. wait queues;
   2. the scheduler's run queues;
   3. timers;
-  4. the kernel's page tables and virtual areas;
-  5. the heap (which takes pages from the page allocator);
-  6. the page allocator;
-  7. the console.
+  4. the interrupt controllers' state (from M4: I/O APICs, the GIC distributor's shared
+     interrupts, the vector pool; taken by device interrupt handlers, which take nothing
+     after it);
+  5. the kernel's page tables and virtual areas;
+  6. the heap (which takes pages from the page allocator);
+  7. the page allocator;
+  8. the console.
 
 ### 10. The self-test
 
@@ -262,3 +267,14 @@ run it with 4 cores on every configuration. It checks:
   - Added the thread list for diagnostics.
   - Added the self-test's watchdog: if the test hasn't finished within 30 seconds, the timer
     interrupt prints every core's scheduler state and every thread.
+- 2 November 2026: M4.
+  - The interrupt controllers' lock is a new level (4) in the lock order; device vectors are
+    0x30 to 0xEF on x86-64.
+  - Device interrupts are passed on by a kernel thread, `irq`, at the highest priority: the
+    handler only masks, acknowledges and sets a bit (note 0010, section 4).
+  - A timed wait that ends before its deadline takes its timer off the core's list. Before,
+    the timer kept the thread (and so its process and the process's budget) alive until the
+    deadline.
+  - Removing a mapping frees the page tables it emptied, after the TLB flush that makes them
+    unreachable (unhook, flush, then free, so no core can still be walking through a reused
+    page).

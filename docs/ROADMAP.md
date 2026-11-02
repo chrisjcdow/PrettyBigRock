@@ -80,12 +80,28 @@ threads. Ring buffers are a library format in `granite`, tested on the host agai
 hostile other side; drivers will be their first real users (M4).
 
 ## M4: Devices and drivers
-- The device manager; PCI Express; reading ACPI tables and device trees.
+- The device manager; PCI Express; reading ACPI tables. (Device trees move to M10, the first
+  machine that needs them: every M4 device is on PCI Express.)
 - The driver framework, with drivers as programs and restarted when they crash.
-- Drivers: serial, the framebuffer, PS/2 and virtio keyboard and mouse, virtio disk.
+- Drivers: serial (x86-64; ARM's only UART is the kernel console, so an ARM serial driver
+  comes with the Pi 5 in M10), the framebuffer, PS/2 and virtio keyboard and mouse, virtio
+  disk.
 
 **Done when:** a driver can be deliberately crashed and is restarted while the system keeps
 running.
+
+**Design:** notes 0010 (device access), 0011 (the device manager, drivers and their
+interfaces) and 0012 (crashing and restarting drivers, and the tests), accepted 31 October
+2026 and updated with what building taught us.
+
+**Status: done** (2 November 2026). Drivers are programs that hold only their own device's
+registers, interrupts, I/O ports and DMA memory, as capabilities. The device manager reads
+ACPI, scans PCI Express, matches devices to drivers by small text manifests, and serves
+`pbr.devices`. Five drivers: `virtio-blk`, `virtio-input`, `framebuffer`, `ps2` and
+`serial16550`. Every boot test now ends with the device self-test and the crash test: the disk
+driver is crashed in four ways and stopped from outside, 20 more times without leaking, ten
+times under load from four threads (never a wrong answer), and four times quickly to show it is
+then given up on, while the other drivers keep answering throughout.
 
 ## M5: Files and sandboxes
 - The file layer, each app's own file tree, and the shared block cache.
@@ -132,6 +148,7 @@ server.
 **Done when:** unmodified C programs, recompiled for PrettyBigRock, run inside a sandbox.
 
 ## M10: Raspberry Pi 5
+- Reading device trees in the device manager; a serial driver for the Pi's UARTs.
 - The BCM2712 board layer, the RP1 chip (USB and Ethernet), the SD card, and the
   framebuffer.
 

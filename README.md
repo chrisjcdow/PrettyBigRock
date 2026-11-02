@@ -31,7 +31,7 @@ records who did what in each session. Chris directs; Claude writes the code and 
 
 ![PrettyBigRock 2 starting all four cores and passing its self-test](docs/screenshot-pbr2.png)
 
-So far (milestone M3) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on
+So far (milestone M4) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on
 ARM64 machines with UEFI, all from the same disk image. The kernel then:
 - takes over memory management;
 - handles interrupts and exceptions;
@@ -40,7 +40,15 @@ ARM64 machines with UEFI, all from the same disk image. The kernel then:
 - runs threads across them all;
 - runs programs, each in its own process with its own memory and its own capabilities (the
   only way a program can reach anything), talking to each other by messages;
-- starts the first program, `root`, from an archive the loader brings along.
+- starts the first program, `root`, from an archive the loader brings along;
+- lets programs reach hardware only through capabilities for a device's own registers,
+  interrupts and I/O ports.
+
+`root` starts the **device manager**, which finds the devices (PCI Express, and on PCs the
+second serial port and the PS/2 controller), and starts a driver program for each, giving it
+only that device: virtio disk, keyboard and mouse, the framebuffer, PS/2 keyboard and mouse,
+and a 16550 serial port. When a driver crashes, the device manager switches its device off,
+cleans up, and starts it again, while everything else keeps running.
 
 Programs are written in Rust against **granite**, PrettyBigRock's native library, and
 services describe what they offer in small interface files (`interfaces/*.pbi`), from which
@@ -49,7 +57,8 @@ the code for both sides is generated.
 It reports what it found on the screen and the serial port. With `selftest` on its command
 line, it tests all of that too, which is what the automatic boot tests do: the kernel tests
 itself, then `root` runs test programs that check messages, isolation, faults, revocation,
-memory budgets and calls under load.
+memory budgets and calls under load, and then the devices: every driver through its
+interface, and a disk driver crashed on purpose dozens of times, including under load.
 
 Building needs [rustup](https://rustup.rs); the right Rust version installs itself the first
 time. Booting it needs QEMU, with its UEFI firmware (on Debian or Ubuntu: `qemu-system-x86
