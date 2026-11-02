@@ -11,6 +11,7 @@ mod basic;
 mod check;
 mod hostile;
 mod mounting;
+mod powercut;
 mod random;
 mod space;
 mod trees;
