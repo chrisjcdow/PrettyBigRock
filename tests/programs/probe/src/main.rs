@@ -45,6 +45,7 @@ fn main(mut start: granite::Start) -> i32 {
         "load" => load(&mut start, num(1), num(2)),
         "device-revoke" => device_revoke(&mut start),
         "interrupt-hold" => interrupt_hold(&mut start),
+        "tied" => tied(&mut start, num(1), &args[2..]),
         _ => Err(99),
     };
     match r {
@@ -487,4 +488,73 @@ fn interrupt_hold(start: &mut granite::Start) -> Result<(), i32> {
     ready.signal(1).map_err(|_| 4)?;
     time::sleep_ms(50);
     fault_null()
+}
+
+// ------------------------------------------------------------------------------------------
+// Tied processes (docs/design/0013-kernel-1.2.md, section 3)
+
+/// `tied N [untied] [fault]`: starts a tied child running `tied N-1` (unless N is 0), and with
+/// `untied` also an untied child running `tied 0`, and sends each child's process capability
+/// to the root program through the REPORT endpoint (data: 1 for tied or 0 for untied, then
+/// the child's own N). Then it waits for ever, or with `fault` writes to address 0 and so ends by a fault.
+fn tied(
+    start: &mut granite::Start,
+    depth: u64,
+    flags: &[alloc::string::String],
+) -> Result<(), i32> {
+    let has = |f: &str| flags.iter().any(|x| x == f);
+    if depth > 0 {
+        let report = endpoint(start, role::REPORT)?;
+        let program = start.take(role::PROGRAM).map(Memory).ok_or(1)?;
+        let mapping = program.map(perm::READ).map_err(|_| 2)?;
+        // SAFETY: the mapping is readable for its whole length, and nothing writes to it while
+        // this program runs (the root program made it and keeps it unchanged).
+        let bytes =
+            unsafe { core::slice::from_raw_parts(mapping.as_ptr(), mapping.len() as usize) };
+        // A child that starts children of its own needs a budget big enough for them too.
+        const MIB: u64 = 1024 * 1024;
+        let budget = |d: u64| if d > 0 { 24 * MIB } else { 8 * MIB };
+        // (tied, its depth, its budget)
+        let mut children = vec![(true, depth - 1, budget(depth - 1))];
+        if has("untied") {
+            children.push((false, 0, budget(0)));
+        }
+        for (is_tied, child_depth, budget) in &children {
+            let args = alloc::format!("tied {child_depth}");
+            // Each child gets its own copies of the program and the report endpoint, so it can
+            // go on to do the same.
+            let caps = [
+                (role::PROGRAM, program.0.raw(), rights::ALL, false),
+                (role::REPORT, report.0.raw(), rights::ALL, false),
+            ];
+            let s = process::spawn(&process::Spawn {
+                name: "probe",
+                program: bytes,
+                budget: *budget,
+                priority: 1,
+                caps: &caps,
+                log: true,
+                args: &args,
+                tied: *is_tied,
+            })
+            .map_err(|e| {
+                granite::println!("probe tied: starting a child: {e}");
+                3
+            })?;
+            let mut data = [0u8; 9];
+            data[0] = u8::from(*is_tied);
+            data[1..].copy_from_slice(&child_depth.to_le_bytes());
+            let send =
+                [CapSend::copy(&s.process.0, rights::WATCH | rights::INSPECT | rights::STOP)];
+            let m = Outgoing { label: 1, data: &data, caps: &send };
+            report.call(&m, &mut [], 0, time::after_ms(30_000)).map_err(|_| 4)?;
+        }
+    }
+    if has("fault") {
+        // SAFETY: none; it's meant to fault, which ends this process.
+        unsafe { core::ptr::write_volatile(core::ptr::null_mut::<u64>(), 1) };
+    }
+    loop {
+        time::sleep_ms(1000);
+    }
 }

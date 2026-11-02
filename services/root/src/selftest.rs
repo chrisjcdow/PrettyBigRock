@@ -84,6 +84,8 @@ fn all(
     done.push("a crashing service");
     step("budgets", budgets(f))?;
     done.push("budgets");
+    step("kernel interface 1.2", crate::kernel12::run(f, &echo_ep))?;
+    done.push("watched badges, derived replies, tied processes and the wall clock");
     // The device manager gets copies of the device capabilities; the device tests then take
     // the root program's own.
     let devmgr = crate::blocktest::start(archive, archive_mem, start, true)?;

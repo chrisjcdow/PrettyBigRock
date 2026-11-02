@@ -15,6 +15,7 @@ mod blocktest;
 mod crashtest;
 mod devtest;
 mod drivertest;
+mod kernel12;
 mod selftest;
 
 use granite::memory::Memory;
