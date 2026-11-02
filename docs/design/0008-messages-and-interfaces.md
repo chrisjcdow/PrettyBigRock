@@ -53,9 +53,11 @@ has bits set. It returns a **kind**:
   badge of the capability the caller used, and the result is a **reply handle**: a one-time
   Reply capability in the receiver's table.
 - `2` (notification): the result is the bound notification's bits, which are cleared.
+- `3` (gone, from interface version 1.2): every capability carrying a watched badge has gone;
+  the result is the badge (note 0013, section 1).
 
-If both are ready, notification bits are delivered first, so events from drivers aren't
-starved by a flood of requests.
+If several are ready, notification bits are delivered first, so events from drivers aren't
+starved by a flood of requests, then gone notices, then calls.
 
 **`endpoint_reply(reply h)`.** Sends the receiver's message page back as the reply, and
 consumes the reply handle (it becomes invalid, whatever the outcome). If the caller has gone
@@ -86,7 +88,7 @@ little-endian.
 | 7 | 1 | `cap_move` | Bit *i* set: capability *i* is moved; clear: copied. Bits 4–7 are 0 |
 | 8 | 16 | `caps[4]` | Sender: the handles to send. Receiver: the new handles in its table |
 | 24 | 16 | `cap_rights[4]` | Sender: a mask applied to each capability's rights. Receiver: the rights each one now has |
-| 40 | 8 | `badge` | Receiver: the badge of the capability the caller used (0 for replies) |
+| 40 | 8 | `badge` | Receiver: the badge of the capability the caller used (0 for replies). Replier, from 1.2: the badge of a derived capability (note 0013, section 2) |
 | 48 | 8 | `buf_addr` | Sender: the address of the attached buffer. Receiver: where to put an incoming one |
 | 56 | 4 | `buf_len` | Sender: its length, 0 to 65536. Receiver: the length that arrived |
 | 60 | 4 | `buf_capacity` | Receiver: the size of the space at `buf_addr`, 0 to 65536 |
@@ -123,9 +125,12 @@ notification whenever the number of capabilities with `SEND` to that endpoint dr
 - It fires each time the count reaches zero, so a service that hands out a new capability
   and later loses it again is told again.
 
-A service that keeps state per client (open files, windows) gives each client its **own
-endpoint** for that state (a "session"), watches it, and frees the state when the client
-closes it, crashes, or has it revoked. The library's session helpers do this.
+A service that keeps state per client (open files, windows) mints each client's capability
+with a **watched badge** (interface version 1.2, note 0013): the kernel tells the service when
+the last capability carrying that badge has gone, because the client closed it, crashed, or
+had it revoked, and the service frees the state. (The first version of this note suggested an
+endpoint per client, but a thread can wait on only one endpoint, so that doesn't scale beyond a
+thread per client.)
 
 ### 6. Ring buffers
 
@@ -394,6 +399,10 @@ GPL-3.0-or-later, with a statement that its output is MIT-licensed.
   of a list's block and what it refers to; documentation on fields and values; naming rules
   and reserved names; receivers accept references anywhere in the buffer; what is generated;
   the Python cross-check is a layout calculator.
+- 2 November 2026, M5: receive kind 3 and derived capabilities in replies (note 0013); per-client
+  state uses watched badges instead of an endpoint per client; generated `Reply::ok` methods
+  take `impl Into<granite::interface::OutCap<T>>` for capability results, so a service can answer
+  with a derived capability.
 - 2 November 2026, M4: the `device_memory` handle kind (checked like the others: the capability
   must be device memory); the device manager's and the drivers' interfaces in `interfaces/`
   (`pbr.devices`, `pbr.driver.host`, `pbr.block`, `pbr.input`, `pbr.serial`, `pbr.display`,

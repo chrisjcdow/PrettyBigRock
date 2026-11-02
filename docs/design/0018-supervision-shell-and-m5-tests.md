@@ -142,8 +142,6 @@ following 1.3's Terminal where it makes sense:
 Small, but covering each decision. Long runs go to the Stress workflow on GitHub, as in M4.
 
 **On the host** (`cargo xtask test`), with ordinary and hostile inputs:
-- `lib/captree`: badge records' counts through copies, moves, closes and revocations, against a
-  model with random operations (note 0013);
 - `lib/partition`: tables made by our build tool, by Linux's tools, synthetic ones, and random
   corruption of each;
 - `lib/blockcache`: against a model and a simulated disk with a write cache, checking the
@@ -158,7 +156,8 @@ Small, but covering each decision. Long runs go to the Stress workflow on GitHub
 - `lib/supervise`: the restart policy (moved from `lib/devices`, with its tests).
 
 **In QEMU, on all four configurations**, after M4's tests, the root program runs:
-1. **Kernel 1.2** (in `probe`, as before): gone notices after closing, revoking, copying and
+1. **Kernel 1.2** (in the root program's `kernel12` tests, with `echo` and `probe`; the badge
+   records' counts live in the kernel, so they're tested here rather than on the host): gone notices after closing, revoking, copying and
    moving, and a process ending; their order with messages and notifications; charges given
    back. Derived replies: the new capability is a child of the caller's (revoking the caller's
    revokes it; closing the caller's re-parents it); a derived entry in a call, two in a reply,
@@ -239,3 +238,4 @@ traits, which are settled first.
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
+- 2 November 2026, stage 1: kernel 1.2's tests are in the program self-test, not `lib/captree`.

@@ -86,6 +86,9 @@ endpoint, with a new watched badge chosen by the service.
     haven't used until now;
   - its rights are the caller's capability's rights masked by `cap_rights[i]`, so they can
     only shrink;
+  - the badge can't be 0 (`INVALID_ARGUMENT`): badge 0 means "unbadged", and a client could
+    mint its own badges from an unbadged capability. The same goes for
+    `endpoint_mint_watched`;
   - `cap_move`'s bit *i* is ignored for this entry;
   - it is watched (section 1), with its own record charged to the replying process.
 - **At most one** derived entry per reply. Two fail with `INVALID_ARGUMENT`, as does a derived
@@ -128,13 +131,14 @@ The system data page (note 0007, section 1) gains one field after the existing o
 | 24 | 8 | The wall-clock time when the monotonic clock read 0, in nanoseconds since 1 January 1970 UTC; 0 if the loader didn't know it |
 
 The wall-clock time is this field plus `clock_now`. It is UTC; time zones are handled outside
-the kernel (DESIGN.md section 6.1). It comes from the boot information's `boot_time_ns`,
-adjusted to the moment the clock started. Setting the clock (from the network, M8) is a later
+the kernel (DESIGN.md section 6.1). It is the boot information's `boot_time_ns`: the time the
+loader read, a moment (well under a second) before the monotonic clock started. Setting the clock (from the network, M8) is a later
 call; until then the time is as good as the machine's battery clock.
 
 ### 5. In `granite` and the interface compiler
 
-- `Endpoint::mint_watched`; `endpoint::Event::Gone(badge)`.
+- `Endpoint::mint_watched`; `endpoint::Event::Gone(badge)`; `message::CapSend::derived(badge,
+  rights)`.
 - Generated server code can answer a `handle<…>` result with a derived capability: the reply
   methods take `impl Into<granite::interface::OutCap>`, where an ordinary `Handle` converts as
   before and `OutCap::Derived { badge, rights }` asks for a derived one. Existing services don't
@@ -184,3 +188,8 @@ wall-clock field. No new error codes or rights.
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
+- 2 November 2026, built (M5 stage 1): badge 0 is refused for watched and derived badges; the
+  wall-clock field is the loader's reading, not adjusted; a badge record's count is kept by the
+  capability table's add and remove hooks (copies and moves share the record, so a move never
+  passes through zero); tested in the program self-test (`services/root/src/kernel12.rs`), not
+  in `lib/captree`, since the counts live in the kernel.
