@@ -98,6 +98,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-driver-serial16550",
     "pbr-driver-virtio-blk",
     "pbr-driver-virtio-input",
+    "pbr-files",
     "pbr-granite",
     "pbr-interfaces",
     "pbr-root",

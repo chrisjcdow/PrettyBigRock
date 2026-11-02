@@ -25,6 +25,7 @@ members = [
     "lib/driver",
     "lib/elf",
     "lib/filetree",
+    "lib/files",
     "lib/fs",
     "lib/fsserve",
     "lib/fsserve",
