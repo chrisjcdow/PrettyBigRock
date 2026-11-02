@@ -8,6 +8,11 @@
 //! stop right stops it. Its threads are told to stop; once none is left, the reaper (a kernel
 //! thread) closes its capabilities, removes its mappings, records how it ended and tells its
 //! watchers.
+//!
+//! **Tied processes** (docs/design/0013-kernel-1.2.md, section 3) end with their creator: when
+//! a process ends, its tied children are stopped, and its own end is only *complete* (its
+//! state `Ended`, its watchers told) once theirs are. So a supervisor told that a service has
+//! ended knows that everything the service started has ended too.
 
 use super::budget::{Budget, Charge};
 use super::notification::Notification;
@@ -19,11 +24,26 @@ use crate::sync::{Once, SpinLock};
 use crate::{kprintln, syspage};
 use alloc::collections::VecDeque;
 use alloc::string::String;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// The status a tied process is stopped with when its creator ends: "TIED" in ASCII.
+pub const TIED_STATUS: u64 = 0x5449_4544;
+
+/// A process's tied children, and how far its own end has got.
+#[derive(Default)]
+struct Tied {
+    /// The tied processes it created. `Weak` (a reference that doesn't keep its target alive)
+    /// so a child that has gone away entirely simply drops out.
+    children: Vec<Weak<Process>>,
+    /// The reaper has closed its capabilities and mappings.
+    torn_down: bool,
+    /// Its end is complete: recorded, and its watchers told.
+    completed: bool,
+}
 
 /// Why a process ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +115,9 @@ pub struct Process {
     /// Set once any thread has been started.
     started: AtomicBool,
     thread_count: AtomicU64,
+    tied: SpinLock<Tied>,
+    /// The process that created it, if it is tied to it.
+    creator: SpinLock<Option<Weak<Process>>>,
     _charge: Charge,
 }
 
@@ -135,6 +158,8 @@ impl Process {
             external: AtomicU64::new(0),
             started: AtomicBool::new(false),
             thread_count: AtomicU64::new(0),
+            tied: SpinLock::new(Tied::default()),
+            creator: SpinLock::new(None),
             _charge: c,
         }))
     }
@@ -184,6 +209,20 @@ impl Process {
         self.threads.lock().len() as u64
     }
 
+    /// Records `child`, just created by this process, as tied to it. Fails if this process is
+    /// already ending, since the child would never be stopped.
+    pub fn adopt_tied(self: &Arc<Self>, child: &Arc<Process>) -> Result<(), Error> {
+        // Lock order: the state, then the tied list. `end` sets the state first and reads the
+        // list after, so a child is either refused here or found there.
+        let st = self.state.lock();
+        if *st != State::Running {
+            return Err(Error::BadState);
+        }
+        self.tied.lock().children.push(Arc::downgrade(child));
+        *child.creator.lock() = Some(Arc::downgrade(self));
+        Ok(())
+    }
+
     /// Starts ending the process with `status`, unless it's already ending.
     pub fn end(self: &Arc<Self>, status: Status) {
         {
@@ -192,6 +231,12 @@ impl Process {
                 return;
             }
             *st = State::Ending(status);
+        }
+        // Its tied children end with it.
+        let children: Vec<Arc<Process>> =
+            self.tied.lock().children.iter().filter_map(Weak::upgrade).collect();
+        for c in &children {
+            c.end(Status::Stopped(TIED_STATUS));
         }
         if let Status::Fault(f) = status {
             kprintln!(
@@ -350,13 +395,49 @@ fn reap(p: Arc<Process>) {
     REAP_WAIT.wake_all();
 }
 
-/// Closes everything the process held, and records how it ended.
+/// Closes everything the process held. Its end is complete once its tied children's are.
 fn finish(p: &Arc<Process>) {
-    let status = match *p.state.lock() {
-        State::Ending(s) => s,
-        _ => return,
-    };
+    if !matches!(*p.state.lock(), State::Ending(_)) {
+        return;
+    }
     super::caps::teardown(p);
-    *p.state.lock() = State::Ended(status);
+    p.tied.lock().torn_down = true;
+    try_complete(p);
+}
+
+/// Completes `p`'s end, if it has been torn down and every tied child's end is complete:
+/// records how it ended and tells its watchers, then gives its creator the same chance.
+fn try_complete(p: &Arc<Process>) {
+    let children: Vec<Arc<Process>> = {
+        let t = p.tied.lock();
+        if !t.torn_down || t.completed {
+            return;
+        }
+        t.children.iter().filter_map(Weak::upgrade).collect()
+    };
+    // A child still running is stopping (`end` stopped it); when it completes it calls here
+    // again. (Locks are taken parent then child, never the other way, so this can't deadlock.)
+    if children.iter().any(|c| !c.tied.lock().completed) {
+        return;
+    }
+    drop(children);
+    {
+        let mut t = p.tied.lock();
+        if t.completed {
+            return; // completed by someone else in between
+        }
+        t.completed = true;
+        t.children.clear();
+    }
+    {
+        let mut st = p.state.lock();
+        if let State::Ending(s) = *st {
+            *st = State::Ended(s);
+        }
+    }
     p.signal_watchers();
+    let creator = p.creator.lock().as_ref().and_then(Weak::upgrade);
+    if let Some(c) = creator {
+        try_complete(&c);
+    }
 }

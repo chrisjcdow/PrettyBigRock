@@ -10,7 +10,7 @@
 
 use crate::mem::object::MemoryObject;
 use crate::mem::space::perm;
-use crate::obj::endpoint::{Endpoint, Received};
+use crate::obj::endpoint::{CallerCap, Endpoint, Received};
 use crate::obj::notification::Notification;
 use crate::obj::process::{Process, Status};
 use crate::obj::table::Entry;
@@ -21,8 +21,8 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 
-/// The interface version (note 0007, section 7).
-pub const VERSION: (u64, u64) = (1, 1);
+/// The interface version (note 0007, section 7; 1.2 is note 0013).
+pub const VERSION: (u64, u64) = (1, 2);
 
 type R = Result<(u64, u64), Error>;
 
@@ -174,8 +174,11 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
 
         // Processes.
         20 => {
-            let (budget, max_prio, name_addr, name_len) = (a[0], a[1], a[2], a[3]);
-            if name_len > 64 || max_prio > u64::from(p.max_priority) {
+            // The second argument: bits 0 to 7 the maximum priority, bit 8 `TIED` (note
+            // 0013, section 3), the rest 0.
+            let (budget, name_addr, name_len) = (a[0], a[2], a[3]);
+            let (max_prio, tied) = (a[1] & 0xFF, a[1] & 0x100 != 0);
+            if name_len > 64 || a[1] >> 9 != 0 || max_prio > u64::from(p.max_priority) {
                 return Err(Error::InvalidArgument);
             }
             let mut name = vec![0u8; name_len as usize];
@@ -183,6 +186,9 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
             let name = String::from_utf8(name).map_err(|_| Error::InvalidArgument)?;
             let b = crate::obj::budget::Budget::child(&p.budget, budget)?;
             let child = Process::new(&name, b, max_prio as u8)?;
+            if tied {
+                p.adopt_tied(&child)?;
+            }
             caps::create(p, Object::Process(child)).map(|h| (u64::from(h), 0))
         }
         21 => {
@@ -338,7 +344,11 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
         }
         52 => {
             let (ep, badge, held) = endpoint(p, a[0], rights::SEND)?;
-            ep.call(me, badge, a[1], held).map(|()| (0, 0))
+            // Remember which capability the call came through, for a derived reply (note 0013).
+            let hv = handle_arg(a[0])?;
+            let node = caps::lookup(p, hv)?.node;
+            let through = CallerCap { process: Arc::downgrade(p), handle: hv, node };
+            ep.call(me, badge, a[1], through, held).map(|()| (0, 0))
         }
         53 => {
             let (ep, _, held) = endpoint(p, a[0], rights::RECEIVE)?;
@@ -363,6 +373,10 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
             let n = notification(p, a[1], rights::SIGNAL)?;
             ep.watch(n, a[2]);
             Ok((0, 0))
+        }
+        58 => {
+            let mask = u32::try_from(a[2]).map_err(|_| Error::InvalidArgument)?;
+            caps::mint_watched(p, handle_arg(a[0])?, mask, a[1]).map(|h| (u64::from(h), 0))
         }
 
         // Notifications.
@@ -494,6 +508,7 @@ fn received(r: Received) -> (u64, u64) {
     match r {
         Received::Message(h) => (1, u64::from(h)),
         Received::Bits(b) => (2, b),
+        Received::Gone(b) => (3, b),
     }
 }
 

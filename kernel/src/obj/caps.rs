@@ -10,6 +10,7 @@
 //! Locking: the tree's sleeping lock comes first, then a process's table lock or space lock
 //! (never both at once). Looking a handle up needs only the table lock.
 
+use super::endpoint::Watch;
 use super::process::Process;
 use super::table::Entry;
 use super::{Error, Object, require, rights};
@@ -57,6 +58,9 @@ pub fn lock() -> MutexGuard<'static, CapTree> {
 
 /// What happens when a capability is put in `owner`'s table.
 pub fn added(e: &Entry, owner: &Arc<Process>) {
+    if let Some(w) = &e.watch {
+        w.cap_added();
+    }
     match &e.object {
         Object::Endpoint(ep) => ep.cap_added(e.rights),
         Object::Process(p) => p.cap_added(owner),
@@ -67,6 +71,9 @@ pub fn added(e: &Entry, owner: &Arc<Process>) {
 /// What happens when a capability leaves `owner`'s table: counts kept by objects, and threads
 /// waiting through it, which must look again.
 pub fn removed(e: &Entry, owner: &Arc<Process>) {
+    if let Some(w) = &e.watch {
+        w.cap_removed();
+    }
     match &e.object {
         Object::Endpoint(ep) => ep.cap_removed(e.rights),
         Object::Notification(n) => n.wake_waiters(),
@@ -89,12 +96,25 @@ pub fn insert(
     badge: u64,
     parent: Option<NodeId>,
 ) -> Result<u32, Error> {
+    insert_entry(tree, p, object, rights, badge, None, parent)
+}
+
+/// [`insert`], for a capability that carries a watched badge's record (note 0013).
+pub fn insert_entry(
+    tree: &mut CapTree,
+    p: &Arc<Process>,
+    object: Object,
+    rights: u32,
+    badge: u64,
+    watch: Option<Arc<Watch>>,
+    parent: Option<NodeId>,
+) -> Result<u32, Error> {
     let node = match parent {
         Some(n) => tree.insert_child(n, Owner::Nowhere),
         None => tree.insert_root(Owner::Nowhere),
     }
     .map_err(|_| Error::OutOfMemory)?;
-    let entry = Entry { object, rights, badge, node };
+    let entry = Entry { object, rights, badge, watch, node };
     let h = match p.table.lock().insert(entry.clone()) {
         Ok(h) => h,
         Err(e) => {
@@ -121,7 +141,7 @@ pub fn duplicate(p: &Arc<Process>, h: u32, mask: u32, badge: Option<u64>) -> Res
     let mut tree = TREE.lock();
     let e = lookup(p, h)?;
     require(e.rights, rights::DUPLICATE)?;
-    let badge = match badge {
+    let (badge, watch) = match badge {
         Some(b) => {
             if !matches!(e.object, Object::Endpoint(_)) {
                 return Err(Error::WrongType);
@@ -129,11 +149,32 @@ pub fn duplicate(p: &Arc<Process>, h: u32, mask: u32, badge: Option<u64>) -> Res
             if e.badge != 0 {
                 return Err(Error::BadState);
             }
-            b
+            (b, None)
         }
-        None => e.badge,
+        // A plain copy carries its original's badge, and shares its record if it's watched.
+        None => (e.badge, e.watch.clone()),
     };
-    insert(&mut tree, p, e.object, e.rights & mask, badge, Some(e.node))
+    insert_entry(&mut tree, p, e.object, e.rights & mask, badge, watch, Some(e.node))
+}
+
+/// `endpoint_mint_watched` (note 0013, section 1): a copy of the unbadged endpoint capability
+/// `h` carrying `badge`, which the kernel counts so the endpoint's receiver is told when the
+/// last capability carrying it has gone. Needs `DUPLICATE` and `RECEIVE`: only a service may
+/// watch its own badges. The record is charged to `p`.
+pub fn mint_watched(p: &Arc<Process>, h: u32, mask: u32, badge: u64) -> Result<u32, Error> {
+    let mut tree = TREE.lock();
+    let e = lookup(p, h)?;
+    let Object::Endpoint(ep) = &e.object else { return Err(Error::WrongType) };
+    require(e.rights, rights::DUPLICATE | rights::RECEIVE)?;
+    if e.badge != 0 {
+        return Err(Error::BadState);
+    }
+    // Badge 0 means "unbadged", which a client could mint from in turn.
+    if badge == 0 {
+        return Err(Error::InvalidArgument);
+    }
+    let watch = Watch::new(ep, badge, p.budget.charge(super::charge::NOTIFICATION)?);
+    insert_entry(&mut tree, p, e.object, e.rights & mask, badge, Some(watch), Some(e.node))
 }
 
 /// Closes `h`: its copies are given to its parent, so they keep working.
@@ -203,7 +244,7 @@ pub fn give(
     if !moving {
         require(e.rights, rights::DUPLICATE)?;
         let r = e.rights & mask;
-        let nh = insert(tree, to, e.object, r, e.badge, Some(e.node))?;
+        let nh = insert_entry(tree, to, e.object, r, e.badge, e.watch, Some(e.node))?;
         return Ok((nh, r));
     }
     // A move keeps the node, and so its place in the tree. Put it in its new place first, so

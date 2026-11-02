@@ -13,18 +13,34 @@
 //! Lock order: an endpoint's lock, then a thread's phase, then a reply's. A [`Reply`] that still
 //! has its caller must never be dropped while that caller's phase is locked (its drop tells the
 //! caller): take the caller out of it first.
+//!
+//! Interface version 1.2 (docs/design/0013-kernel-1.2.md) adds two things here:
+//! - **watched badges.** A badge is a number a service stamps on the capabilities it hands out,
+//!   so it can tell its clients apart (note 0008). A [`Watch`] counts the capabilities that
+//!   carry one badge. When the count reaches zero the record joins the endpoint's *gone queue*,
+//!   and a receive returns it ([`Received::Gone`]), so the service can free what it kept for
+//!   that badge (an open file, say);
+//! - **derived replies.** A reply may ask for a capability derived from the one the caller
+//!   called through ([`DERIVED`]): a child of it in the derivation tree, so that revoking the
+//!   caller's capability revokes what it was used to reach.
 
 use super::budget::Charge;
 use super::caps;
 use super::notification::Notification;
 use super::table::Entry;
-use super::{Error, Object, require, rights};
+use super::{Error, Object, charge, require, rights};
 use crate::mem::space::{Space, perm};
 use crate::sched::{self, Thread, Woken};
 use crate::sync::SpinLock;
 use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
+use pbr_captree::NodeId;
+
+/// A reply's capability entry with this value asks for a capability derived from the one the
+/// caller used (note 0013, section 2). Bit 31 is set, which no handle has.
+pub const DERIVED: u32 = 0xFFFF_FFFF;
 
 /// Bytes of data a message can carry in its page.
 pub const DATA_MAX: usize = 240;
@@ -42,6 +58,8 @@ pub enum Received {
     Message(u32),
     /// The bound notification's bits.
     Bits(u64),
+    /// Every capability carrying this watched badge has gone (note 0013, section 1).
+    Gone(u64),
 }
 
 /// Where a program thread is in a message exchange.
@@ -70,6 +88,57 @@ struct Caller {
     reply: Arc<Reply>,
 }
 
+/// The capability a caller called through: where a derived reply's new capability goes in
+/// the derivation tree.
+pub struct CallerCap {
+    /// The calling process.
+    pub process: Weak<super::process::Process>,
+    /// The handle it called through.
+    pub handle: u32,
+    /// That capability's node, so a closed and reused handle is never mistaken for it.
+    pub node: NodeId,
+}
+
+/// A watched badge's record (note 0013, section 1): how many capabilities carry the badge.
+/// Every capability carrying it holds an `Arc` to this; the count is kept separately, by the
+/// table hooks in `caps` (an `Arc` is also held briefly by lookups, which aren't capabilities).
+pub struct Watch {
+    endpoint: Weak<Endpoint>,
+    badge: u64,
+    count: AtomicU64,
+    /// What the record costs whoever minted it, given back when its notice is received.
+    charge: SpinLock<Option<Charge>>,
+}
+
+impl Watch {
+    /// A record for `badge` on `endpoint`, with no capabilities counted yet.
+    pub fn new(endpoint: &Arc<Endpoint>, badge: u64, charge: Charge) -> Arc<Watch> {
+        Arc::new(Watch {
+            endpoint: Arc::downgrade(endpoint),
+            badge,
+            count: AtomicU64::new(0),
+            charge: SpinLock::new(Some(charge)),
+        })
+    }
+
+    /// A capability carrying the badge was put in a table.
+    pub fn cap_added(&self) {
+        self.count.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// A capability carrying the badge left a table. The last one queues the gone notice.
+    /// (The count can't rise again from zero: copies are only made from capabilities that
+    /// exist, while the derivation tree's lock is held.)
+    pub fn cap_removed(self: &Arc<Self>) {
+        if self.count.fetch_sub(1, Ordering::AcqRel) == 1 {
+            match self.endpoint.upgrade() {
+                Some(ep) => ep.badge_gone(self.clone()),
+                None => drop(self.charge.lock().take()),
+            }
+        }
+    }
+}
+
 struct Inner {
     callers: VecDeque<Caller>,
     receivers: VecDeque<Arc<Thread>>,
@@ -77,6 +146,8 @@ struct Inner {
     senders: u64,
     receiver_caps: u64,
     watch: Option<(Arc<Notification>, u64)>,
+    /// Watched badges whose last capability has gone, waiting to be received.
+    gone: VecDeque<Arc<Watch>>,
 }
 
 /// A service's receiving point for messages.
@@ -88,6 +159,8 @@ pub struct Endpoint {
 /// A one-time capability to answer one call.
 pub struct Reply {
     caller: SpinLock<Option<Arc<Thread>>>,
+    /// The capability the caller used, for a derived reply.
+    through: CallerCap,
 }
 
 fn phase_of(t: &Thread) -> &SpinLock<Phase> {
@@ -99,14 +172,14 @@ fn set_phase(t: &Thread, p: Phase) {
 }
 
 impl Reply {
-    fn new(caller: Arc<Thread>) -> Arc<Reply> {
-        Arc::new(Reply { caller: SpinLock::new(Some(caller)) })
+    fn new(caller: Arc<Thread>, through: CallerCap) -> Arc<Reply> {
+        Arc::new(Reply { caller: SpinLock::new(Some(caller)), through })
     }
 
     /// Answers the call with the replying thread's message page.
     pub fn answer(&self, from: &Arc<Thread>) -> Result<(), Error> {
         let caller = self.caller.lock().take().ok_or(Error::PeerGone)?;
-        let r = deliver(from, &caller, 0, None).map(|_| ());
+        let r = deliver(from, &caller, 0, None, Some(&self.through)).map(|_| ());
         set_phase(&caller, Phase::Replied(r.map_err(|_| Error::PeerGone)));
         sched::wake(&caller);
         r
@@ -134,6 +207,7 @@ impl Endpoint {
                 senders: 0,
                 receiver_caps: 0,
                 watch: None,
+                gone: VecDeque::new(),
             }),
             _charge: charge,
         })
@@ -154,6 +228,7 @@ impl Endpoint {
     pub fn cap_removed(&self, r: u32) {
         let mut signal = None;
         let mut gone = Vec::new();
+        let mut notices = VecDeque::new();
         let waiting: Vec<Arc<Thread>>;
         {
             let mut i = self.inner.lock();
@@ -166,7 +241,9 @@ impl Endpoint {
             if r & rights::RECEIVE != 0 {
                 i.receiver_caps -= 1;
                 if i.receiver_caps == 0 {
-                    // Nobody can ever receive: every waiting caller fails.
+                    // Nobody can ever receive: every waiting caller fails, and queued gone
+                    // notices are dropped (their charges given back, below).
+                    notices = core::mem::take(&mut i.gone);
                     gone = i.callers.drain(..).collect();
                     for c in &gone {
                         set_phase(&c.thread, Phase::Replied(Err(Error::PeerGone)));
@@ -191,6 +268,31 @@ impl Endpoint {
         if let Some((n, bits)) = signal {
             n.signal(bits);
         }
+        for w in notices {
+            drop(w.charge.lock().take());
+        }
+    }
+
+    /// The last capability carrying a watched badge has gone: queue the notice for a receiver.
+    fn badge_gone(&self, w: Arc<Watch>) {
+        let waiting: Vec<Arc<Thread>> = {
+            let mut i = self.inner.lock();
+            if i.receiver_caps == 0 {
+                drop(i);
+                drop(w.charge.lock().take());
+                return;
+            }
+            i.gone.push_back(w);
+            i.receivers.iter().cloned().collect()
+        };
+        for t in &waiting {
+            sched::wake(t);
+        }
+    }
+
+    /// Whether a gone notice is waiting.
+    fn gone_pending(&self) -> bool {
+        !self.inner.lock().gone.is_empty()
     }
 
     /// Asks for `bits` on `n` whenever the last capability with the send right goes.
@@ -231,10 +333,11 @@ impl Endpoint {
         me: &Arc<Thread>,
         badge: u64,
         deadline: u64,
+        through: CallerCap,
         still_held: impl Fn() -> bool,
     ) -> Result<(), Error> {
         read_header(me)?; // reject a malformed message before anyone sees it
-        let reply = Reply::new(me.clone());
+        let reply = Reply::new(me.clone(), through);
         let weak = Arc::downgrade(&reply);
         {
             let mut i = self.inner.lock();
@@ -244,7 +347,7 @@ impl Endpoint {
             if let Some(r) = i.receivers.pop_front() {
                 set_phase(&r, Phase::Taken);
                 drop(i);
-                match deliver(me, &r, badge, Some(reply.clone())) {
+                match deliver(me, &r, badge, Some(reply.clone()), None) {
                     Ok(h) => {
                         set_phase(me, Phase::AwaitingReply(weak.clone()));
                         drop(reply); // the receiver's table holds it now
@@ -352,11 +455,16 @@ impl Endpoint {
                 }
             }
             let mut i = self.inner.lock();
+            if let Some(w) = i.gone.pop_front() {
+                drop(i);
+                drop(w.charge.lock().take()); // the record's cost goes back to its minter
+                return Ok(Received::Gone(w.badge));
+            }
             if let Some(c) = i.callers.pop_front() {
                 set_phase(&c.thread, Phase::Delivering);
                 drop(i);
                 let weak = Arc::downgrade(&c.reply);
-                match deliver(&c.thread, me, c.badge, Some(c.reply.clone())) {
+                match deliver(&c.thread, me, c.badge, Some(c.reply.clone()), None) {
                     Ok(h) => {
                         set_phase(&c.thread, Phase::AwaitingReply(weak));
                         drop(c.reply); // our table holds it now
@@ -384,6 +492,7 @@ impl Endpoint {
                 let woken = sched::wait_event(dl, || {
                     matches!(*phase_of(me).lock(), Phase::Received(_))
                         || bound.as_ref().is_some_and(|n| n.pending())
+                        || self.gone_pending()
                         || !still_held()
                 });
                 let mut i = self.inner.lock();
@@ -395,7 +504,8 @@ impl Endpoint {
                         return r;
                     }
                     Phase::Receiving => {
-                        let bits = bound.as_ref().is_some_and(|n| n.pending());
+                        let bits =
+                            bound.as_ref().is_some_and(|n| n.pending()) || !i.gone.is_empty();
                         let why = if bits { None } else { giving_up(woken, still_held()) };
                         if why.is_none() && !bits {
                             continue;
@@ -404,7 +514,7 @@ impl Endpoint {
                         *p = Phase::Idle;
                         match why {
                             Some(e) => return Err(e),
-                            None => break, // take the bits at the top
+                            None => break, // take the bits or the notice at the top
                         }
                     }
                     _ => {} // a caller is copying to us: wait for it
@@ -479,12 +589,15 @@ fn read_header(t: &Thread) -> Result<(Header, [u8; PAGE_USED]), Error> {
 }
 
 /// Delivers `src`'s message to `dst`: all of it, or nothing. With `reply`, the receiver also
-/// gets a reply capability; its handle is returned (0 without one).
+/// gets a reply capability; its handle is returned (0 without one). `through` is given only
+/// for a reply: the capability the caller (`dst`) called through, from which a [`DERIVED`]
+/// entry makes the new capability.
 pub fn deliver(
     src: &Arc<Thread>,
     dst: &Arc<Thread>,
     badge: u64,
     reply: Option<Arc<Reply>>,
+    through: Option<&CallerCap>,
 ) -> Result<u32, Error> {
     let su = src.user.as_ref().ok_or(Error::BadState)?;
     let du = dst.user.as_ref().ok_or(Error::BadState)?;
@@ -501,9 +614,16 @@ pub fn deliver(
 
     // Check the capabilities to send, and that there's room for them.
     let mut entries: Vec<Entry> = Vec::new();
+    let mut derived: Option<(usize, Derived)> = None;
     for i in 0..h.cap_count {
         if h.caps[..i].contains(&h.caps[i]) {
-            return Err(Error::InvalidArgument);
+            return Err(Error::InvalidArgument); // also refuses two derived entries
+        }
+        if h.caps[i] == DERIVED {
+            // Only a reply can derive, and only from a caller that still holds its capability.
+            let t = through.ok_or(Error::InvalidArgument)?;
+            derived = Some((i, Derived::check(t, dp, u64_at(&page, 40), h.masks[i])?));
+            continue;
         }
         let e = caps::lookup(sp, h.caps[i])?;
         require(e.rights, rights::TRANSFER)?;
@@ -542,8 +662,28 @@ pub fn deliver(
     let mut out_caps = [0u32; 4];
     let mut out_rights = [0u32; 4];
     for i in 0..h.cap_count {
-        let moving = h.cap_move & (1 << i) != 0;
-        let (nh, r) = caps::give(&mut tree, sp, h.caps[i], dp, h.masks[i], moving)?;
+        let (nh, r) = match &derived {
+            Some((at, d)) if *at == i => {
+                // The record is charged to whoever replies: the service that chose to derive.
+                let watch =
+                    Watch::new(&d.endpoint, d.badge, sp.budget.charge(charge::NOTIFICATION)?);
+                let object = Object::Endpoint(d.endpoint.clone());
+                let nh = caps::insert_entry(
+                    &mut tree,
+                    dp,
+                    object,
+                    d.rights,
+                    d.badge,
+                    Some(watch),
+                    Some(d.node),
+                )?;
+                (nh, d.rights)
+            }
+            _ => {
+                let moving = h.cap_move & (1 << i) != 0;
+                caps::give(&mut tree, sp, h.caps[i], dp, h.masks[i], moving)?
+            }
+        };
         out_caps[i] = nh;
         out_rights[i] = r;
     }
@@ -571,4 +711,35 @@ pub fn deliver(
     out[64..64 + h.data_len].copy_from_slice(&page[64..64 + h.data_len]);
     du.msg.write(0, &out)?;
     Ok(reply_handle)
+}
+
+/// A derived capability about to be made (note 0013, section 2).
+struct Derived {
+    endpoint: Arc<Endpoint>,
+    node: NodeId,
+    rights: u32,
+    badge: u64,
+}
+
+impl Derived {
+    /// Checks a derived entry for a reply to `caller`, who called through `t`: the caller still
+    /// holds that capability (the tree's lock is held, so it can't go before it's used), and the
+    /// badge isn't 0 ("unbadged", which a client could mint from).
+    fn check(
+        t: &CallerCap,
+        caller: &Arc<super::process::Process>,
+        badge: u64,
+        mask: u32,
+    ) -> Result<Derived, Error> {
+        if badge == 0 {
+            return Err(Error::InvalidArgument);
+        }
+        let same = t.process.upgrade().is_some_and(|p| Arc::ptr_eq(&p, caller));
+        let e = if same { caps::lookup(caller, t.handle).ok() } else { None };
+        // A capability that has gone (closed, revoked, or its handle reused) can't be derived
+        // from: the caller's call has failed or is failing, so the reply goes nowhere.
+        let Some(e) = e.filter(|e| e.node == t.node) else { return Err(Error::PeerGone) };
+        let Object::Endpoint(ep) = &e.object else { return Err(Error::PeerGone) };
+        Ok(Derived { endpoint: ep.clone(), node: e.node, rights: e.rights & mask, badge })
+    }
 }

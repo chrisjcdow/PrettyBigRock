@@ -8,7 +8,9 @@
 //! freed its generation changes, so an old handle number never reaches a new capability.
 
 use super::budget::Charge;
+use super::endpoint::Watch;
 use super::{Error, Object, charge};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use pbr_captree::NodeId;
 
@@ -27,6 +29,9 @@ pub struct Entry {
     pub rights: u32,
     /// Its badge (endpoints only; otherwise 0).
     pub badge: u64,
+    /// For a watched badge (docs/design/0013-kernel-1.2.md, section 1), the record that
+    /// counts the capabilities carrying it. Copies share their original's record.
+    pub watch: Option<Arc<Watch>>,
     /// Its node in the derivation tree.
     pub node: NodeId,
 }
