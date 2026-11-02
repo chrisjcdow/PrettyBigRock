@@ -80,7 +80,8 @@ enum VolumeState { Ready @1, Starting @2, Unsupported @3, Damaged @4, Failed @5 
 
 struct VolumeInfo {
     id: u32,
-    /// The disk, numbered in the order found, and the partition (0: the whole disk).
+    /// The disk: the device manager's id for it (so a volume can be tied to its driver), or
+    /// 1000 and up for a disk in memory; and the partition (0: the whole disk).
     disk: u32,
     partition: u32,
     filesystem: Filesystem,
@@ -104,7 +105,7 @@ struct VolumeInfo {
 @5 fn shutdown() -> () error StorageError;
 
 flexible enum StorageError { NoSuchVolume @1, NotReady @2, NotEmpty @3, NoMemory @4,
-                             DiskError @5, ShutDown @6 }
+                             DiskError @5, ShutDown @6, Unsupported @7, BadArgument @8 }
 ```
 
 `format` only accepts a volume whose filesystem is `Empty`, so nothing with data on it is ever
@@ -157,14 +158,16 @@ library, `lib/blockcache` (`pbr-blockcache`, no_std), tested on the host against
 simulated disk. The storage service supplies the memory and the disk calls.
 
 **Pages.** The cache works in **4 KiB pages**, each 8 sectors of 512 bytes, aligned to 4 KiB
-from the start of the disk (not of the partition, so that two volumes on one disk never share
-a page). A request that covers part of a page reads the whole page. Disks with sectors of other
+from the start of the disk. A partition that doesn't start on a 4 KiB boundary (old MBR disks
+often start at sector 63) shares a page with its neighbour, so flushing a volume writes every
+dirty page that touches it, whichever volume changed it. A request that covers part of a page
+reads the whole page; a write that covers whole pages reads nothing. Disks with sectors of other
 sizes are refused in M5 (an open question). One pool of pages serves every disk; its size is
-fixed when the service starts (32 MiB in M5, out of its budget), and the pages live in one
-memory object mapped in the storage service.
+fixed when the service starts (16 MiB in M5, while the QEMU tests run with 512 MiB), allocated
+once from the storage service's heap.
 
-**Finding and replacing pages.** Pages are found by (disk, page number) in a hash table, and
-replaced in least-recently-used order. A read that misses reads every missing page of the
+**Finding and replacing pages.** Pages are found by (disk, page number) in a sorted map (a
+B-tree), and replaced in least-recently-used order. A read that misses reads every missing page of the
 request in one call to the driver, up to 64 KiB.
 
 **Writes are cached** ("write-back"): a write changes the cached pages and marks them dirty, and
@@ -236,3 +239,18 @@ later change inside the service.
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
+- 2 November 2026, built (M5 stage 2):
+  - volumes' disks are the device manager's ids (1000 and up in memory); `StorageError` gained
+    `Unsupported` and `BadArgument`;
+  - a self-test-only `pbr.storage.debug` (badge 2) hands out a volume's `pbr.block`, as a
+    filesystem server will get it, and reports the cache's dirty pages;
+  - volume capabilities carry `SEND` and `TRANSFER` (a capability must be transferable to
+    travel in a reply) but not `DUPLICATE`;
+  - the cache is 16 MiB, from the heap, found through a sorted map; partitions that share a
+    4 KiB page are handled (section 5 had wrongly said they couldn't);
+  - partition tables are read directly from the drivers, not through the cache;
+  - until the filesystem servers exist (stages 3 to 5), recognised volumes are listed as
+    `Unsupported`, `open` and `format` answer `Unsupported`, volumes in memory are left empty,
+    and `shutdown` only flushes the cache;
+  - until supervision (stage 7), the root program gives the storage service the device
+    manager's endpoint at start-up role 1001.

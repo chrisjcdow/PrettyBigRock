@@ -365,3 +365,15 @@ disks made by 1.3, including writing and reading back.
   `tied` mode, pass on all four configurations. Building it found that the system page's header
   still said interface 1.0 under the 1.1 kernel; it is now written from the kernel's one version
   constant. Notes 0007, 0008, 0013 and 0018 updated.
+- **Stage 2, storage** (Opus): `lib/crc`; `lib/partition` (MBR, GPT with its backup, whole-disk
+  volumes, identifying RockFS, FAT32 and empty volumes by their contents, damaged tables
+  refused), host-tested with every kind of damage and random corruption; `lib/blockcache` (the
+  shared cache, with note 0015's ordering rules), host-tested against a simulated disk with its
+  own write cache; `services/storage`, serving `pbr.storage`, each volume's `pbr.block`, and
+  `pbr.storage.debug` in self-test runs; three test disks made by the build tool and
+  `tools/rockfs.py`; and the storage self-test, which passes on all four configurations,
+  including a disk driver crashed underneath a volume in use. Building it corrected note 0015:
+  partitions that don't start on a 4 KiB boundary do share cache pages, so flushing a volume
+  writes every dirty page touching it. Deliberately breaking that rule showed the random cache
+  test missed it, so a test aimed at shared pages was added. Not yet: filesystem servers, so
+  volumes can't be opened or formatted (stages 3 to 5).

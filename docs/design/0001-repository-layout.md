@@ -31,8 +31,10 @@ PrettyBigRock/
 │       └── board/<name>/   everything specific to one machine (from M1)
 ├── lib/                  libraries, one folder each
 │   ├── archive/            the start-up archive format (note 0009)
+│   ├── blockcache/         the shared block cache (note 0015)
 │   ├── bootinfo/           the boot information (note 0003)
 │   ├── captree/            the capability derivation tree (note 0006)
+│   ├── crc/                CRC-32, for partition tables and RockFS
 │   ├── devices/            PCI configuration space, MSI-X, driver manifests, the device
 │   │                       record, key tables and the restart policy (notes 0011, 0012)
 │   ├── driver/             what every driver is built on (note 0011)
@@ -40,6 +42,7 @@ PrettyBigRock/
 │   ├── granite/            granite, the native library programs are built on (note 0009)
 │   ├── interface-compiler/ turns interface files into Rust (note 0008)
 │   ├── interfaces/         the code generated from interfaces/ (note 0008)
+│   ├── partition/          MBR and GPT partition tables, identifying filesystems (note 0015)
 │   ├── platform/           page tables, ACPI and device trees, shared by loaders and kernel
 │   ├── ranges/             ranges, kernel-owned subtraction and the vector queue (note 0010)
 │   └── virtio/             the virtio PCI transport, virtqueues, block and input (note 0011)
@@ -48,7 +51,8 @@ PrettyBigRock/
 │   └── <name>.drv          its manifest: what it drives and what it needs
 ├── services/             system services, one program each
 │   ├── root/               the first program, which starts everything else (note 0009)
-│   └── devmgr/             the device manager (note 0011)
+│   ├── devmgr/             the device manager (note 0011)
+│   └── storage/            the storage service: disks, volumes, the block cache (note 0015)
 ├── apps/                 apps (from M6)
 ├── interfaces/           interface files (`.pbi`) for messages (note 0008)
 ├── targets/              the Rust targets programs are built for (note 0009)
@@ -128,4 +132,5 @@ The build tool's own tests check steps 1 and 3 match.
 - 2 November 2026: the folders added in M4 (`lib/devices`, `lib/driver`, `lib/ranges`,
   `lib/virtio`, `drivers/`, `services/devmgr`), all GPL-3.0-or-later, and
   `.github/workflows/stress.yml`.
-- 2 November 2026, M5: `CLAUDE.md`.
+- 2 November 2026, M5: `CLAUDE.md`; `lib/blockcache`, `lib/crc`, `lib/partition` and
+  `services/storage` (GPL-3.0-or-later).
