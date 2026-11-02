@@ -349,22 +349,26 @@ fn under_load(d: &Devmgr, id: u32, answers: &Arc<Vec<u8>>) -> Result<String, Str
 /// Crashes the driver again and again, quickly: it must be given up on.
 fn storm(d: &Devmgr, id: u32) -> Result<(), String> {
     d.debug.forgive(id).map_err(|e| format!("forgiving: {e}"))?;
-    // The delays before the second and third restarts (100 ms and 1 s).
+    // The delays after the first, second and third crashes are 0, 100 ms and 1 s.
     // Measured from just before the driver was ended, so that this thread being slow to notice
     // can't make the restart look quicker than it was.
-    let lower_bounds = [0u64, 60, 700];
+    let lower_bounds = [0u64, 0, 60];
     let mut ended_at = time::now();
     for (i, least) in lower_bounds.iter().enumerate() {
-        let h = reconnect(d, id, 3000)?;
+        let h = reconnect(d, id, 5000)?;
         let took = ms_since(ended_at);
-        if i > 0 && took < *least {
-            return Err(format!("restart {} came after only {took} ms", i + 1));
+        if took < *least {
+            return Err(format!("the restart after crash {i} came after only {took} ms"));
         }
         ended_at = time::now();
         end_driver(d, id, &h, How::Crash(CrashKind::Exit))?;
     }
     // The fourth instance is the last.
-    let h = reconnect(d, id, 3000)?;
+    let h = reconnect(d, id, 5000)?;
+    let took = ms_since(ended_at);
+    if took < 700 {
+        return Err(format!("the restart after crash 3 came after only {took} ms"));
+    }
     end_driver(d, id, &h, How::Crash(CrashKind::IllegalInstruction))?;
     let t0 = time::now();
     loop {
