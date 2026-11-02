@@ -25,7 +25,7 @@ decides what each app is given is note 0017.
 ### 1. The parts
 
 ```
- program ── granite::fs ──pbr.file──▶ filesystem server ──pbr.block──▶ storage ──pbr.block──▶ disk driver
+ program ── lib/files ──pbr.file───▶ filesystem server ──pbr.block──▶ storage ──pbr.block──▶ disk driver
             (its file tree)            (one per volume)                (partitions,
                                                                         the block cache)
 ```
@@ -40,8 +40,8 @@ decides what each app is given is note 0017.
   - the **storage service**, which finds volumes and hands out their root folders (note 0015);
   - **`lib/fsserve`**, the half of every filesystem server that deals with capabilities: the
     object table, rights, paths and the `pbr.file` protocol, written once (section 7);
-  - **`granite::fs`**, the half in every program: its file tree, and turning paths into
-    requests (section 8).
+  - **`lib/files`** (`pbr-files`), the half in every program: its file tree, and turning paths
+    into requests (section 8).
 
   A forwarding process would add a hop to every read and write, and a component every file
   passes through, without adding any protection: the capabilities already decide what each
@@ -179,7 +179,7 @@ when the file is written, and recorded here.)
 - `open` and `create` ask for rights; asking for more than the folder has fails with
   `NoRight` rather than silently giving less, so a program finds out at once.
 - `rename` works within one folder capability's tree. Moving something between two folders a
-  program holds separately (two grants) is done by copying and removing, which `granite::fs`
+  program holds separately (two grants) is done by copying and removing, which `lib/files`
   does for it; recognising that two capabilities are on the same volume needs the kernel
   addition in note 0013's open questions.
 - `Damaged` means the server found a structure on the disk that breaks the filesystem's rules.
@@ -216,7 +216,7 @@ It is written once, so these rules can't differ between filesystems, and its log
 library built for the host and tested there with an in-memory filesystem, including a hostile
 client sending every malformed path and wrong-kind request.
 
-### 8. Each program's file tree: `granite::fs`
+### 8. Each program's file tree: `lib/files`
 
 A program sees its files as one tree of paths, like any other system. The tree is built from
 **entries**: each a path and a capability for a folder or a file at that path.
@@ -227,8 +227,9 @@ A program sees its files as one tree of paths, like any other system. The tree i
 - **The file tree's format** (all little-endian): a 16-byte header (`"PBRT"`, version `u16` 1,
   entry count `u16`, 8 bytes reserved, 0), then each entry: `u32` role, `u16` path length,
   `u8` kind (1 file, 2 folder), one reserved byte (0), the path (UTF-8), padded with zeros to
-  a multiple of 8. At most 256 entries and 64 KiB.
-- **Rules for the paths**, checked by `granite` (a broken tree is reported at start-up and
+  a multiple of 8. At most 256 entries and 64 KiB. A memory object is whole pages, so zeros
+  may follow the last entry; anything else there makes the tree broken.
+- **Rules for the paths**, checked when the program reads its tree (a broken tree is reported at start-up and
   ignored):
   - absolute, starting with `/`; names follow section 4's rules; no `.` or `..`;
   - no two entries the same, and **no entry inside another**: if `/Home/Documents` is an
@@ -237,23 +238,27 @@ A program sees its files as one tree of paths, like any other system. The tree i
 - **Folders above the entries** exist only in the program: with entries `/Home/Documents` and
   `/Home/Pictures`, listing `/Home` shows `Documents` and `Pictures`, and `/` shows `Home`.
   They can't be written to.
-- **Looking up a path:** `granite` makes it absolute (from the program's current folder, which
+- **Looking up a path:** `lib/files` makes it absolute (from the program's current folder, which
   is a path it keeps), removes `.`, and resolves `..` by removing the name before it (`..` at
   `/` stays at `/`). It finds the entry the path is in, and sends the rest of the path, relative
   to that entry, to its capability. `..` is never sent to a server, so it can't climb out of a
   grant: at most it moves to the folders above the entries, which only list what the program
   was given.
 - **The tree is the program's own.** It can add capabilities it receives later
-  (`fs::mount(path, capability)`, for a file chosen in the file picker in M6) and remove them.
+  (`Files::mount(path, capability)`, for a file chosen in the file picker in M6).
   Changing it gains nothing it doesn't hold: what it can reach is decided by its capabilities,
   and the tree only gives them names.
-- **The API:** `fs::open(path, rights)`, `fs::create`, `fs::list`, `fs::remove`, `fs::rename`
-  (copying and removing between entries), `fs::info`, `fs::set_current`; `File` (`read_at`,
-  `write_at`, `set_size`, `sync`, `reduce`; closed when dropped) and `Folder`. The path logic
-  (normalising, matching entries, the folders above them) is ordinary code, so it lives in a
-  small host-tested library, `lib/filetree` (MPL-2.0 like `granite`, since every app links it).
+- **The API:** `Files::from_start(start)` reads the tree; then `open(path, rights)`,
+  `create`, `list`, `remove`, `rename` (copying and removing between entries), `info`,
+  `set_current`; `File` (`read_at`, `read_all`, `write_at`, `save`, `set_size`, `sync`,
+  `reduce`, `list` for a folder; closed when dropped). Folders above the entries can be listed
+  and nothing else (`Error::Above`). The path logic (normalising, matching entries, the folders
+  above them) is ordinary code, so it lives in a small host-tested library, `lib/filetree`.
+  Both are MPL-2.0 like `granite`, since every app links them. `lib/files` is a library of its
+  own rather than part of `granite`, because it calls `pbr.file` through `lib/interfaces`,
+  which is itself built on `granite`.
 - **Launchers** build the tree with `process::Spawn`'s new `file_tree` list of (path,
-  capability).
+  capability, whether it's a folder); `granite` encodes it and gives the capabilities.
 
 The same paths mean the same thing for the user and for every app in their session: the
 sandbox manager mounts what it grants at the paths the user sees (note 0017), so Notepad given
@@ -291,3 +296,12 @@ in `/Home/Documents`.
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
+- 2 November 2026, built (M5 stage 3):
+  - the program half is `lib/files` (`pbr-files`), not `granite::fs`: `granite` can't call
+    `pbr.file`, since the generated interface code is built on `granite`;
+  - a tree's description may be followed by zeros to the end of its memory object's page;
+  - `Spawn::file_tree` entries say whether each is a folder, since the format records it;
+  - entries can be added (`Files::mount`) but not yet removed; nothing needs that until M6;
+  - the filesystem side is `lib/fs` (the `Filesystem` and `BlockDevice` traits, note 0016)
+    and `lib/fsserve` (the object table, `pbr.file`, and `memfs`, a filesystem in memory used
+    by its tests and by the `memfs` test program).

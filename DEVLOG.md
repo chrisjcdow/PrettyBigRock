@@ -377,3 +377,19 @@ disks made by 1.3, including writing and reading back.
   writes every dirty page touching it. Deliberately breaking that rule showed the random cache
   test missed it, so a test aimed at shared pages was added. Not yet: filesystem servers, so
   volumes can't be opened or formatted (stages 3 to 5).
+- **Stage 3, the file layer** (Opus): `lib/fs` (the `Filesystem` and `BlockDevice` traits every
+  filesystem implements); `pbr.file`, `pbr.fs.host` and `pbr.fs.control`; `lib/fsserve`, the
+  half of every filesystem server that deals with capabilities (the object table of watched
+  badges, rights that only shrink, paths that only go down, derived capabilities in replies,
+  records freed by gone notices, the last writer's close committing), host-tested with
+  `memfs`, an in-memory filesystem, and a hostile client; `lib/filetree` (paths, the start-up
+  format, finding which entry a path is in) and `lib/files` (each program's file tree and its
+  API); `Spawn::file_tree` in `granite`. The root program's files self-test starts `memfs` and
+  checks `pbr.file` end to end, that records return to their resting count, and that revoking a
+  folder takes what was opened through it; `fileprobe`, started with a tree, checks every handle
+  it holds was given to it, that walking its tree finds exactly what it was given, that no path
+  (`..` included) gets out, that read-only stays read-only, and that it loses a folder revoked
+  while it runs. All pass on all four configurations. Building it moved the program half out
+  of `granite` into `lib/files` (the interface code is built on `granite`), and found that a
+  tree's description arrives padded to a whole page. Notes 0001, 0014 and 0015 updated. Next:
+  RockFS (stage 4a, Sonnet) and its server and the 1.3 data disk (stage 4b).

@@ -92,7 +92,7 @@ Rules:
 - **Processor-specific code is only in `kernel/src/arch/`, `kernel/src/board/` and `boot/`.**
   Libraries, drivers, services and apps are written once for every architecture.
 - **A folder's licence is fixed** (note 0009, section 7): MPL-2.0 for `lib/granite`,
-  `lib/elf`, `lib/archive` and `targets/`; MIT for `interfaces/` and `lib/interfaces`;
+  `lib/elf`, `lib/archive`, `lib/filetree`, `lib/files` and `targets/`; MIT for `interfaces/` and `lib/interfaces`;
   GPL-3.0-or-later for everything else. `cargo xtask check` checks every file says so.
 - **`ports/` is separate from everything else**, because ported software isn't part of the OS
   (DESIGN.md section 14) and carries its own licences.
@@ -134,3 +134,5 @@ The build tool's own tests check steps 1 and 3 match.
   `.github/workflows/stress.yml`.
 - 2 November 2026, M5: `CLAUDE.md`; `lib/blockcache`, `lib/crc`, `lib/partition` and
   `services/storage` (GPL-3.0-or-later).
+- 2 November 2026, M5 stage 3: `lib/fs`, `lib/fsserve` (GPL-3.0-or-later); `lib/filetree`,
+  `lib/files` (MPL-2.0); `tests/programs/memfs` and `tests/programs/fileprobe`.

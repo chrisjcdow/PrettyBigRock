@@ -134,21 +134,24 @@ calls `pbr.fs.host`:
 ```
 /// What a filesystem server says to the storage service.
 interface pbr.fs.host version 1;
-/// The volume is mounted: here is its root folder.
-@1 fn ready(root: handle<pbr.file>, label: string<64>) -> () error HostError;
+/// The volume is mounted: here is its root folder, and the server's control capability.
+@1 fn ready(root: handle<pbr.file>, control: handle<pbr.fs.control>, label: string<64>)
+    -> () error HostError;
 /// The volume can't be used: its structures are damaged, or it has a feature we don't know.
 @2 fn failed(reason: FsFailure) -> () error HostError;
 ```
 
 The storage service controls the server through a second interface on the server's own
-endpoint, under a badge only the storage service holds (operation numbers from 100, as
-`pbr.driver.debug` does, note 0012):
+endpoint, under a badge only the storage service holds, sent with `ready` (operation numbers
+from 100, as `pbr.driver.debug` does, note 0012):
 
 ```
 /// What the storage service asks of a filesystem server.
 interface pbr.fs.control version 1;
 /// Save everything, mark the volume clean, and stop: every capability for it then fails.
 @100 fn unmount() -> () error ControlError;
+/// How many records the object table holds (for tests: records must go when capabilities do).
+@101 fn records() -> (count: u32) error ControlError;
 ```
 
 ### 5. The shared block cache
@@ -254,3 +257,5 @@ later change inside the service.
     and `shutdown` only flushes the cache;
   - until supervision (stage 7), the root program gives the storage service the device
     manager's endpoint at start-up role 1001.
+- 2 November 2026, M5 stage 3: `pbr.fs.host`'s `ready` also carries the control capability,
+  and `pbr.fs.control` gained `records`.
