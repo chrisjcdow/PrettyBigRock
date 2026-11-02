@@ -68,6 +68,9 @@ const ARCHES: &[Arch] = &[
 const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-root", "root", "root"),
     ("pbr-devmgr", "devmgr", "devmgr"),
+    ("pbr-driver-framebuffer", "framebuffer", "drivers/framebuffer"),
+    ("pbr-driver-ps2", "ps2", "drivers/ps2"),
+    ("pbr-driver-serial16550", "serial16550", "drivers/serial16550"),
     ("pbr-driver-virtio-blk", "virtio-blk", "drivers/virtio-blk"),
     ("pbr-test-echo", "echo", "echo"),
     ("pbr-test-probe", "probe", "probe"),
@@ -75,12 +78,20 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
 /// Drivers' manifests sit beside their programs (note 0011, section 5).
-const ARCHIVE_FILES: &[(&str, &str)] = &[("drivers/virtio-blk.drv", "drivers/virtio-blk.drv")];
+const ARCHIVE_FILES: &[(&str, &str)] = &[
+    ("drivers/framebuffer.drv", "drivers/framebuffer.drv"),
+    ("drivers/ps2.drv", "drivers/ps2.drv"),
+    ("drivers/serial16550.drv", "drivers/serial16550.drv"),
+    ("drivers/virtio-blk.drv", "drivers/virtio-blk.drv"),
+];
 
 /// Crates built for the programs' targets, checked with Clippy there.
 const PROGRAM_CRATES: &[&str] = &[
     "pbr-devmgr",
     "pbr-driver",
+    "pbr-driver-framebuffer",
+    "pbr-driver-ps2",
+    "pbr-driver-serial16550",
     "pbr-driver-virtio-blk",
     "pbr-granite",
     "pbr-interfaces",

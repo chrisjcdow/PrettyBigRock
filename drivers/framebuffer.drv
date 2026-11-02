@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+
+# The firmware's framebuffer (docs/design/0011-device-manager-and-drivers.md).
+class display
+match legacy framebuffer
+budget 1M

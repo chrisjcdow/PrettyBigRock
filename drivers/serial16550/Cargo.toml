@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-driver-serial16550"
+description = "The 16550 serial port driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "serial16550"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-granite = { path = "../../lib/granite" }
+pbr-driver = { path = "../../lib/driver" }
+pbr-devices = { path = "../../lib/devices" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+
+# The PS/2 keyboard and mouse controller, an 8042 (docs/design/0011-device-manager-and-drivers.md).
+class input
+match legacy ps2
+budget 1M

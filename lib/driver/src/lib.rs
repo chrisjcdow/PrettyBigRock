@@ -26,6 +26,7 @@ pub use pbr_devices::regs::Registers;
 
 pub mod debug;
 mod device;
+pub mod input;
 mod regions;
 mod serve;
 

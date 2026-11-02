@@ -65,6 +65,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-driver-framebuffer"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-driver",
+ "pbr-granite",
+ "pbr-interfaces",
+]
+
+[[package]]
+name = "pbr-driver-ps2"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-driver",
+ "pbr-granite",
+ "pbr-interfaces",
+]
+
+[[package]]
+name = "pbr-driver-serial16550"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-driver",
+ "pbr-granite",
+ "pbr-interfaces",
+]
+
+[[package]]
 name = "pbr-driver-virtio-blk"
 version = "0.0.0"
 dependencies = [

@@ -7,16 +7,17 @@
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use granite::device::{DeviceMemory, Interrupts, bus_address};
+use granite::device::{DeviceMemory, Interrupts, IoPorts, bus_address};
 use granite::endpoint::Endpoint;
 use granite::memory::Memory;
 use granite::process::{self, Spawn, Spawned};
 use granite::sys::perm;
 use granite::sys::rights;
 use pbr_archive::Archive;
+use pbr_devices::machine::Screen;
 use pbr_devices::manifest::{Class, Manifest};
-use pbr_devices::pci::{Address, Bar, BarKind, Function};
-use pbr_devices::record::{Kind, MAX_BARS, Message, Record};
+use pbr_devices::pci::{Bar, BarKind, Function};
+use pbr_devices::record::{Kind, MAX_BARS, Message, Record, Screen as Screen2};
 use pbr_driver::{ConfigPage, Mmio, role};
 
 /// The BARs larger than this are not given to drivers (graphics apertures and the like are
@@ -69,28 +70,37 @@ pub fn device_class(c: Class) -> pbr_interfaces::pbr_devices::DeviceClass {
     }
 }
 
-/// Everything a driver is started with, made once for a device and kept across restarts (the
-/// message-signalled interrupts and DMA memory stay the same, so a restarted driver finds
-/// the device's world as it was).
-pub struct Plan {
-    /// The device record.
-    pub record: Memory,
-    /// The function's configuration space, as the driver gets it: a copy kept apart from the one
-    /// the device manager maps, so that revoking what the driver was given (which takes any
-    /// copies it passed on) leaves the device manager's own mapping alone.
+/// A PCI function's configuration space, in the two forms the device manager needs.
+pub struct PciPart {
+    /// The configuration space as the driver gets it: a copy kept apart from the one the device
+    /// manager maps, so that revoking what the driver was given (which takes any copies it
+    /// passed on) leaves the device manager's own mapping alone.
     pub config: DeviceMemory,
     /// The capability the mapping below hangs from.
     pub _own_config: DeviceMemory,
     /// The device manager's own mapping of it, made once: mapping and unmapping at every
-    /// restart would leave page-table pages behind each time (the kernel keeps a process's
-    /// page tables until the process ends).
-    pub config_page: ConfigPage,
-    /// The BARs given, by index.
+    /// restart would leave page-table pages behind each time.
+    pub page: ConfigPage,
+}
+
+/// Everything a driver is started with, made once for a device and kept across restarts (the
+/// interrupts and DMA memory stay the same, so a restarted driver finds the device's world as
+/// it was).
+pub struct Plan {
+    /// The device record.
+    pub record: Memory,
+    /// What sort of device it is.
+    pub kind: Kind,
+    /// The configuration space (PCI only).
+    pub pci: Option<PciPart>,
+    /// The BARs given, by index (for a framebuffer: its memory, as BAR 0).
     pub bars: Vec<(usize, DeviceMemory)>,
-    /// The interrupts given.
-    pub msis: Vec<Interrupts>,
+    /// The interrupts given (message-signalled for PCI, wired lines for legacy devices).
+    pub irqs: Vec<Interrupts>,
     /// The DMA memory, if the manifest asks for any.
     pub dma: Option<Memory>,
+    /// I/O ports (legacy devices).
+    pub ports: Option<IoPorts>,
 }
 
 /// Why a plan couldn't be made.
@@ -159,10 +169,84 @@ pub fn plan(
     let own = config;
     let config =
         DeviceMemory(own.0.duplicate(rights::ALL).map_err(err("copying configuration space"))?);
-    let config_page = ConfigPage(Mmio::new(page));
+    let part = PciPart { config, _own_config: own, page: ConfigPage(Mmio::new(page)) };
+    let rec = write_record(&record)?;
+    Ok(Plan { record: rec, kind: Kind::Pci, pci: Some(part), bars, irqs: msis, dma, ports: None })
+}
+
+fn write_record(record: &Record) -> Result<Memory, PlanError> {
     let rec = Memory::create(4096).map_err(err("making the record"))?;
     rec.write(0, &record.encode()).map_err(err("writing the record"))?;
-    Ok(Plan { record: rec, config, _own_config: own, config_page, bars, msis, dma })
+    Ok(rec)
+}
+
+/// The legacy devices and what each is given (note 0011, section 4): I/O ports, and wired
+/// interrupt lines numbered as the ISA numbered them.
+#[derive(Clone, Copy)]
+pub struct LegacySpec {
+    /// First port.
+    pub port: u64,
+    /// How many ports.
+    pub ports: u64,
+    /// The interrupt lines.
+    pub irqs: &'static [u64],
+}
+
+/// The second serial port.
+pub const COM2: LegacySpec = LegacySpec { port: 0x2F8, ports: 8, irqs: &[3] };
+/// The 8042: data port 0x60 and command/status port 0x64 (the ports between come with them),
+/// the keyboard on line 1 and the mouse on line 12.
+pub const PS2: LegacySpec = LegacySpec { port: 0x60, ports: 5, irqs: &[1, 12] };
+
+/// Makes the plan for a legacy device from the root capabilities.
+pub fn plan_legacy(
+    spec: LegacySpec,
+    ports: &IoPorts,
+    lines: &Interrupts,
+) -> Result<Plan, PlanError> {
+    let mut record = Record::new(Kind::Legacy);
+    let slice = ports.slice(spec.port, spec.ports, rights::ALL).map_err(err("slicing ports"))?;
+    let (_, _, first) = lines.info().map_err(err("reading the interrupt range"))?;
+    let mut irqs = Vec::new();
+    for (i, line) in spec.irqs.iter().enumerate() {
+        let one = lines.slice(first + line, 1, rights::ALL).map_err(err("slicing a line"))?;
+        record.interrupts[i] = Message { address: 0, data: (first + line) as u32 };
+        irqs.push(one);
+    }
+    record.interrupt_count = irqs.len() as u8;
+    Ok(Plan {
+        record: write_record(&record)?,
+        kind: Kind::Legacy,
+        pci: None,
+        bars: Vec::new(),
+        irqs,
+        dma: None,
+        ports: Some(slice),
+    })
+}
+
+/// Makes the plan for the firmware's framebuffer `s`.
+pub fn plan_framebuffer(s: &Screen, memory: &DeviceMemory) -> Result<Plan, PlanError> {
+    let format =
+        s.format().ok_or_else(|| PlanError("the screen's format is unsupported".into()))?;
+    let start = s.base & !4095;
+    let size = (s.base - start + s.len).next_multiple_of(4096);
+    if s.base != start {
+        return Err(PlanError("the framebuffer isn't page aligned".into()));
+    }
+    let mut record = Record::new(Kind::Framebuffer);
+    record.bars[0] = size;
+    record.screen = Screen2 { width: s.width, height: s.height, stride: s.stride, format };
+    let slice = memory.slice(start, size, rights::ALL).map_err(err("slicing the framebuffer"))?;
+    Ok(Plan {
+        record: write_record(&record)?,
+        kind: Kind::Framebuffer,
+        pci: None,
+        bars: alloc::vec![(0, slice)],
+        irqs: Vec::new(),
+        dma: None,
+        ports: None,
+    })
 }
 
 /// Starts the driver for `plan`. `host` is the endpoint drivers report to; the driver's copy is
@@ -172,11 +256,10 @@ pub fn start(
     plan: &Plan,
     host: &Endpoint,
     id: u32,
-    function: Address,
+    label: &str,
     selftest: bool,
 ) -> Result<Spawned, PlanError> {
-    let name =
-        format!("{}@{:02x}:{:02x}.{}", d.name, function.bus, function.device, function.function);
+    let name = format!("{}@{label}", d.name);
     let badged = host
         .mint(u64::from(id), rights::SEND | rights::TRANSFER)
         .map_err(err("minting the host endpoint"))?;
@@ -188,22 +271,31 @@ pub fn start(
         rights::READ | rights::MAP | rights::INSPECT,
         false,
     ));
-    grants.push((
-        role::CONFIG,
-        plan.config.0.raw(),
-        rights::READ | rights::WRITE | rights::MAP,
-        false,
-    ));
-    for (i, bar) in &plan.bars {
+    if let Some(pci) = &plan.pci {
         grants.push((
-            role::BAR + *i as u32,
-            bar.0.raw(),
+            role::CONFIG,
+            pci.config.0.raw(),
             rights::READ | rights::WRITE | rights::MAP,
             false,
         ));
     }
-    for (i, msi) in plan.msis.iter().enumerate() {
-        grants.push((role::MSI + i as u32, msi.0.raw(), rights::BIND | rights::ACKNOWLEDGE, false));
+    // A display driver passes its memory on to clients, so it may copy it.
+    let pass_on =
+        if plan.kind == Kind::Framebuffer { rights::DUPLICATE | rights::TRANSFER } else { 0 };
+    for (i, bar) in &plan.bars {
+        grants.push((
+            role::BAR + *i as u32,
+            bar.0.raw(),
+            rights::READ | rights::WRITE | rights::MAP | pass_on,
+            false,
+        ));
+    }
+    let irq_role = if plan.kind == Kind::Pci { role::MSI } else { role::LEGACY_IRQ };
+    for (i, irq) in plan.irqs.iter().enumerate() {
+        grants.push((irq_role + i as u32, irq.0.raw(), rights::BIND | rights::ACKNOWLEDGE, false));
+    }
+    if let Some(ports) = &plan.ports {
+        grants.push((role::PORTS, ports.0.raw(), rights::READ | rights::WRITE, false));
     }
     if let Some(dma) = &plan.dma {
         grants.push((

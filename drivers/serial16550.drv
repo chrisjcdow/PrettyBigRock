@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+
+# The second serial port, a 16550 (docs/design/0011-device-manager-and-drivers.md).
+class serial
+match legacy com2
+budget 1M

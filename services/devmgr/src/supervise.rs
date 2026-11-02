@@ -160,11 +160,16 @@ fn crashed(id: u32) {
 /// this takes back any it passed on).
 fn revoke(plan: &Plan) {
     let _ = plan.record.0.revoke();
-    let _ = plan.config.0.revoke();
+    if let Some(pci) = &plan.pci {
+        let _ = pci.config.0.revoke();
+    }
+    if let Some(p) = &plan.ports {
+        let _ = p.0.revoke();
+    }
     for (_, b) in &plan.bars {
         let _ = b.0.revoke();
     }
-    for m in &plan.msis {
+    for m in &plan.irqs {
         let _ = m.0.revoke();
     }
     if let Some(d) = &plan.dma {
@@ -174,7 +179,10 @@ fn revoke(plan: &Plan) {
 
 /// Stops a PCI function from doing DMA or raising interrupts.
 fn quiet(plan: &mut Plan) {
-    let cfg = &mut plan.config_page;
+    // Legacy devices have no bus mastering to switch off, and the line is masked when the
+    // driver's binding goes with its process.
+    let Some(pci) = &mut plan.pci else { return };
+    let cfg = &mut pci.page;
     // MSI-X off first, then the function's bus-mastering and decoding.
     let (caps, _) = pci::capabilities(cfg);
     if let Some(info) = msix::info(cfg, &caps) {
@@ -204,10 +212,10 @@ fn restart(id: u32, drivers: &[Driver<'_>], host: &Endpoint, selftest: bool, n: 
         let mut g = REGISTRY.lock();
         let Some(e) = entry(&mut g, id) else { return };
         e.due = None;
-        (e.plan.take(), e.driver, e.function, e.name.clone())
+        (e.plan.take(), e.driver, e.label.clone(), e.name.clone())
     };
     let result = match (&plan, drivers.get(driver)) {
-        (Some(plan), Some(d)) => drivers::start(d, plan, host, id, function, selftest),
+        (Some(plan), Some(d)) => drivers::start(d, plan, host, id, &function, selftest),
         _ => Err(drivers::PlanError("nothing to start it with".into())),
     };
     let mut g = REGISTRY.lock();

@@ -67,6 +67,9 @@ pub struct Device {
     pub config: Option<ConfigPage>,
     /// The BARs it was given, by index.
     pub bars: [Option<Mmio>; MAX_BARS],
+    /// The BARs of a framebuffer, by index: kept as capabilities and not mapped, because the
+    /// display driver passes the memory on and never draws itself.
+    pub memory: [Option<DeviceMemory>; MAX_BARS],
     /// The interrupts, in order.
     pub irqs: Vec<Irq>,
     /// The DMA memory.
@@ -108,6 +111,7 @@ impl Device {
         };
 
         let mut bars: [Option<Mmio>; MAX_BARS] = [const { None }; MAX_BARS];
+        let mut memory: [Option<DeviceMemory>; MAX_BARS] = [const { None }; MAX_BARS];
         for (i, slot) in bars.iter_mut().enumerate() {
             let size = record.bars[i];
             if size == 0 {
@@ -116,6 +120,10 @@ impl Device {
             let Some(h) = start.take(role::BAR + i as u32) else { return bad("a BAR is missing") };
             if size < 4096 || !size.is_multiple_of(4096) {
                 return bad("a BAR has a size that can't be mapped");
+            }
+            if record.kind == Kind::Framebuffer {
+                memory[i] = Some(DeviceMemory(h));
+                continue;
             }
             let m = DeviceMemory(h)
                 .map(0, size, perm::READ_WRITE)
@@ -158,6 +166,7 @@ impl Device {
             record,
             config,
             bars,
+            memory,
             irqs,
             dma,
             ports: start.take(role::PORTS).map(IoPorts),
