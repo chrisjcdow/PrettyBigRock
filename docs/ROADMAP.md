@@ -114,6 +114,14 @@ then given up on, while the other drivers keep answering throughout.
 **Done when:** a program sees exactly the files it was given, and a 1.3 data disk opens with
 its files intact.
 
+**Design:** notes 0013 (kernel interface 1.2), 0014 (files and file trees), 0015 (storage and
+the block cache), 0016 (RockFS in Rust and FAT32), 0017 (users, the sandbox manager and
+manifests) and 0018 (supervision, the console and shell, the tests and the order of building),
+drafted 2 November 2026 for discussion.
+
+**Status: in progress.** M5 also settles supervision of services, including what happens when
+the device manager itself dies (note 0012's open question).
+
 ## M6: The desktop (2.0 alpha)
 - The display server and compositor, the input service, and the window toolkit in the native
   library.
