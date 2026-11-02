@@ -6,13 +6,14 @@
 use core::ptr::{read_volatile, write_volatile};
 use granite::memory::Mapping;
 use pbr_devices::pci::Config;
-use pbr_devices::regs::Registers;
+use pbr_devices::regs::{Registers, access_ok, copy_ok};
 
-/// Checks an access of `width` bytes at `offset` in a block of `len`.
+/// Checks an access of `width` bytes at `offset` in a block of `len` (the rule is
+/// [`access_ok`], tested on the host).
 #[track_caller]
 fn check(offset: usize, width: usize, len: usize) {
     assert!(
-        offset.is_multiple_of(width) && offset.checked_add(width).is_some_and(|e| e <= len),
+        access_ok(offset, width, len),
         "device access of {width} bytes at {offset:#x} outside or misaligned in a block of {len:#x}",
     );
 }
@@ -117,10 +118,7 @@ impl Registers for Dma {
 impl Dma {
     /// Copies bytes out of the memory (a plain copy: the memory is ordinary RAM).
     pub fn copy_out(&self, offset: usize, out: &mut [u8]) {
-        assert!(
-            offset.checked_add(out.len()).is_some_and(|e| e <= self.len()),
-            "DMA copy out of range"
-        );
+        assert!(copy_ok(offset, out.len(), self.len()), "DMA copy out of range");
         // SAFETY: the range is inside the mapping (just checked), and `out` is a different
         // allocation from the mapping.
         unsafe {
@@ -134,10 +132,7 @@ impl Dma {
 
     /// Copies bytes into the memory.
     pub fn copy_in(&self, offset: usize, data: &[u8]) {
-        assert!(
-            offset.checked_add(data.len()).is_some_and(|e| e <= self.len()),
-            "DMA copy out of range"
-        );
+        assert!(copy_ok(offset, data.len(), self.len()), "DMA copy out of range");
         // SAFETY: as for `copy_out`; the mapping is writable.
         unsafe {
             core::ptr::copy_nonoverlapping(
