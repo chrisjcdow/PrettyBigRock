@@ -24,6 +24,7 @@ members = [
     "lib/devices",
     "lib/driver",
     "lib/elf",
+    "lib/fs",
     "lib/granite",
     "lib/interface-compiler",
     "lib/interfaces",
