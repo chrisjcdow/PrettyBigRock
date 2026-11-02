@@ -62,7 +62,16 @@ pub struct Thread {
     pub stop: AtomicBool,
     /// Counts the thread's timed waits, so a timer set for an earlier wait can't wake it.
     wait_seq: AtomicU64,
+    /// The core it's running on (`NOWHERE` if none), checked in debug builds: a thread must
+    /// never be switched to on two cores at once.
+    running_on: AtomicU32,
+    /// Makes waking it, taking it off a run queue and finishing switching away from it one step
+    /// each (see [`Thread::locked`]).
+    sched_lock: AtomicBool,
 }
+
+/// [`Thread::running_on`] when it isn't running.
+const NOWHERE: u32 = u32::MAX;
 
 // SAFETY: `sp` is only touched by the core switching to or from the thread, with interrupts
 // masked; everything else is atomic or locked.
@@ -72,6 +81,11 @@ unsafe impl Send for Thread {}
 
 impl Drop for Thread {
     fn drop(&mut self) {
+        // Freeing the stack of a thread a core is still on would hand it to the next thread.
+        let on = self.running_on.load(Ordering::SeqCst);
+        if cfg!(debug_assertions) && (on != NOWHERE || self.on_cpu.load(Ordering::SeqCst)) {
+            panic!("thread \"{}\" (#{}) freed while on core {on}", self.name, self.id);
+        }
         if let Some(top) = self.stack {
             mem::vm::free_stack(top, STACK_PAGES);
         }
@@ -79,6 +93,31 @@ impl Drop for Thread {
 }
 
 impl Thread {
+    /// Runs `f` holding the thread's scheduling lock, with interrupts masked.
+    ///
+    /// `state`, `on_cpu` and `queued` decide who puts a woken thread on a run queue: the waker
+    /// if the thread is off its core, the thread's own switch if it's still on it. Reading and
+    /// changing them separately let a waker that was slow between its two steps see a thread
+    /// as "blocked and off its core" after it had already run again, and queue it a second
+    /// time while it was being picked to run: two cores then ran it on one kernel stack. Under
+    /// this lock each of [`wake`], [`pick`]'s hand-over and [`finish_switch`] sees and leaves
+    /// the three flags consistent. It's taken with interrupts masked and nothing but a run
+    /// queue lock is taken under it.
+    fn locked<R>(&self, f: impl FnOnce() -> R) -> R {
+        let irq = arch::irq_save();
+        while self
+            .sched_lock
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        let r = f();
+        self.sched_lock.store(false, Ordering::Release);
+        arch::irq_restore(irq);
+        r
+    }
+
     /// True once the thread has finished.
     pub fn has_exited(&self) -> bool {
         self.state.load(Ordering::SeqCst) == EXITED
@@ -175,6 +214,8 @@ pub fn init_this_core() {
         user: None,
         stop: AtomicBool::new(false),
         wait_seq: AtomicU64::new(0),
+        running_on: AtomicU32::new(cpu.index),
+        sched_lock: AtomicBool::new(false),
     });
     let irq = arch::irq_save();
     // SAFETY: only this core touches its own `current` and `idle`, with interrupts masked.
@@ -237,6 +278,8 @@ pub fn create(
         user,
         stop: AtomicBool::new(false),
         wait_seq: AtomicU64::new(0),
+        running_on: AtomicU32::new(NOWHERE),
+        sched_lock: AtomicBool::new(false),
     });
     // SAFETY: the thread hasn't started, so nothing else uses its stack pointer. The stack
     // holds a pointer to the thread, kept alive by the run queue's reference until it runs.
@@ -358,12 +401,14 @@ fn enqueue(cpu: u32, t: Arc<Thread>) {
 
 /// Wakes a thread that's waiting. Does nothing if it isn't.
 pub fn wake(t: &Arc<Thread>) {
-    if t.state.compare_exchange(BLOCKED, READY, Ordering::SeqCst, Ordering::SeqCst).is_ok()
-        && !t.on_cpu.load(Ordering::SeqCst)
-        && !t.queued.swap(true, Ordering::SeqCst)
-    {
-        enqueue(t.last_cpu.load(Ordering::Relaxed), t.clone());
-    }
+    t.locked(|| {
+        if t.state.compare_exchange(BLOCKED, READY, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+            && !t.on_cpu.load(Ordering::SeqCst)
+            && !t.queued.swap(true, Ordering::SeqCst)
+        {
+            enqueue(t.last_cpu.load(Ordering::Relaxed), t.clone());
+        }
+    });
 }
 
 /// Takes the next thread to run: from this core's queue, or else from another core's.
@@ -382,8 +427,12 @@ fn pick(cpu: &percpu::PerCpu) -> Option<Arc<Thread>> {
         }
     }
     let t = t?;
-    t.queued.store(false, Ordering::SeqCst);
-    t.on_cpu.store(true, Ordering::SeqCst);
+    // Both at once as far as a waker can tell: never "not queued and not on a core" while
+    // it's about to run.
+    t.locked(|| {
+        t.queued.store(false, Ordering::SeqCst);
+        t.on_cpu.store(true, Ordering::SeqCst);
+    });
     Some(t)
 }
 
@@ -421,6 +470,16 @@ fn schedule(action: Action) {
     if let Some(u) = &cur.user {
         u.save_registers();
     }
+    if cfg!(debug_assertions)
+        && let Err(other) =
+            next.running_on.compare_exchange(NOWHERE, cpu.index, Ordering::SeqCst, Ordering::SeqCst)
+    {
+        panic!(
+            "thread \"{}\" (#{}) is being switched to on core {} while it is still on core \
+             {other} (switching from \"{}\", #{})",
+            next.name, next.id, cpu.index, cur.name, cur.id
+        );
+    }
     let prev_sp = cur.sp.get();
     let next_sp = next.sp.get();
     // SAFETY: as above. The references move into the per-core cells, so no counted reference is
@@ -441,6 +500,19 @@ fn arrive() {
     let cpu = percpu::this();
     // SAFETY: only this core touches its own `current`, with interrupts masked.
     let Some(me) = (unsafe { (*cpu.sched.current.get()).as_ref() }) else { return };
+    if cfg!(debug_assertions)
+        && let Some(top) = me.stack
+    {
+        // This frame is on the stack the core is using: it must be the thread's own.
+        let here = core::ptr::addr_of!(top) as u64;
+        if here >= top || here < top - STACK_PAGES * mem::PAGE {
+            panic!(
+                "thread \"{}\" (#{}) arrived on core {} on someone else's stack ({here:#x}, its own \
+                 ends at {top:#x})",
+                me.name, me.id, cpu.index
+            );
+        }
+    }
     match &me.user {
         Some(u) => {
             if let Some(top) = me.stack {
@@ -459,26 +531,27 @@ fn finish_switch() {
     let s = &percpu::this().sched;
     // SAFETY: only this core touches its own `prev`, with interrupts masked.
     let Some((prev, action)) = (unsafe { (*s.prev.get()).take() }) else { return };
-    match action {
+    // Off this core now (before anything below can let another core pick it).
+    prev.running_on.store(NOWHERE, Ordering::SeqCst);
+    let requeue = prev.locked(|| match action {
         Action::Requeue => {
             prev.state.store(READY, Ordering::SeqCst);
             prev.on_cpu.store(false, Ordering::SeqCst);
-            if !prev.queued.swap(true, Ordering::SeqCst) {
-                let cpu = prev.last_cpu.load(Ordering::Relaxed);
-                enqueue(cpu, prev);
-            }
+            !prev.queued.swap(true, Ordering::SeqCst)
         }
         Action::Block => {
             prev.on_cpu.store(false, Ordering::SeqCst);
             // Woken while still on its way off this core: queue it now.
-            if prev.state.load(Ordering::SeqCst) == READY
-                && !prev.queued.swap(true, Ordering::SeqCst)
-            {
-                let cpu = prev.last_cpu.load(Ordering::Relaxed);
-                enqueue(cpu, prev);
-            }
+            prev.state.load(Ordering::SeqCst) == READY && !prev.queued.swap(true, Ordering::SeqCst)
         }
-        Action::Exit | Action::Idle => prev.on_cpu.store(false, Ordering::SeqCst),
+        Action::Exit | Action::Idle => {
+            prev.on_cpu.store(false, Ordering::SeqCst);
+            false
+        }
+    });
+    if requeue {
+        let cpu = prev.last_cpu.load(Ordering::Relaxed);
+        enqueue(cpu, prev);
     }
 }
 
