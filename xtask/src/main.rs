@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Duration;
 
+mod classicdisk;
 mod elf;
 mod image;
 mod qemu;
@@ -204,6 +205,7 @@ fn run(args: &[String]) -> Result {
             Ok(())
         }
         "classic" => classic(&root),
+        "classic-disk" => classicdisk::run(&root),
         "interfaces" => interfaces(&root),
         "doctor" => Toolchain::find(&root).map(|tc| tc.report()),
         "help" | "--help" | "-h" => {
@@ -227,6 +229,7 @@ PrettyBigRock build tool
   cargo xtask ci                         check, test, build and boot everything
   cargo xtask interfaces                 print the code generated from interfaces/
   cargo xtask classic                    build and test PrettyBigRock 1.x
+  cargo xtask classic-disk               make tests/data/classic-1.3.img.gz with 1.3 itself
   cargo xtask doctor                     show how the Rust toolchain was found
 
 Architectures: x86_64 (the default for `run`), aarch64
