@@ -77,6 +77,8 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-driver-virtio-input", "virtio-input", "drivers/virtio-input"),
     ("pbr-test-echo", "echo", "echo"),
     ("pbr-test-probe", "probe", "probe"),
+    ("pbr-test-memfs", "memfs", "memfs"),
+    ("pbr-test-fileprobe", "fileprobe", "fileprobe"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -104,6 +106,8 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-root",
     "pbr-storage",
     "pbr-test-echo",
+    "pbr-test-fileprobe",
+    "pbr-test-memfs",
     "pbr-test-probe",
     "pbr-test-protocol",
 ];

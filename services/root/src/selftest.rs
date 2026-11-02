@@ -86,6 +86,12 @@ fn all(
     done.push("budgets");
     step("kernel interface 1.2", crate::kernel12::run(f, &echo_ep))?;
     done.push("watched badges, derived replies, tied processes and the wall clock");
+    let files = crate::filestest::run(archive);
+    if let Ok(summary) = &files {
+        granite::println!("Files self-test passed: {summary}");
+    }
+    step("files", files.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("files and file trees");
     // The device manager gets copies of the device capabilities; the device tests then take
     // the root program's own.
     let devmgr = crate::blocktest::start(archive, archive_mem, start, true)?;
@@ -149,6 +155,7 @@ pub(crate) fn spawn(
         log: true,
         args,
         tied: false,
+        file_tree: &[],
     })
     .map_err(|e| format!("starting {name} ({args}): {e}"))
 }

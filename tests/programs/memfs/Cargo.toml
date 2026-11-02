@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-test-memfs"
+description = "A filesystem server in memory, for the files self-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "memfs"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-granite = { path = "../../../lib/granite" }
+pbr-fsserve = { path = "../../../lib/fsserve" }
+
+[lints]
+workspace = true

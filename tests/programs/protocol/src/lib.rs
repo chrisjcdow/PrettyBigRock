@@ -51,6 +51,8 @@ pub mod role {
     /// `probe tied`: an endpoint to the root program, to send it its children's process
     /// capabilities.
     pub const REPORT: u32 = 1009;
+    /// `fileprobe revoke`: a notification the root program signals when it has revoked.
+    pub const GO: u32 = 1010;
 }
 
 /// Exit statuses: 0 means the probe's checks passed; anything else is the number of the

@@ -40,6 +40,8 @@ members = [
     "services/root",
     "services/storage",
     "tests/programs/echo",
+    "tests/programs/fileprobe",
+    "tests/programs/memfs",
     "tests/programs/probe",
     "tests/programs/protocol",
     "xtask",

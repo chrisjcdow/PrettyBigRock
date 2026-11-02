@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-test-fileprobe"
+description = "A program that checks what its file tree reaches, for the files self-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "fileprobe"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-test-protocol = { path = "../protocol" }
+pbr-granite = { path = "../../../lib/granite" }
+pbr-files = { path = "../../../lib/files" }
+
+[lints]
+workspace = true
