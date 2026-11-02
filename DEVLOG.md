@@ -393,3 +393,22 @@ disks made by 1.3, including writing and reading back.
   of `granite` into `lib/files` (the interface code is built on `granite`), and found that a
   tree's description arrives padded to a whole page. Notes 0001, 0014 and 0015 updated. Next:
   RockFS (stage 4a, Sonnet) and its server and the 1.3 data disk (stage 4b).
+- **Stage 4a, RockFS in Rust** (Sonnet wrote `lib/rockfs`, `rockfs-rs` and the cross-checks;
+  Opus reviewed them, wrote the power-cut tests and `classic-disk`). `lib/rockfs` implements
+  ROCKFS.md version 1 behind `pbr_fs::Filesystem`, with a flush wherever order matters, 89 host
+  tests including hostile images; `rockfs-rs` has `rockfs.py`'s commands plus `stress` and
+  `verify`. Rust, Python and 1.3's C code read and check each other's volumes, including 25
+  images cut off mid-write by the C code. The power-cut tests use a disk with a write cache
+  that loses a random half of what wasn't flushed: 300 runs in every test (5,000 once), each
+  checking the volume holds exactly what it did just before or just after the operation that
+  was cut. They found a real gap: a crash while a rename replaced a file could leave that name
+  pointing at nothing, because nothing said which of an item's two names a check keeps. Fixed
+  in the code and in ROCKFS.md (renaming within a folder is one folder change; across folders
+  the item's `parent` decides). Removing either the fix or the flush before an inode write
+  makes the tests fail. `cargo xtask classic-disk` made `tests/data/classic-1.3.img.gz` by
+  booting 1.3 in QEMU and typing at it: folders three deep, a 70-character name, `write`,
+  `append`, `cp`, `mv`, `rm`, a Paint drawing in 28 extents and its copy, a restart and a
+  clean shutdown. The Rust code reads it exactly as its manifest says. One of four attempts
+  left an empty file in `/Fill` that no folder named (harmless, and repaired by every check);
+  the cause in 1.3 wasn't found, and the disk kept checks clean. Next: stage 4b, the RockFS
+  server and the boot test with this disk.

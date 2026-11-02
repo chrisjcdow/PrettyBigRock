@@ -333,8 +333,25 @@ Adding to the end of a file is the simple case: there is nothing to replace, onl
 2. Mark the inode free (`type` = 0) and increase its `generation`.
 3. Mark its blocks, and its extent blocks, free in the bitmap.
 
-If the machine stops partway, the worst outcome is space or an inode marked as used that
-belongs to nothing. A check reclaims it.
+**Renaming or moving a file or folder**
+- *Within one folder*: remove the old name and add the new one (or, to replace an existing
+  file, point that file's entry at the item being moved) in **one** folder change, as above.
+  The change takes effect when the folder's inode is written, so the item is never under
+  both names or neither, and a replaced file's name always names the old file or the new.
+- *Into another folder*:
+  1. Add the new name to the destination folder. (To replace an existing file there, write
+     step 2 first, then point that file's entry at the item, in one folder change.)
+  2. Set the item's `parent` to the destination folder.
+  3. Remove the old name from the source folder.
+  4. If a file was replaced, delete its inode and blocks (steps 2 and 3 of deleting).
+
+  If the machine stops between steps 1 and 3 the item has a name in both folders. The check
+  keeps the one in the folder its `parent` names, which is the old name before step 2 and the
+  new one after it, so the move has either happened or it hasn't.
+
+If the machine stops partway through any of these, the worst outcome is space or an inode
+marked as used that belongs to nothing, or a name left for an item that's moving. A check
+puts it right.
 
 ## Running out of space
 
@@ -368,6 +385,8 @@ A check (in PrettyBigRock, or later with the `rockfs check` tool on Windows and 
 - rebuilds the bitmap from the blocks actually in use, reclaiming lost space;
 - moves any in-use inode that no folder points to into a `/lost+found` folder
   (the traditional name for this);
+- removes the extra names of an item named more than once, keeping the one in the folder its
+  `parent` names (a move was under way; see **Renaming**), or else the first found;
 - corrects `free_blocks`, `free_inodes` and the backup superblock, and sets `state` to 0.
 
 ## Formatting a new volume
@@ -383,6 +402,11 @@ A check (in PrettyBigRock, or later with the `rockfs check` tool on Windows and 
    flags 0 and `state` = 0, then write the superblock and its backup.
 
 ## Changes to this document
+
+- **Version 1, 2 November 2026**: how to rename and move safely, and which name a check keeps
+  for an item named twice. Found by PrettyBigRock 2's power-cut tests: with no rule, a crash
+  while replacing a file could leave the replaced name pointing at nothing. The format is
+  unchanged.
 
 - **Version 1**: implemented. An app's "not enough space" message was reworded, and two rules
   were added for checks: empty items that belong to no folder (left by an unfinished save)

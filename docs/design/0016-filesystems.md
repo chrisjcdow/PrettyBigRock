@@ -217,3 +217,22 @@ filesystems line by line against the specification before they go in.
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
+- 2 November 2026, built (M5 stage 4a):
+  - `lib/rockfs`: `RockFs::mount(device, clock, read_only)` (with `MountError`: not RockFS,
+    unsupported, damaged, disk), `format(device, label, uuid, now)`, `RockFs::check(repair)`
+    and `info()`; `NodeId` is the generation above the inode number. Written by Sonnet,
+    reviewed by Opus;
+  - the power-cut tests (layer 1) found that a crash while a rename replaced a file could
+    leave the replaced name pointing at nothing (the check kept whichever name it met first).
+    A rename within a folder is now one folder change; across folders the item's `parent` is
+    the deciding write, and the check keeps the name in the folder `parent` names. ROCKFS.md
+    now says so (the format is unchanged);
+  - `rockfs-rs` finds volumes with `lib/partition`, and `tools/rockfs_cross.py` runs layers 2
+    and 3 (`cargo xtask test` runs layer 2, `cargo xtask classic` adds layer 3);
+  - `cargo xtask classic-disk` drives 1.3 through QEMU's monitor (1.3 has no serial console,
+    so it types, waits, and then checks the result with `rockfs.py`). 1.3's keyboard is US
+    only, so the disk has no accented name (the cross-checks cover non-ASCII names), and its
+    Terminal takes lines of under 90 characters, so the long name is 70. The large file is a
+    drawing saved from Paint into a fragmented volume (28 extents, a one-level tree), after a
+    restart, because 1.3 allocates "next fit". The cross-checks read the disk with Rust,
+    write to it, and hand it back to Python and C; the boot test with it is stage 4b.

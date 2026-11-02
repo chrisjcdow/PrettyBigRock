@@ -136,3 +136,5 @@ The build tool's own tests check steps 1 and 3 match.
   `services/storage` (GPL-3.0-or-later).
 - 2 November 2026, M5 stage 3: `lib/fs`, `lib/fsserve` (GPL-3.0-or-later); `lib/filetree`,
   `lib/files` (MPL-2.0); `tests/programs/memfs` and `tests/programs/fileprobe`.
+- 2 November 2026, M5 stage 4a: `lib/rockfs`, `tools/rockfs-rs` (a host program),
+  `tools/rockfs_cross.py`, and `tests/data/` (the disk 1.3 made, with its manifest).
