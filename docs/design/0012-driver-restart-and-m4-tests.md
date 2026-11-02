@@ -297,6 +297,8 @@ unless GitHub is linked by then.
     six restarts; and emptied page tables were never freed, a slow leak in any long-lived
     program. Review afterwards found that the second fix freed the tables before the TLB flush
     that made them unreachable; they are now freed after it (note 0005).
-  - One ARM boot in about 40 panicked in a probe thread after the crash test, and the serial
-    log was cut off, so the cause is unknown. It did not recur in later stress runs (see
-    DEVLOG, session 9).
+  - A rare ARM kernel crash during the crash test (about one boot in ten to twenty) was a
+    scheduler race that let two cores run one thread (note 0005), found and fixed in stage 5.
+    The boot-test runner now asks QEMU for every core's registers and stack when the kernel
+    stops or a run times out, since a kernel on a trampled stack can't finish its own
+    report.

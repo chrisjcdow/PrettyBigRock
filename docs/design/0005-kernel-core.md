@@ -278,3 +278,14 @@ run it with 4 cores on every configuration. It checks:
   - Removing a mapping frees the page tables it emptied, after the TLB flush that makes them
     unreachable (unhook, flush, then free, so no core can still be walking through a reused
     page).
+  - **Each thread has a scheduling lock.** Waking a thread, taking it off a run queue, and
+    finishing switching away from it each hold it. Before, a waker read the thread's state and
+    whether it was on a core as two separate steps. A waker delayed between them could queue a
+    thread that had meanwhile run and blocked again; a second waker could then queue it again
+    in the instant it was being picked, and two cores ran it on one kernel stack. This was the
+    rare ARM crash seen in M4's stress runs: about one boot in ten to twenty under the crash
+    test's churn, on QEMU with more virtual cores than the workspace has real ones. With
+    delays added to widen the two windows, the old code failed within seconds and the new code
+    passes.
+  - Debug builds check that a thread is never switched to while it's on another core, never
+    freed while on a core, and always arrives on its own stack.

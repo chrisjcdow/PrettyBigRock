@@ -96,7 +96,9 @@ else.
 - **Stress runs** boot every configuration many times, to catch what only happens now and then.
   The Stress workflow on GitHub (`.github/workflows/stress.yml`, started by hand) runs six jobs
   in parallel; locally, `PBR_QEMU_ONLY` picks configurations for a loop of `cargo xtask
-  qemu-test`. Each milestone ends with one.
+  qemu-test`. Each milestone ends with one. When the kernel stops or a boot times out, the
+  runner saves every core's registers and stack as QEMU sees them, next to the serial log
+  (`build/qemu/serial-*.registers.txt`).
 
 ### Commits and the DEVLOG
 

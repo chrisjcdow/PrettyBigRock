@@ -313,6 +313,13 @@ build"). Stages 1 to 4 were built with Claude Sonnet 5.5; Chris then switched to
     PrettyBigRock; it moved to `lib/devices` and is tested there;
   - added a Stress workflow for GitHub;
   - brought notes 0001, 0002 and 0005 to 0012, README and ROADMAP up to date.
-- One ARM boot in about 40, during stage 3, panicked in a probe thread after the crash test,
-  with the serial log cut off; it didn't come back in later stress runs. It's recorded as
-  open in `status.md`.
+- **The rare ARM crash.** During stage 3, one ARM boot in about 40 had panicked after the
+  crash test, with its report cut off. Stage 5's stress runs caught it twice more:
+  - the boot-test runner was taught to ask QEMU for every core's registers and stack when the
+    kernel stops;
+  - the dumps showed two cores running on the same kernel stack;
+  - the cause was a race in the scheduler's wake-up protocol that could queue a thread twice;
+  - a per-thread scheduling lock fixes it, and new debug checks catch any thread run on two
+    cores at once;
+  - with the race's windows deliberately widened, the old code failed within seconds and the
+    fixed code passed.
