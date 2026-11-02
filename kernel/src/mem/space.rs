@@ -108,6 +108,24 @@ impl FrameAlloc for Frames<'_> {
     }
 }
 
+/// Page-table pages whose freeing waits until the TLB has been flushed (see [`Space::remove`]).
+struct Deferred<'a> {
+    frames: Frames<'a>,
+    freed: Vec<u64>,
+}
+
+impl FrameAlloc for Deferred<'_> {
+    fn alloc(&mut self) -> Option<u64> {
+        self.frames.alloc()
+    }
+    fn table(&mut self, phys: u64) -> &mut [u64; 512] {
+        self.frames.table(phys)
+    }
+    fn free(&mut self, phys: u64) {
+        self.freed.push(phys);
+    }
+}
+
 /// A program's address space.
 pub struct Space {
     tables: PageTables,
@@ -241,10 +259,19 @@ impl Space {
         for i in 0..pages {
             self.tables.unmap(&mut Frames(&mut self.charge), m.start + i * PAGE);
         }
+        // Unhook the tables the mapping has emptied, but keep their pages until the flush
+        // below: until then another core running this program may still have a cached walk
+        // through them (both architectures' flushes also discard cached walks for the
+        // addresses flushed, and every emptied table covers some of them). Freeing them first
+        // would let the page be reused while such a walk could still read it.
+        let mut emptied = Deferred { frames: Frames(&mut self.charge), freed: Vec::new() };
+        self.tables.prune(&mut emptied, m.start, m.len);
+        let freed = emptied.freed;
         arch::flush_user_pages(self.root(), m.start, pages);
-        // Tables the mapping has emptied go back (only after the flush, so no core still has
-        // them cached).
-        self.tables.prune(&mut Frames(&mut self.charge), m.start, m.len);
+        let mut frames = Frames(&mut self.charge);
+        for t in freed {
+            frames.free(t);
+        }
         Some(m)
     }
 

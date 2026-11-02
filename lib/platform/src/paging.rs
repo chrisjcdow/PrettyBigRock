@@ -280,8 +280,10 @@ impl PageTables {
     /// Frees the tables below the top level that hold no mapping now, among those covering
     /// `[start, start + len)`: what is left once the mappings there have been removed. Without
     /// it, a program that maps and unmaps at random addresses leaves a few table pages behind
-    /// every time, for as long as it lives. The caller must have flushed the TLB for the range
-    /// first (a table that may still be cached must not be reused). Only for 4 KiB mappings
+    /// every time, for as long as it lives. Each emptied table is unhooked from its parent and
+    /// passed to `fa.free`; another core may still hold a cached walk through it until the TLB
+    /// has been flushed for the range, so the caller's `free` must hold the pages back until
+    /// after that flush (the kernel's address spaces do). Only for 4 KiB mappings
     /// in a half of the address space that belongs to this tree alone.
     pub fn prune(&mut self, fa: &mut impl FrameAlloc, start: u64, len: u64) {
         if len == 0 {
