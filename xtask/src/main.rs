@@ -134,6 +134,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-ranges",
     "pbr-rockfs",
     "pbr-virtio",
+    "rockfs-rs",
     "xtask",
 ];
 
@@ -768,8 +769,25 @@ fn test(root: &Path) -> Result {
     }
     status(&mut cmd)?;
     status(Command::new("python3").current_dir(root).arg("tools/test_rockfs.py"))?;
+    rockfs_cross(root, None)?;
     println!("test: all passed");
     Ok(())
+}
+
+/// Builds `rockfs-rs` and runs `tools/rockfs_cross.py`: the Rust RockFS against the Python tool
+/// and, when `rfs_host` (the C code, built by `classic`) is given, against the C code too.
+fn rockfs_cross(root: &Path, rfs_host: Option<&Path>) -> Result {
+    status(cargo(root).args(["build", "--release", "--package", "rockfs-rs"]))?;
+    let work = env::temp_dir().join("pbr-rockfs-cross");
+    let mut cmd = Command::new("python3");
+    cmd.current_dir(root)
+        .arg("tools/rockfs_cross.py")
+        .arg(root.join("target").join("release").join("rockfs-rs"))
+        .arg(&work);
+    if let Some(host) = rfs_host {
+        cmd.arg(host);
+    }
+    status(&mut cmd)
 }
 
 /// The interface files in `interfaces/`, in order.
@@ -832,6 +850,7 @@ fn classic(root: &Path) -> Result {
             .arg(&host)
             .arg(&work),
     )?;
+    rockfs_cross(root, Some(&host))?;
     println!("classic: built and cross-checked");
     Ok(())
 }

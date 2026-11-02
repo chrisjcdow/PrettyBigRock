@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "rockfs-rs"
+description = "RockFS on a disk image, using lib/rockfs: the Rust twin of tools/rockfs.py (note 0016)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rockfs-rs"
+path = "src/main.rs"
+
+[dependencies]
+pbr-crc = { path = "../../lib/crc" }
+pbr-fs = { path = "../../lib/fs" }
+pbr-partition = { path = "../../lib/partition" }
+pbr-rockfs = { path = "../../lib/rockfs" }
+
+[lints]
+workspace = true
