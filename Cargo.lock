@@ -7,6 +7,10 @@ name = "pbr-archive"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-blockcache"
+version = "0.0.0"
+
+[[package]]
 name = "pbr-boot-bios"
 version = "0.0.0"
 dependencies = [

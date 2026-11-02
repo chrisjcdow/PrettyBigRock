@@ -107,6 +107,7 @@ const PROGRAM_CRATES: &[&str] = &[
 /// Crates tested on this computer.
 const HOST_CRATES: &[&str] = &[
     "pbr-archive",
+    "pbr-blockcache",
     "pbr-bootinfo",
     "pbr-boot-common",
     "pbr-captree",

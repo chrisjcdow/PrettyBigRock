@@ -17,6 +17,7 @@ members = [
     "drivers/virtio-input",
     "kernel",
     "lib/archive",
+    "lib/blockcache",
     "lib/bootinfo",
     "lib/captree",
     "lib/crc",
