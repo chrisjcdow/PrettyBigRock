@@ -16,6 +16,7 @@ PrettyBigRock/
 ├── Cargo.toml            the Rust workspace: lists every Rust crate
 ├── rust-toolchain.toml   the exact Rust version (note 0002)
 ├── rustfmt.toml          code formatting rules
+├── CLAUDE.md             working rules for Claude sessions: who does what, comments (note 0002)
 ├── .cargo/config.toml    makes `cargo xtask` work
 ├── .github/workflows/    automatic builds and tests on GitHub
 │
@@ -127,3 +128,4 @@ The build tool's own tests check steps 1 and 3 match.
 - 2 November 2026: the folders added in M4 (`lib/devices`, `lib/driver`, `lib/ranges`,
   `lib/virtio`, `drivers/`, `services/devmgr`), all GPL-3.0-or-later, and
   `.github/workflows/stress.yml`.
+- 2 November 2026, M5: `CLAUDE.md`.

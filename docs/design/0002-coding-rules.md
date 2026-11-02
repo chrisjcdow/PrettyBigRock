@@ -64,6 +64,11 @@ else.
    sound (enforced by Clippy), and `unsafe` operations inside `unsafe fn` still need their own
    block (enforced by the compiler). Unsafe code is kept in small, well-named functions.
 5. **Everything public is documented** (warned by the compiler). Comments say *why*, not what.
+   They are written for a reader who knows how to program but is new to Rust and to
+   operating-system internals: an OS idea (a capability, a page table, DMA, a block cache) or
+   a Rust feature that isn't obvious from other languages (ownership, lifetimes, traits,
+   `?`, `unsafe`, `Drop`) is explained in a sentence where it first appears in a file, once
+   per file, with a pointer to the design note that goes deeper. `CLAUDE.md` has an example.
 6. **Panics are bugs.** Kernel code returns errors rather than panicking on anything a program
    or device can cause. A panic in the kernel stops the system with a message.
 7. **No processor-specific code outside `arch/`, `board/` and `boot/`** (note 0001).
@@ -121,3 +126,6 @@ else.
 - 2 November 2026, after M4: logic in program-only crates goes in host-built libraries (the
   register bounds check had no tests until it moved); hardware as hostile input; stress
   runs.
+- 2 November 2026, M5: comments are written for a newcomer to Rust and OS internals (rule 5);
+  `CLAUDE.md` in the repository root holds the working rules for Claude sessions, including
+  which work is done by which model.
