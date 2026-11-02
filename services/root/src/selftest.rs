@@ -108,10 +108,18 @@ fn all(
     }
     step("crash and restart", crash.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("a driver crashed and restarted");
+    let storage = crate::storagetest::start(archive, &devmgr, true)?;
+    let st = crate::storagetest::run(&storage, &devmgr);
+    if let Ok(summary) = &st {
+        granite::println!("Storage self-test passed: {summary}");
+    }
+    step("storage", st.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("storage (partitions, volumes, the block cache)");
     let calls = load(f, &echo_ep);
     step("load", calls.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("calls on 4 threads to a service with 4 threads");
 
+    storage.process.process.stop(0).map_err(|e| format!("stopping storage: {e}"))?;
     devmgr.process.process.stop(0).map_err(|e| format!("stopping devmgr: {e}"))?;
     echo.process.stop(0).map_err(|e| format!("stopping echo: {e}"))?;
     match wait(&echo, 30)? {

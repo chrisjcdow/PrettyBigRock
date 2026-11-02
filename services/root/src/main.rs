@@ -17,6 +17,7 @@ mod devtest;
 mod drivertest;
 mod kernel12;
 mod selftest;
+mod storagetest;
 
 use granite::memory::Memory;
 use granite::notification::Notification;
@@ -56,13 +57,20 @@ fn main(mut start: granite::Start) -> i32 {
         "The root program is running, with {} files in the start-up archive.",
         archive.count()
     );
-    let _devmgr = match blocktest::start(&archive, archive_mem.0.raw(), &start, false) {
+    let devmgr = match blocktest::start(&archive, archive_mem.0.raw(), &start, false) {
         Ok(d) => Some(d),
         Err(e) => {
             granite::println!("The root program can't start the device manager: {e}");
             None
         }
     };
+    let _storage = devmgr.as_ref().and_then(|d| match storagetest::start(&archive, d, false) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            granite::println!("The root program can't start the storage service: {e}");
+            None
+        }
+    });
     // Wait for ever.
     if let Ok(n) = Notification::create() {
         loop {
