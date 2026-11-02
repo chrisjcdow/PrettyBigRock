@@ -323,3 +323,36 @@ build"). Stages 1 to 4 were built with Claude Sonnet 5.5; Chris then switched to
     cores at once;
   - with the race's windows deliberately widened, the old code failed within seconds and the
     fixed code passed.
+
+## Session 10: 2 November 2026, milestone M5 (files and sandboxes)
+
+**Chris** asked for M5, starting as earlier milestones did: design notes first (the file layer
+and each app's file tree, the block cache, RockFS, the sandbox manager, manifests and users),
+then the work broken into stages, with the plan shown to him before any code. He asked that
+Claude Opus do the foundational and security-critical work itself (the notes, the file layer,
+the block cache, the sandbox manager, manifests, users, and anything that hands out or checks
+capabilities), and hand well-defined work that follows a pattern to Sonnet subagents (FAT32,
+the text shell, porting RockFS once its design is settled, extra tests), with Haiku only for
+trivial jobs such as summarising long test logs, reviewing everything against the tests before
+it goes in. Comments are to be written for a reader who knows programming but is new to Rust
+and OS internals. RockFS is to be cross-checked against `tools/rockfs.py` and tested with real
+disks made by 1.3, including writing and reading back.
+
+**Claude:**
+- Added `CLAUDE.md`, the working rules every session reads first (who does which work, how
+  subagents are briefed and reviewed, how to comment, building and testing), and the commenting
+  rule to note 0002.
+- Drafted notes 0013 to 0018:
+  - 0013, kernel interface 1.2: replies that hand out a capability derived from the one the
+    caller used (so revoking a folder revokes the files opened through it), watched badges (so a
+    service is told when an object's last capability goes), tied processes (which end with
+    their creator), and the wall clock for programs;
+  - 0014, files: file and folder capabilities, two rights, `pbr.file`, durability (an atomic
+    save on RockFS), and each program's file tree, kept in its own library;
+  - 0015, storage: partitions, volumes, `pbr.storage`, and the shared block cache, with its
+    ordering rules;
+  - 0016, filesystems: RockFS in Rust with flushes where order matters, FAT32, and four layers
+    of checks against `rockfs.py`, 1.3's own code, and a real disk made by booting 1.3;
+  - 0017, users, a sandbox manager per session, app manifests and rules;
+  - 0018, supervision (including the device manager's death and its DMA memory), the console
+    and shell, the tests, and nine stages with who builds each.
