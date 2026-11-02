@@ -209,7 +209,7 @@ extern "C" fn continue_start_up() -> ! {
 
     report(boot);
     obj::process::start_reaper();
-    syspage::init();
+    syspage::init(boot.boot_time_ns);
     let selftest = boot.command_line.split_whitespace().any(|w| w == "selftest");
     irq::start(selftest);
     sched::spawn("start-up", sched::NORMAL, move || {

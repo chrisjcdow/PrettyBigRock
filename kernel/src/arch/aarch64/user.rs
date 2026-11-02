@@ -257,7 +257,7 @@ core::arch::global_asm!(
     ".global pbr_syspage_start",
     "pbr_syspage_start:",
     ".ascii \"PBRSYSPG\"",
-    ".short 1, 0",
+    ".short 0, 0", // the interface version: written by `syspage::init` from `syscall::VERSION`
     ".long 0",
     ".quad 64",
     ".quad 96",
