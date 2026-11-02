@@ -536,6 +536,7 @@ fn tied(
                 log: true,
                 args: &args,
                 tied: *is_tied,
+                file_tree: &[],
             })
             .map_err(|e| {
                 granite::println!("probe tied: starting a child: {e}");

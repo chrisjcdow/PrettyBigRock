@@ -33,6 +33,11 @@ impl Start {
         self.handles.iter().find(|(x, _)| *x == r).map(|(_, h)| *h)
     }
 
+    /// Every (role, handle) still in the start-up block, not yet taken.
+    pub fn handles(&self) -> &[(u32, u32)] {
+        &self.handles
+    }
+
     /// The program's arguments.
     pub fn args(&self) -> &str {
         &self.args

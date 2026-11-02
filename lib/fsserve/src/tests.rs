@@ -260,7 +260,12 @@ fn a_hostile_client() {
         let new = match rng.next() % 12 {
             0 => c.open(b, p, want).map(|x| x.0),
             1 => c
-                .create(b, p, if rng.next().is_multiple_of(2) { Kind::File } else { Kind::Folder }, want)
+                .create(
+                    b,
+                    p,
+                    if rng.next().is_multiple_of(2) { Kind::File } else { Kind::Folder },
+                    want,
+                )
                 .map(|x| x.0),
             2 => c.reduce(b, want),
             3 => c.remove(b, p).map(|_| 0),

@@ -129,6 +129,10 @@ name = "pbr-elf"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-filetree"
+version = "0.0.0"
+
+[[package]]
 name = "pbr-fs"
 version = "0.0.0"
 
@@ -146,6 +150,7 @@ name = "pbr-granite"
 version = "0.0.0"
 dependencies = [
  "pbr-elf",
+ "pbr-filetree",
 ]
 
 [[package]]

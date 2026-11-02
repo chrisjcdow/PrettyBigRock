@@ -86,6 +86,7 @@ pub fn start(
         log: true,
         args: if keep { "selftest" } else { "" },
         tied: false,
+        file_tree: &[],
     })
     .map_err(|e| format!("starting devmgr: {e}"))?;
     let client = devices::Client::new(Endpoint(

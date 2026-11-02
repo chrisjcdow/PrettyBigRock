@@ -343,6 +343,7 @@ pub fn start(
         log: true,
         args: &args,
         tied: false,
+        file_tree: &[],
     });
     spawned.map_err(|e| PlanError(format!("starting {name}: {e}")))
 }

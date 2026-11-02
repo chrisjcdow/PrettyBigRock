@@ -117,6 +117,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-crc",
     "pbr-devices",
     "pbr-elf",
+    "pbr-filetree",
     "pbr-fs",
     "pbr-fsserve",
     "pbr-granite",
@@ -863,7 +864,13 @@ fn check_licence_headers(root: &Path) -> Result {
 fn licence_for(rel: &Path) -> &'static str {
     let s = rel.to_string_lossy().replace('\\', "/");
     let under = |p: &str| s.starts_with(p);
-    if under("lib/granite/") || under("lib/elf/") || under("lib/archive/") || under("targets/") {
+    if under("lib/granite/")
+        || under("lib/elf/")
+        || under("lib/archive/")
+        || under("lib/filetree/")
+        || under("lib/files/")
+        || under("targets/")
+    {
         "MPL-2.0"
     } else if under("interfaces/") || under("lib/interfaces/") {
         "MIT"

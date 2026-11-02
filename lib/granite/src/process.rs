@@ -49,6 +49,12 @@ pub mod role {
     pub const IO_PORTS: u32 = 10;
     /// The machine description, a read-only memory object (the root program only).
     pub const MACHINE: u32 = 11;
+    /// The program's file tree: a read-only memory object describing its entries
+    /// (docs/design/0014-files-and-file-trees.md, section 8). Entry `i`'s capability has role
+    /// `FILE_TREE_FIRST + i`.
+    pub const FILE_TREE: u32 = 12;
+    /// The role of the file tree's first entry's capability.
+    pub const FILE_TREE_FIRST: u32 = 100;
     /// The first role a launcher and its program agree between themselves.
     pub const OWN: u32 = 1000;
 }
@@ -221,6 +227,10 @@ pub struct Spawn<'a> {
     pub args: &'a str,
     /// It ends when this program does (note 0013, section 3).
     pub tied: bool,
+    /// Its file tree (note 0014, section 8): (path, a capability for the file or folder there,
+    /// whether it's a folder). It gets copies of the capabilities, so revoking one here takes
+    /// it back.
+    pub file_tree: &'a [(&'a str, u32, bool)],
 }
 
 /// A program that has been started.
@@ -292,6 +302,25 @@ pub fn spawn(s: &Spawn<'_>) -> core::result::Result<Spawned, SpawnError> {
     }
     for &(r, h, mask, moving) in s.caps {
         entries.push((r, process.give(h, mask, moving)?));
+    }
+    if !s.file_tree.is_empty() {
+        let mounts: Vec<pbr_filetree::Mount> = s
+            .file_tree
+            .iter()
+            .map(|&(path, _, folder)| pbr_filetree::Mount {
+                path: path.into(),
+                kind: if folder { pbr_filetree::Kind::Folder } else { pbr_filetree::Kind::File },
+            })
+            .collect();
+        let description = pbr_filetree::encode(&mounts)
+            .map_err(|_| SpawnError::System(Error::InvalidArgument))?;
+        let tree = Memory::create(description.len() as u64)?;
+        tree.write(0, &description)?;
+        let read_only = rights::DUPLICATE | rights::TRANSFER | rights::READ | rights::MAP;
+        entries.push((role::FILE_TREE, process.give(tree.0.raw(), read_only, false)?));
+        for (i, &(_, h, _)) in s.file_tree.iter().enumerate() {
+            entries.push((role::FILE_TREE_FIRST + i as u32, process.give(h, rights::ALL, false)?));
+        }
     }
 
     // The block: magic, version, count, where the arguments are, then (role, handle) pairs.

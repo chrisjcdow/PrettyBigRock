@@ -373,6 +373,7 @@ fn tied(f: &Files<'_>) -> Outcome {
             log: true,
             args,
             tied: false,
+            file_tree: &[],
         })
         .map_err(|e| format!("starting probe {args}: {e}"))
     };

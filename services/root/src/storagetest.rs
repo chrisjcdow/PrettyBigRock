@@ -67,6 +67,7 @@ pub fn start(archive: &Archive<'_>, devmgr: &Devmgr, selftest: bool) -> Result<S
         log: true,
         args: if selftest { "selftest" } else { "" },
         tied: false,
+        file_tree: &[],
     })
     .map_err(|e| format!("starting storage: {e}"))?;
     let client = rights::SEND | rights::TRANSFER | rights::DUPLICATE;
