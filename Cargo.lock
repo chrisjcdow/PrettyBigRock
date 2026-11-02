@@ -40,6 +40,10 @@ name = "pbr-captree"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-crc"
+version = "0.0.0"
+
+[[package]]
 name = "pbr-devices"
 version = "0.0.0"
 
@@ -149,6 +153,13 @@ dependencies = [
  "pbr-elf",
  "pbr-platform",
  "pbr-ranges",
+]
+
+[[package]]
+name = "pbr-partition"
+version = "0.0.0"
+dependencies = [
+ "pbr-crc",
 ]
 
 [[package]]
