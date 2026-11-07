@@ -6,7 +6,8 @@
 //! - `test-mbr.img`: an MBR, a RockFS volume labelled `Data` (8 MiB from 1 MiB) and a FAT32
 //!   volume labelled `USB` (34 MiB);
 //! - `test-gpt.img`: a GPT, a RockFS volume labelled `Home` (4 MiB) and a FAT32 volume (34 MiB)
-//!   typed as basic data, labelled `PICTURES`;
+//!   typed as basic data, labelled `PICTURES`. `Home` is also the system volume for the users
+//!   and sandbox tests (note 0018, section 7, test 6): see [`SYSTEM`];
 //! - `test-empty.img`: 2 MiB of zeros.
 //!
 //! RockFS volumes are formatted by `tools/rockfs.py`, the independent Python implementation, so
@@ -52,6 +53,73 @@ fn rockfs(path: &Path, start: u64, sectors: u64, label: &str) -> Result<(), Stri
         Ok(())
     } else {
         Err(format!("tools/rockfs.py couldn't format {}", path.display()))
+    }
+}
+
+/// What the GPT disk's RockFS volume holds, making it a system volume (note 0017, section 2):
+/// two users, `chris` (an administrator) and `alice`, their rules and homes, and a few files
+/// the sandbox test's app looks for. (Path, contents; `None` for a folder.) The root program's
+/// sandbox test (`services/root/src/sandboxtest.rs`) relies on exactly this.
+pub const SYSTEM: &[(&str, Option<&str>)] = &[
+    ("System", None),
+    (
+        "System/users.txt",
+        Some("# PrettyBigRock users\nuser chris admin \"Chris\"\nuser alice standard \"Alice\"\n"),
+    ),
+    ("System/rules", None),
+    (
+        "System/rules/chris.txt",
+        Some(
+            "# The sandbox test's app may not be trusted, nor have music.\ndistrust sandboxed\ndeny sandboxed music\n",
+        ),
+    ),
+    ("System/rules/alice.txt", Some("")),
+    ("Users", None),
+    ("Users/chris", None),
+    ("Users/chris/Documents", None),
+    ("Users/chris/Documents/a.txt", Some("hello")),
+    ("Users/chris/Pictures", None),
+    ("Users/chris/Pictures/p.png", Some("not really a picture")),
+    ("Users/chris/Music", None),
+    ("Users/chris/Music/m.ogg", Some("not really music")),
+    ("Users/chris/Videos", None),
+    ("Users/chris/Downloads", None),
+    ("Users/chris/Notes", None),
+    ("Users/chris/Notes/todo.txt", Some("write M5")),
+    ("Users/chris/Secret", None),
+    ("Users/chris/Secret/s.txt", Some("nobody else may read this")),
+    ("Users/alice", None),
+    ("Users/alice/Documents", None),
+    ("Users/alice/Documents/diary.txt", Some("Alice's diary")),
+    ("Users/alice/Pictures", None),
+    ("Users/alice/Pictures/q.png", Some("Alice's picture")),
+    ("Users/alice/Music", None),
+    ("Users/alice/Videos", None),
+    ("Users/alice/Downloads", None),
+];
+
+/// Puts [`SYSTEM`] on the RockFS volume in `path` (a disk with one), with `tools/rockfs.py`.
+fn system_volume(path: &Path) -> Result<(), String> {
+    let tools = concat!(env!("CARGO_MANIFEST_DIR"), "/../tools");
+    let mut script = format!(
+        "import sys; sys.path.insert(0, {tools:?}); import rockfs\nv = rockfs.Volume({p:?})\n",
+        p = path.display().to_string()
+    );
+    for (name, data) in SYSTEM {
+        script.push_str(&match data {
+            None => format!("v.create({name:?}, rockfs.T_DIR)\n"),
+            Some(d) => format!("v.create({name:?}, rockfs.T_FILE, {d:?}.encode())\n"),
+        });
+    }
+    script.push_str("v.close()\n");
+    let st = Command::new("python3")
+        .args(["-I", "-c", &script])
+        .status()
+        .map_err(|e| format!("running python3: {e}"))?;
+    if st.success() {
+        Ok(())
+    } else {
+        Err(format!("tools/rockfs.py couldn't set up the system volume on {}", path.display()))
     }
 }
 
@@ -110,7 +178,8 @@ pub fn gpt_disk(path: &Path) -> Result<(), String> {
         image::fat32_labelled(&[("README.TXT", README)], GPT_FAT.0, GPT_FAT.1, b"PICTURES   ")?;
     put(&mut disk, GPT_FAT.0, &fat);
     fs::write(path, &disk).map_err(|e| format!("writing {}: {e}", path.display()))?;
-    rockfs(path, GPT_ROCKFS.0, GPT_ROCKFS.1, "Home")
+    rockfs(path, GPT_ROCKFS.0, GPT_ROCKFS.1, "Home")?;
+    system_volume(path)
 }
 
 /// Writes every storage test disk into `work`, and returns their paths.
@@ -198,5 +267,38 @@ mod tests {
             println!("the_test_disks: fsck.fat isn't installed; the FAT32 volumes weren't checked");
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The system volume is written as [`SYSTEM`] says, and checks clean with `rockfs.py`.
+    #[test]
+    fn the_system_volume() {
+        let dir = std::env::temp_dir().join(format!("pbr-system-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gpt.img");
+        gpt_disk(&path).unwrap();
+        let rockfs = concat!(env!("CARGO_MANIFEST_DIR"), "/../tools/rockfs.py");
+        let run = |args: &[&str]| {
+            let out = Command::new("python3")
+                .arg("-I")
+                .arg(rockfs)
+                .arg(&path)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "rockfs.py {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8(out.stdout).unwrap()
+        };
+        run(&["check"]);
+        for (name, data) in SYSTEM {
+            if let Some(d) = data {
+                assert_eq!(run(&["cat", name]), *d, "{name}");
+            }
+        }
+        assert!(run(&["ls", "Users/chris"]).contains("Secret"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
