@@ -26,7 +26,7 @@ code is the BIOS loader's first stage.
 |-------|------|
 | Sector 0 | Protective MBR. Bytes 0–439 are the BIOS first stage. Bytes 432–439 hold the BIOS partition's first sector (`u32`) and the number of sectors of BIOS loader (`u16`), filled in by the build tool. |
 | Sectors 1–33 | GPT header and partition table (and the backup copy at the end of the disk) |
-| Partition 1 | **BIOS boot partition** (type `21686148-6449-6E6F-744E-656564454649`), 8 MiB. It holds the BIOS loader, then the payload (below). |
+| Partition 1 | **BIOS boot partition** (type `21686148-6449-6E6F-744E-656564454649`), 16 MiB. It holds the BIOS loader, then the payload (below). |
 | Partition 2 | **EFI system partition** (type `C12A7328-F81F-11D2-BA4B-00A0C93EC93B`), 64 MiB, FAT32. |
 
 The EFI system partition holds:
@@ -147,3 +147,6 @@ appear within the time limit. GitHub Actions runs this on every change.
 - 29 October 2026: first version.
 - 29 October 2026: built. The payload header gained its total length, so the second stage
   can copy it without understanding it.
+- 7 November 2026, M5 stage 5: the BIOS boot partition grew from 8 MiB to 16 MiB. The debug
+  kernel and start-up archive, with a second filesystem server, no longer fitted. The payload is
+  copied to 1 MiB and up in one piece, so it now reaches 17 MiB at most.

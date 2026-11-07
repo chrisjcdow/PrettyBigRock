@@ -7,7 +7,7 @@
 
 const SECTOR: usize = 512;
 const BIOS_START: u64 = 2048;
-const BIOS_SECTORS: u64 = 8 * 2048; // 8 MiB
+const BIOS_SECTORS: u64 = 16 * 2048; // 16 MiB (8 until M5 stage 5; see note 0004)
 const ESP_START: u64 = BIOS_START + BIOS_SECTORS;
 const ESP_SECTORS: u64 = 64 * 2048; // 64 MiB
 
