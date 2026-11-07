@@ -239,3 +239,16 @@ traits, which are settled first.
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
 - 2 November 2026, stage 1: kernel 1.2's tests are in the program self-test, not `lib/captree`.
+- 7 November 2026, stage 6: test 6 as built (`services/root/src/sandboxtest.rs`). The build
+  tool makes the GPT test disk's `Home` volume a system volume (`chris`, an administrator, and
+  `alice`), and the root program stands in for the shell through `pbr.users.debug`. Checked:
+  who each session is and what each may ask the users service; launches refused (no such app,
+  a broken manifest, a broken rules file); choosing (bad paths, overlaps, a capability that
+  isn't a file's, a file the app gets anyway); grants and their reasons; the launcher can't
+  stop the app through its process capability, `stop` can; the app sees exactly its grants,
+  with every handle number tried and `..` from every entry; read-only stays read-only;
+  `revoke` takes one app's folder (and a file opened through it) while another app's grant of
+  the same folder keeps working; `deny`, `allow` and `distrust` obeyed, and trusted apps' whole
+  trees (an administrator's with every volume, a standard user's with none); `add` and `setup`;
+  and, started again told to ignore the system volume, users kept in memory with `owner`. The
+  runner waits for `Sandbox self-test passed`.

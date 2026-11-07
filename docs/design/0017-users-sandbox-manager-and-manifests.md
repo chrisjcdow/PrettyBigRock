@@ -253,6 +253,44 @@ For an app launched by the sandbox manager, M5's tests (note 0018) check that:
 - Owners recorded on disk, for volumes shared between users.
 - The network as a capability in manifests (M8).
 - Editing rules through `pbr.users` (with the settings app).
+- A recovery session that ignores a user's rules, for when an administrator's own rules file is
+  broken (launches are refused until it is fixed; see Changes).
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
+- 7 November 2026, stage 6 (built): decisions the note left open, settled while building.
+  - **The rules file in the session's tree** is at `/System/rules.txt`, read only. Trusted apps
+    see it there too, which is how "a session can read its own rules" shows.
+  - **Rules are read afresh at every launch**, so an administrator's edit applies to the next
+    launch without restarting anything. Two rules about the same app and place (an `allow` and
+    a `deny`, or the same rule twice), or `trust` with `distrust`, refuse the whole file.
+  - **A rules file that can't be read or parsed refuses every launch** for that user (error
+    `BadRules`, with the line in the log), rather than guessing: a line it can't read might have
+    been a `deny`. Running apps carry on. A way back in if an administrator breaks their own
+    rules file (a recovery session) is an open question below.
+  - **A damaged `users.txt`** is treated like no system volume (the `owner` session, in
+    memory), except that the message says what is wrong; `owner` is an administrator, so it
+    sees the system volume under `/Volumes` and can repair the file.
+  - **Trusted apps also get** the session's `pbr.users` and a `pbr.sandbox` capability with
+    their own badge (start-up roles 1001 and 1000), which the shell will need. A trusted app's
+    tree is the session's, each entry a capability of its own (so `revoke` works on it too).
+  - **A distrusted app whose manifest asks for `trusted`** still launches, with its places.
+  - **A chosen file or folder inside something the app gets anyway** is accepted and not added,
+    if what it gets covers the chosen capability's rights; otherwise, or if the chosen path would
+    contain something the app gets, `choose` answers `Overlaps`. A chosen capability's server
+    is asked what it is with a 10-second limit (`BadCapability` if it doesn't answer as a file).
+  - **`grants` pages** (`grants(app, from) -> (grants: list<Grant, 32>, next)`): 64 grants of
+    1 KiB paths don't fit in one message, and a trusted app can hold up to 256 entries.
+    `SandboxError`'s values are in `interfaces/pbr.sandbox.pbi`; `pbr.users`' errors in
+    `pbr.users.pbi`.
+  - **Volume names under `/Volumes`**: the label, or `Volume` if it is empty or not a valid name;
+    later duplicates get ` 2`, ` 3`… (`pbr_manifest::volume_names`).
+  - **Budgets**: a session (its sandbox manager and every app it starts) has 16 MiB; the volume
+    in memory used without a system volume is 8 MiB. An app's manifest `budget` is 64 KiB to
+    1 GiB, its `title` at most 64 bytes, its `args` at most 1 KiB (the launch's own arguments
+    follow them).
+  - **`terminal`** is parsed and decided, but nothing is handed over until the console exists
+    (stage 8). Starting a session again when its sandbox manager ends is stage 7.
+  - **Testing**: `pbr.users.debug` (self-test runs only, like `pbr.storage.debug`) gives the
+    root program each session's `pbr.users` and `pbr.sandbox`, so it can stand in for the shell.
+

@@ -140,3 +140,6 @@ The build tool's own tests check steps 1 and 3 match.
   `tools/rockfs_cross.py`, and `tests/data/` (the disk 1.3 made, with its manifest).
 - 7 November 2026, M5 stage 4b: `services/rockfs` and `tools/check_classic_after.py`.
 - 7 November 2026, M5 stage 5: `lib/fat`, `services/fat` and `tools/check_fat_after.py`.
+- 7 November 2026, M5 stage 6: `lib/manifest`, `services/users`, `services/sandbox` (all
+  GPL-3.0-or-later) and `tests/programs/sandboxed` (with the manifests the start-up archive
+  carries as `apps/sandboxed.app` and `apps/broken.app`).

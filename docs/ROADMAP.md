@@ -120,11 +120,12 @@ manifests) and 0018 (supervision, the console and shell, the tests and the order
 accepted 2 November 2026.
 
 **Status: in progress.** M5 also settles supervision of services, including what happens when
-the device manager itself dies (note 0012's open question). Done so far (stages 1 to 5 of 9):
-kernel interface 1.2; the storage service and block cache; the file layer and file trees
-(`fileprobe` sees exactly the files it was given); RockFS in Rust and its server, with a data
-disk made by 1.3 itself opening intact in the boot tests; FAT32, read and write. Still to
-come: users, the sandbox manager and manifests, supervision, the console and shell.
+the device manager itself dies (note 0012's open question). Done so far (stages 1 to 6 of 9):
+kernel interface 1.2; the storage service and block cache; the file layer and file trees;
+RockFS in Rust and its server, with a data disk made by 1.3 itself opening intact in the boot
+tests; FAT32, read and write; users, sessions, the sandbox manager and app manifests, with an
+app launched from its manifest seeing exactly the files it was granted (both "done when"s are
+now met). Still to come: supervision, the console and shell.
 
 ## M6: The desktop (2.0 alpha)
 - The display server and compositor, the input service, and the window toolkit in the native

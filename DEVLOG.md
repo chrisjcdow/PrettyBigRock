@@ -437,3 +437,22 @@ disks made by 1.3, including writing and reading back.
   later. That was the second deadline bug, so generated clients now also take a timeout
   counted from each call (`set_timeout_ms`), and long-lived clients use it. Next: stage 6,
   users, the sandbox manager and manifests (Opus).
+- **Stage 6, users, the sandbox manager and manifests** (Opus). `lib/manifest` reads every
+  plain-text settings file with one line reader (driver manifests moved onto it): app
+  manifests, `users.txt`, rules files, and the decision of what an app is granted, host-tested
+  with ordinary, hostile and randomly damaged files. `services/users` finds the system volume
+  (the first RockFS volume with `System/users.txt`; without one, or with a damaged one, a
+  volume in memory with an `owner`), and starts a sandbox manager per session with that user's
+  tree: `/Home`, their rules at `/System/rules.txt` (read only) and, for administrators, every
+  volume under `/Volumes`. `services/sandbox` reads the manifest and the rules at each launch,
+  derives a capability of the app's own for each grant and each chosen file, starts the app
+  tied to itself, and serves `list`, `grants`, `revoke` and `stop`. The boot test (the root
+  program standing in for the shell) launches `tests/programs/sandboxed` from its manifest in
+  two sessions, on a system volume the build tool prepares, and the app checks from the inside
+  that it holds exactly what it was granted: M5's first "done when" at the level of real apps.
+  Decisions the note left open are under its Changes (rules files that can't be read refuse
+  every launch; trusted apps also get `pbr.sandbox` and `pbr.users`; `grants` pages). On the
+  way: `granite` kept at most 64 start-up capabilities and silently dropped the rest, which a
+  trusted app with many volumes would have hit; it now keeps them all. ARM's self-test now
+  takes about 330 seconds in this workspace (the new test about 85 of them), so a boot test
+  may take 600 seconds instead of 300. Next: stage 7, supervision (Opus).
