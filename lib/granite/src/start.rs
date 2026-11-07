@@ -124,23 +124,21 @@ extern "C" fn entry(block: u64, sys_page: u64, msg: u64) -> ! {
     if word(block, 0) != u32::from_le_bytes(*b"PBRS") || word(block, 4) & 0xFFFF != 1 {
         sys::process_exit(255);
     }
-    let count = (word(block, 4) >> 16).min(500);
+    // (At most 510 pairs fit in the 4 KiB block after its 16-byte header.)
+    let count = (word(block, 4) >> 16).min(510);
     let (args_at, args_len) = (word(block, 8).min(4096), word(block, 12).min(4096));
-    let mut pairs = [(0u32, 0u32); 64];
-    let mut n = 0;
+    let pair = |i: u32| (word(block, 16 + 8 * u64::from(i)), word(block, 20 + 8 * u64::from(i)));
+    // First the program's own process and the log, which the allocator and `println!` need.
     for i in 0..count {
-        let (r, h) = (word(block, 16 + 8 * u64::from(i)), word(block, 20 + 8 * u64::from(i)));
-        match r {
-            role::PROCESS => process::set_self(h),
-            role::LOG => log::set(h),
+        match pair(i) {
+            (role::PROCESS, h) => process::set_self(h),
+            (role::LOG, h) => log::set(h),
             _ => {}
         }
-        if n < pairs.len() {
-            pairs[n] = (r, h);
-            n += 1;
-        }
     }
-    // Now the allocator works (it needs the program's own process).
+    // Now the allocator works (it needs the program's own process), so every pair can be kept:
+    // a program given a big file tree has hundreds.
+    let pairs: Vec<(u32, u32)> = (0..count).map(pair).collect();
     let args = if args_at + args_len <= 4096 {
         // SAFETY: inside the mapped block.
         let b = unsafe {
@@ -153,7 +151,7 @@ extern "C" fn entry(block: u64, sys_page: u64, msg: u64) -> ! {
     } else {
         String::new()
     };
-    let start = Start { handles: pairs[..n].to_vec(), args };
+    let start = Start { handles: pairs, args };
     // SAFETY: the program declared `__granite_main` with `granite::main!`.
     let code = unsafe { __granite_main(start) };
     sys::process_exit(code as u64)
