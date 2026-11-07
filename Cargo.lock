@@ -265,6 +265,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-sandbox"
+version = "0.0.0"
+dependencies = [
+ "pbr-archive",
+ "pbr-files",
+ "pbr-filetree",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-manifest",
+]
+
+[[package]]
 name = "pbr-storage"
 version = "0.0.0"
 dependencies = [
@@ -313,6 +325,16 @@ dependencies = [
 [[package]]
 name = "pbr-test-protocol"
 version = "0.0.0"
+
+[[package]]
+name = "pbr-users"
+version = "0.0.0"
+dependencies = [
+ "pbr-archive",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-manifest",
+]
 
 [[package]]
 name = "pbr-virtio"
