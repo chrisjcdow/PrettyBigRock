@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-fat"
+description = "FAT32 with long names: the filesystem library behind the FAT server (note 0016)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pbr-fs = { path = "../fs" }
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-fat-server"
+description = "The FAT32 filesystem server: lib/fat served through lib/fsserve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "fat"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-fs = { path = "../../lib/fs" }
+pbr-fsserve = { path = "../../lib/fsserve" }
+pbr-fat = { path = "../../lib/fat" }
+
+[lints]
+workspace = true

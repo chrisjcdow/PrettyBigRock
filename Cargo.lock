@@ -129,6 +129,24 @@ name = "pbr-elf"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-fat"
+version = "0.0.0"
+dependencies = [
+ "pbr-fs",
+]
+
+[[package]]
+name = "pbr-fat-server"
+version = "0.0.0"
+dependencies = [
+ "pbr-fat",
+ "pbr-fs",
+ "pbr-fsserve",
+ "pbr-granite",
+ "pbr-interfaces",
+]
+
+[[package]]
 name = "pbr-files"
 version = "0.0.0"
 dependencies = [
