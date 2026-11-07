@@ -54,15 +54,18 @@ struct VolumeInfo {
 /// A copy of the volume's root folder capability, with every right.
 @2 fn open(id: u32) -> (root: handle<any>) error StorageError;
 
-/// Makes a volume in memory of `size` bytes (rounded down to 4 KiB). It is formatted as
-/// RockFS once the RockFS server exists (M5 stage 4); until then it is empty.
+/// Makes a volume in memory of `size` bytes (rounded down to 4 KiB), formatted as RockFS with
+/// `label`. Its server formats it and then serves it: `open` answers `NotReady` until then.
 @3 fn create_ram_volume(size: u64, label: string<64>) -> (id: u32) error StorageError;
 
-/// Puts a RockFS volume on an empty disk: an MBR with one partition from 1 MiB, as 1.3 does.
+/// Puts a RockFS volume on an empty volume. An empty whole disk first gets an MBR with one
+/// partition from 1 MiB, as 1.3 does, and the partition is a new volume (with a new id). Its
+/// server formats it and then serves it: `list` says when it is ready.
 @4 fn format(id: u32, label: string<64>) -> () error StorageError;
 
-/// Makes every volume clean and flushes every disk. Afterwards most operations fail with
-/// `ShutDown`.
+/// Has every filesystem server save its volume and mark it clean, then flushes every disk.
+/// Answers once every server has finished (`DiskError` if one didn't). Afterwards most
+/// operations fail with `ShutDown`.
 @5 fn shutdown() -> () error StorageError;
 
 /// What can go wrong.

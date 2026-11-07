@@ -16,6 +16,7 @@ test = false
 bench = false
 
 [dependencies]
+pbr-archive = { path = "../../lib/archive" }
 pbr-blockcache = { path = "../../lib/blockcache" }
 pbr-granite = { path = "../../lib/granite" }
 pbr-interfaces = { path = "../../lib/interfaces" }

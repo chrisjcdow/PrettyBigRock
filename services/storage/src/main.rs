@@ -12,9 +12,19 @@
 //! - [`ADMIN`]: `pbr.storage`, for the root program (and, from stage 6, the users service);
 //! - [`DEBUG`]: `pbr.storage.debug`, only in self-test runs;
 //! - [`VOLUME_BASE`] + a volume's number: `pbr.block` for that volume, with sector numbers
-//!   counted from the volume's start, so nothing outside it can be named.
+//!   counted from the volume's start, so nothing outside it can be named;
+//! - [`HOST_BASE`] + a volume's number: `pbr.fs.host`, for the filesystem server it started
+//!   for that volume.
 //!
-//! It handles one request at a time (note 0015, section 7).
+//! It starts a filesystem server for each RockFS volume (note 0016, section 1), one per volume,
+//! each reaching only its own volume. The server says when the volume is ready, and from then
+//! `open` hands out copies of its root folder's capability.
+//!
+//! It handles one request at a time (note 0015, section 7). That shapes shutting down: a
+//! server saves its volume by writing through this service, so this service must never wait
+//! for a server (the server may at that moment be waiting for it). It asks each server to
+//! unmount by signalling a notification, which never waits, carries on serving their writes,
+//! and answers `shutdown` once every server has exited.
 
 #![no_std]
 #![no_main]
@@ -28,12 +38,16 @@ use alloc::vec;
 use alloc::vec::Vec;
 use disks::{Disks, Raw, SECTOR};
 use granite::endpoint::{Endpoint, Event};
-use granite::process::role;
-use granite::sys::rights;
+use granite::memory::Memory;
+use granite::notification::Notification;
+use granite::process::{self, Spawn, Spawned, State, role};
+use granite::sys::{perm, rights};
 use granite::time;
+use pbr_archive::Archive;
 use pbr_blockcache::{Cache, Error as CacheError};
 use pbr_interfaces::pbr_block::{self as block, BlockError, BlockInfo};
 use pbr_interfaces::pbr_devices as devices;
+use pbr_interfaces::pbr_fs_host::{self as host, FsFailure, HostError};
 use pbr_interfaces::pbr_storage::{
     self as storage, Filesystem, StorageError, VolumeInfo, VolumeState,
 };
@@ -42,9 +56,16 @@ use pbr_interfaces::pbr_storage_debug::{self as debug, DebugError};
 granite::main!(main);
 
 /// Start-up roles: this service's endpoint (with every right, so it can mint capabilities from
-/// it) and the device manager's `pbr.devices`.
+/// it), the start-up archive (for the filesystem servers' programs) and the device manager's
+/// `pbr.devices`.
 const OWN: u32 = role::OWN;
 const DEVICES: u32 = 1001;
+/// The roles a filesystem server gets its volume's `pbr.block` and its stop notification at
+/// (`services/rockfs`).
+const SERVER_BLOCK: u32 = 1003;
+const SERVER_STOP: u32 = 1004;
+/// The bit that asks a server to unmount (`pbr_fsserve::serve::STOP`).
+const STOP_BIT: u64 = 1;
 
 /// The badge of the capability for `pbr.storage`, which the root program mints from this
 /// service's endpoint.
@@ -53,6 +74,21 @@ pub const ADMIN: u64 = 1;
 pub const DEBUG: u64 = 2;
 /// A volume's `pbr.block` capability carries this plus the volume's number.
 pub const VOLUME_BASE: u64 = 0x1000_0000;
+/// The `pbr.fs.host` capability of the server for a volume carries this plus its number.
+pub const HOST_BASE: u64 = 0x2000_0000;
+/// Volume numbers stay below this, so the badge ranges don't overlap.
+const MAX_VOLUME: u64 = 0x1000_0000;
+
+/// The volume number in a badge from the range starting at `base`.
+fn in_range(badge: u64, base: u64) -> Option<u32> {
+    let id = badge.checked_sub(base)?;
+    (id > 0 && id < MAX_VOLUME).then_some(id as u32)
+}
+
+/// Each filesystem server's budget.
+const SERVER_BUDGET: u64 = 8 * 1024 * 1024;
+/// How long servers have to save their volumes when shutting down.
+const SHUTDOWN_MS: u64 = 30_000;
 
 /// The cache's size: 16 MiB in M5, while the QEMU tests run with 512 MiB (note 0015).
 const CACHE_PAGES: usize = 4096;
@@ -75,6 +111,30 @@ struct Volume {
     label: String,
     read_only: bool,
     in_memory: bool,
+    /// Its filesystem server, while one runs.
+    server: Option<Server>,
+}
+
+/// A filesystem server this service started.
+struct Server {
+    spawned: Spawned,
+    /// Signalled to have it unmount.
+    stop: Notification,
+    /// The volume's root folder, once the server has said it is ready.
+    root: Option<Endpoint>,
+    /// Its `pbr.fs.control`. This service doesn't call it (it must never wait for a server),
+    /// but keeps it: it is the server's, and tests may ask for its records through it later.
+    _control: Option<Endpoint>,
+    /// Asked to unmount.
+    unmounting: bool,
+}
+
+/// A `shutdown` waiting for servers to finish saving.
+struct ShuttingDown {
+    reply: storage::shutdown::Reply,
+    deadline: u64,
+    /// A server didn't save its volume.
+    failed: bool,
 }
 
 /// Everything the service keeps.
@@ -85,6 +145,9 @@ struct Storage {
     endpoint: Endpoint,
     shut_down: bool,
     next_id: u32,
+    /// The RockFS server's program, from the start-up archive.
+    rockfs: Option<Vec<u8>>,
+    shutting_down: Option<ShuttingDown>,
 }
 
 fn main(mut start: granite::Start) -> i32 {
@@ -108,14 +171,52 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         endpoint,
         shut_down: false,
         next_id: 1,
+        rockfs: start.take(role::ARCHIVE).and_then(|h| program(Memory(h), "rockfs")),
+        shutting_down: None,
     };
+    if s.rockfs.is_none() {
+        granite::println!(
+            "storage: no RockFS server in the start-up archive; volumes won't be served."
+        );
+    }
     s.disks.find();
     let ids: Vec<u32> = s.disks.real.keys().copied().collect();
     for id in ids {
         s.scan(id);
     }
+    let ids: Vec<u32> = s.volumes.iter().map(|v| v.id).collect();
+    for id in ids {
+        s.start_server(id, None);
+    }
     serve(&mut s, selftest);
     Ok(())
+}
+
+/// How a server ended: its exit status, or `None` if it was stopped or crashed. Its `pbr.fs.host`
+/// capability goes as its handles are closed, which can be just before it has finished ending,
+/// so this waits (briefly) for that.
+fn exit_status(s: &Spawned) -> Option<u64> {
+    let state = || s.process.info().map(|i| i.state).ok();
+    if matches!(state(), Some(State::Running | State::Ending)) {
+        // `watch` signals the notification when the process has ended.
+        let n = Notification::create().ok()?;
+        s.process.watch(&n, 1).ok()?;
+        let _ = n.wait(time::after_ms(2_000));
+    }
+    match state() {
+        Some(State::Exited(n)) => Some(n),
+        _ => None,
+    }
+}
+
+/// A copy of the program called `name` in the start-up archive. (It is copied so the archive
+/// can be unmapped; a program is a few hundred kilobytes.)
+fn program(archive: Memory, name: &str) -> Option<Vec<u8>> {
+    let mapping = archive.map(perm::READ).ok()?;
+    // SAFETY: the mapping is readable for its whole length while `mapping` lives, which is
+    // longer than `bytes` is used, and nothing writes to it.
+    let bytes = unsafe { core::slice::from_raw_parts(mapping.as_ptr(), mapping.len() as usize) };
+    Some(Archive::parse(bytes).ok()?.find(name)?.data.to_vec())
 }
 
 impl Storage {
@@ -173,7 +274,8 @@ impl Storage {
             // `lib/partition` only reports volumes on the disk, so this can't happen.
             granite::println!("storage: volume {id} doesn't fit on disk {disk}");
         }
-        // Filesystem servers arrive in stages 3 to 5: until then nothing is served.
+        // Until a server starts for it (`start_server`), a volume isn't served: RockFS volumes
+        // get one at start-up, empty ones when formatted, FAT32 ones from stage 5.
         let state = VolumeState::Unsupported;
         granite::println!(
             "storage: volume {id}: disk {disk} partition {partition}, {} KiB, {filesystem:?} \"{label}\".",
@@ -190,8 +292,138 @@ impl Storage {
             label,
             read_only,
             in_memory,
+            server: None,
         });
         id
+    }
+
+    fn volume_mut(&mut self, id: u32) -> Option<&mut Volume> {
+        self.volumes.iter_mut().find(|v| v.id == id)
+    }
+
+    /// Starts a filesystem server for volume `id` if it holds RockFS, or, with `format`, puts a
+    /// new RockFS volume labelled `format` on it first. The server gets three capabilities: an
+    /// endpoint of its own; the volume's `pbr.block`; and `pbr.fs.host` here, under a *watched*
+    /// badge (note 0013), so that when the server ends for any reason this service hears of it.
+    fn start_server(&mut self, id: u32, format: Option<&str>) {
+        let Some(program) = self.rockfs.as_deref() else { return };
+        let Some(v) = self.volume(id) else { return };
+        if v.server.is_some() || (format.is_none() && v.filesystem != Filesystem::RockFs) {
+            return;
+        }
+        let read_only = v.read_only;
+        let args = match format {
+            Some(label) => alloc::format!("volume {id} format {label}"),
+            None if read_only => alloc::format!("volume {id} readonly"),
+            None => alloc::format!("volume {id}"),
+        };
+        let stop = match Notification::create() {
+            Ok(n) => n,
+            Err(e) => {
+                granite::println!("storage: volume {id}: can't start its server: {e}");
+                return;
+            }
+        };
+        let caps = (|| {
+            let own = Endpoint::create()?;
+            // (A capability can only be given to another process if it carries the right to be
+            // transferred; the server's copy then has only SEND.)
+            let host = self
+                .endpoint
+                .mint_watched(HOST_BASE + u64::from(id), rights::SEND | rights::TRANSFER)?;
+            let block = self.volume_cap(id)?;
+            Ok::<_, granite::Error>([
+                (role::OWN, own.0.into_raw(), rights::ALL, true),
+                (role::PARENT, host.0.into_raw(), rights::SEND, true),
+                (SERVER_BLOCK, block.0.into_raw(), rights::SEND | rights::TRANSFER, true),
+                (SERVER_STOP, stop.0.raw(), rights::ALL, false),
+            ])
+        })();
+        // A *tied* process (note 0013) is stopped if this service ends: no server outlives
+        // the service whose cache its volume goes through.
+        let started = caps.map_err(|e| alloc::format!("{e}")).and_then(|caps| {
+            process::spawn(&Spawn {
+                name: "rockfs",
+                program,
+                budget: SERVER_BUDGET,
+                priority: 2,
+                caps: &caps,
+                log: true,
+                args: &args,
+                tied: true,
+                file_tree: &[],
+            })
+            .map_err(|e| alloc::format!("{e}"))
+        });
+        let Some(v) = self.volume_mut(id) else { return };
+        match started {
+            Ok(spawned) => {
+                v.state = VolumeState::Starting;
+                v.server =
+                    Some(Server { spawned, stop, root: None, _control: None, unmounting: false });
+            }
+            Err(e) => {
+                granite::println!("storage: volume {id}: can't start its server: {e}");
+                v.state = VolumeState::Failed;
+            }
+        }
+    }
+
+    /// Volume `id`'s server has ended (its `pbr.fs.host` capability went).
+    fn server_gone(&mut self, id: u32) {
+        let Some(v) = self.volume_mut(id) else { return };
+        let Some(server) = v.server.take() else { return };
+        let status = exit_status(&server.spawned);
+        // A server that never mounted its volume (it said it couldn't) had nothing to save.
+        let served = server.root.is_some();
+        let saved = !served || (server.unmounting && status == Some(0));
+        if server.unmounting && served {
+            if saved {
+                granite::println!("storage: volume {id} saved and unmounted.");
+            } else {
+                let state = server.spawned.process.info().map(|i| i.state);
+                granite::println!("storage: volume {id} wasn't saved cleanly ({state:?}).");
+            }
+        } else if v.state != VolumeState::Damaged && v.state != VolumeState::Unsupported {
+            granite::println!("storage: volume {id}'s server stopped ({status:?}).");
+            v.state = VolumeState::Failed;
+        }
+        if !saved && let Some(sd) = &mut self.shutting_down {
+            sd.failed = true;
+        }
+    }
+
+    /// Asks every server to unmount, without waiting: each saves its volume, marks it clean
+    /// and exits, which this service hears of as its `pbr.fs.host` capability going. (A server
+    /// still starting sees the signal once it serves, and unmounts then.)
+    fn unmount_all(&mut self) {
+        for v in &mut self.volumes {
+            let Some(server) = &mut v.server else { continue };
+            if !server.unmounting {
+                if let Err(e) = server.stop.signal(STOP_BIT) {
+                    granite::println!("storage: volume {}: can't ask it to unmount: {e}", v.id);
+                }
+                server.unmounting = true;
+            }
+        }
+    }
+
+    /// Finishes a `shutdown` once every server has gone, or its time is up.
+    fn finish_shutdown(&mut self) {
+        let Some(sd) = &self.shutting_down else { return };
+        let waiting = self.volumes.iter().filter(|v| v.server.is_some()).count();
+        if waiting > 0 && time::now() < sd.deadline {
+            return;
+        }
+        let Some(sd) = self.shutting_down.take() else { return };
+        let flushed = self.cache.flush_all(&mut self.disks);
+        self.shut_down = true;
+        let ok = waiting == 0 && !sd.failed && flushed.is_ok();
+        granite::println!(
+            "storage: shut down{}.",
+            if ok { "" } else { ", but not every volume was saved" }
+        );
+        answered(if ok { sd.reply.ok() } else { sd.reply.err(StorageError::DiskError) })
     }
 
     fn volume(&self, id: u32) -> Option<&Volume> {
@@ -222,29 +454,38 @@ fn serve(s: &mut Storage, selftest: bool) {
     let mut next_tick = time::after_ms(TICK_MS);
     granite::println!("storage: serving {} volumes.", s.volumes.len());
     loop {
-        match ep.receive(&mut buffer, next_tick) {
+        let wake = s.shutting_down.as_ref().map_or(next_tick, |sd| next_tick.min(sd.deadline));
+        match ep.receive(&mut buffer, wake) {
             Ok(Event::Call(msg, reply)) => {
                 let badge = msg.badge;
-                let unknown = match badge {
-                    ADMIN => storage::dispatch(&mut Admin(s), msg, &buffer, reply),
-                    DEBUG if selftest => debug::dispatch(&mut Debug(s), msg, &buffer, reply),
-                    b if b > VOLUME_BASE && b - VOLUME_BASE <= u64::from(u32::MAX) => {
-                        let id = (b - VOLUME_BASE) as u32;
-                        block::dispatch(&mut Block { s, id }, msg, &buffer, reply)
-                    }
-                    _ => Some((msg, reply)),
+                let unknown = if badge == ADMIN {
+                    storage::dispatch(&mut Admin(s), msg, &buffer, reply)
+                } else if badge == DEBUG && selftest {
+                    debug::dispatch(&mut Debug(s), msg, &buffer, reply)
+                } else if let Some(id) = in_range(badge, VOLUME_BASE) {
+                    block::dispatch(&mut Block { s, id }, msg, &buffer, reply)
+                } else if let Some(id) = in_range(badge, HOST_BASE) {
+                    host::dispatch(&mut Host { s, id }, msg, &buffer, reply)
+                } else {
+                    Some((msg, reply))
                 };
                 if let Some((_, reply)) = unknown {
                     granite::interface::unknown(reply);
                 }
             }
-            Ok(Event::Signal(_) | Event::Gone(_)) => {}
+            Ok(Event::Gone(badge)) => {
+                if let Some(id) = in_range(badge, HOST_BASE) {
+                    s.server_gone(id);
+                }
+            }
+            Ok(Event::Signal(_)) => {}
             Err(granite::Error::TimedOut) => {}
             Err(e) => {
                 granite::println!("storage: receive failed: {e}");
                 time::sleep_ms(10);
             }
         }
+        s.finish_shutdown();
         if time::now() >= next_tick {
             if !s.shut_down {
                 s.cache.write_back_older(&mut s.disks, now_ms().saturating_sub(WRITE_BACK_MS));
@@ -419,12 +660,27 @@ impl storage::Server for Admin<'_> {
         answered(reply.ok(&list))
     }
 
+    /// A copy of the volume's root folder capability. The copy has the rights the server gave
+    /// the original, which are every right a folder capability has.
     fn open(&mut self, id: u32, reply: storage::open::Reply) {
-        // Volumes are opened through their filesystem servers, from stage 3.
-        answered(match self.0.volume(id) {
-            None => reply.err(StorageError::NoSuchVolume),
-            Some(_) if self.0.shut_down => reply.err(StorageError::ShutDown),
-            Some(_) => reply.err(StorageError::Unsupported),
+        let s = &*self.0;
+        let r = match s.volume(id) {
+            None => Err(StorageError::NoSuchVolume),
+            Some(_) if s.shut_down || s.shutting_down.is_some() => Err(StorageError::ShutDown),
+            Some(v) => match (&v.server, v.state) {
+                (Some(Server { root: Some(root), .. }), VolumeState::Ready) => root
+                    .0
+                    .duplicate(rights::SEND | rights::TRANSFER | rights::DUPLICATE | rights::REVOKE)
+                    .map(Endpoint)
+                    .map_err(|_| StorageError::NoMemory),
+                (_, VolumeState::Starting) => Err(StorageError::NotReady),
+                (_, VolumeState::Failed) => Err(StorageError::DiskError),
+                _ => Err(StorageError::Unsupported),
+            },
+        };
+        answered(match r {
+            Ok(root) => reply.ok(root.0),
+            Err(e) => reply.err(e),
         })
     }
 
@@ -443,9 +699,13 @@ impl storage::Server for Admin<'_> {
         } else {
             match s.disks.add_ram(size) {
                 Some(disk) => {
-                    // Formatted as RockFS once the RockFS server exists (stage 4).
+                    // Its server formats it as RockFS, then serves it: `open` works once
+                    // it is ready.
                     let sectors = size / SECTOR as u64;
-                    Ok(s.add_volume(disk, 0, 0, sectors, Filesystem::Empty, label, false))
+                    let id =
+                        s.add_volume(disk, 0, 0, sectors, Filesystem::Empty, label.clone(), false);
+                    s.start_server(id, Some(&label));
+                    Ok(id)
                 }
                 None => Err(StorageError::NoMemory),
             }
@@ -456,25 +716,126 @@ impl storage::Server for Admin<'_> {
         })
     }
 
-    fn format(&mut self, id: u32, _label: String, reply: storage::format::Reply) {
-        // Needs RockFS's formatting: stage 4.
-        answered(match self.0.volume(id) {
-            None => reply.err(StorageError::NoSuchVolume),
-            Some(v) if v.filesystem != Filesystem::Empty => reply.err(StorageError::NotEmpty),
-            Some(_) => reply.err(StorageError::Unsupported),
+    /// Formats an empty volume as RockFS. An empty whole disk first gets an MBR with one
+    /// partition from 1 MiB to the end, as 1.3 does, so the two systems lay disks out alike;
+    /// the volume's number then changes (the partition is a new volume). The server formats
+    /// and then serves it: `list` says when it is ready.
+    fn format(&mut self, id: u32, label: String, reply: storage::format::Reply) {
+        answered(match format(self.0, id, &label) {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.err(e),
         })
     }
 
     fn shutdown(&mut self, reply: storage::shutdown::Reply) {
         let s = &mut *self.0;
-        // From stage 3, each filesystem server is unmounted first.
-        let r = s.cache.flush_all(&mut s.disks);
-        s.shut_down = true;
-        granite::println!("storage: shut down{}.", if r.is_ok() { "" } else { ", with errors" });
-        answered(match r {
-            Ok(()) => reply.ok(),
-            Err(_) => reply.err(StorageError::DiskError),
-        })
+        if s.shut_down {
+            return answered(reply.ok());
+        }
+        if s.shutting_down.is_some() {
+            return answered(reply.err(StorageError::NotReady));
+        }
+        // Answered later, by `finish_shutdown`, once every server has saved its volume.
+        s.shutting_down =
+            Some(ShuttingDown { reply, deadline: time::after_ms(SHUTDOWN_MS), failed: false });
+        s.unmount_all();
+    }
+}
+
+/// `format`'s work (see [`Admin::format`]).
+fn format(s: &mut Storage, id: u32, label: &str) -> Result<(), StorageError> {
+    if s.shut_down || s.shutting_down.is_some() {
+        return Err(StorageError::ShutDown);
+    }
+    if label.is_empty() || label.len() > 63 {
+        return Err(StorageError::BadArgument);
+    }
+    let v = s.volume(id).ok_or(StorageError::NoSuchVolume)?;
+    if v.filesystem != Filesystem::Empty || v.server.is_some() {
+        return Err(StorageError::NotEmpty);
+    }
+    if v.read_only {
+        return Err(StorageError::Unsupported);
+    }
+    if v.partition != 0 || v.in_memory {
+        // A partition (or a disk in memory): formatted where it is.
+        s.start_server(id, Some(label));
+        return Ok(());
+    }
+    // A whole disk: the MBR, written through the cache as the whole-disk volume, then the
+    // disk scanned again, which finds the new partition.
+    let (disk, sectors) = (v.disk, v.sectors);
+    if sectors < 2048 + 512 {
+        return Err(StorageError::BadArgument);
+    }
+    let count = (sectors - 2048).min(u64::from(u32::MAX)) as u32;
+    let mut mbr = vec![0u8; SECTOR];
+    let p = &mut mbr[446..462];
+    p[1..4].fill(0xFF); // a CHS address meaning "use the LBA fields", as 1.3 writes it
+    p[4] = 0x7F; // RockFS's partition type
+    p[5..8].fill(0xFF);
+    p[8..12].copy_from_slice(&2048u32.to_le_bytes());
+    p[12..16].copy_from_slice(&count.to_le_bytes());
+    mbr[440..444].copy_from_slice(&(time::now() as u32).to_le_bytes()); // the disk signature
+    mbr[510] = 0x55;
+    mbr[511] = 0xAA;
+    s.cache.write(&mut s.disks, id, 0, &mbr, now_ms()).map_err(|_| StorageError::DiskError)?;
+    s.cache.flush(&mut s.disks, id).map_err(|_| StorageError::DiskError)?;
+    s.volumes.retain(|v| v.disk != disk);
+    s.scan(disk);
+    let new = s
+        .volumes
+        .iter()
+        .find(|v| v.disk == disk && v.partition == 1 && v.filesystem == Filesystem::Empty)
+        .map(|v| v.id)
+        .ok_or(StorageError::DiskError)?;
+    s.start_server(new, Some(label));
+    Ok(())
+}
+
+// ------------------------------------------------------------------------------------------
+// `pbr.fs.host`
+
+/// What volume `id`'s filesystem server says.
+struct Host<'a> {
+    s: &'a mut Storage,
+    id: u32,
+}
+
+impl host::Server for Host<'_> {
+    fn ready(
+        &mut self,
+        root: Endpoint,
+        control: Endpoint,
+        label: String,
+        reply: host::ready::Reply,
+    ) {
+        let Some(v) = self.s.volume_mut(self.id) else {
+            return answered(reply.err(HostError::BadState));
+        };
+        let Some(server) = v.server.as_mut().filter(|s| s.root.is_none()) else {
+            return answered(reply.err(HostError::BadState));
+        };
+        server.root = Some(root);
+        server._control = Some(control);
+        v.state = VolumeState::Ready;
+        v.filesystem = Filesystem::RockFs;
+        v.label = label;
+        granite::println!("storage: volume {} is ready: RockFS \"{}\".", v.id, v.label);
+        answered(reply.ok());
+    }
+
+    fn failed(&mut self, reason: FsFailure, reply: host::failed::Reply) {
+        let Some(v) = self.s.volume_mut(self.id) else {
+            return answered(reply.err(HostError::BadState));
+        };
+        v.state = match reason {
+            FsFailure::Damaged => VolumeState::Damaged,
+            FsFailure::Unsupported => VolumeState::Unsupported,
+            _ => VolumeState::Failed,
+        };
+        granite::println!("storage: volume {} can't be served: {reason:?}.", v.id);
+        answered(reply.ok())
     }
 }
 
