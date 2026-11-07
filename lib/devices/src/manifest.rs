@@ -5,16 +5,20 @@
 //! what it drives and what it needs, and the rule for choosing a driver for a device.
 //!
 //! A manifest is one `key value…` per line, ASCII, at most [`MAX_SIZE`] bytes, `#` starting a
-//! comment. Anything unexpected is an error and the driver is skipped: unknown keys, repeated
-//! keys (except `match`), bad or oversized numbers, over-long lines.
+//! comment. The lines are read by the reader app manifests use too (`pbr_manifest::lines`,
+//! note 0017, section 4). Anything unexpected is an error and the driver is skipped: unknown
+//! keys, repeated keys (except `match`), bad or oversized numbers, over-long lines.
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use pbr_manifest::lines::{Limits, ReadError};
 
 /// The largest manifest.
 pub const MAX_SIZE: usize = 1024;
 /// The longest line.
 pub const MAX_LINE: usize = 200;
+/// How the lines are read: ASCII only, no quoted words.
+const LIMITS: Limits = Limits { max_size: MAX_SIZE, max_line: MAX_LINE, quotes: false };
 /// The most `match` lines.
 pub const MAX_MATCHES: usize = 16;
 /// The longest `args` value.
@@ -173,27 +177,16 @@ fn parse_match(rest: &str) -> Result<Match, Error> {
 impl Manifest {
     /// Parses a manifest.
     pub fn parse(text: &[u8]) -> Result<Manifest, Error> {
-        if text.len() > MAX_SIZE {
-            return Err(Error::TooLong);
-        }
-        if !text.iter().all(|&b| b == b'\n' || b == b'\t' || (0x20..0x7F).contains(&b)) {
-            return Err(Error::NotText);
-        }
-        let text = core::str::from_utf8(text).map_err(|_| Error::NotText)?;
+        let lines = pbr_manifest::lines::read(text, LIMITS).map_err(|e| match e {
+            ReadError::TooLong => Error::TooLong,
+            ReadError::LineTooLong => Error::LineTooLong,
+            // (A broken quote can't happen: this format has none.)
+            ReadError::NotText | ReadError::BadQuote => Error::NotText,
+        })?;
         let (mut class, mut budget, mut dma, mut irqs, mut args) = (None, None, None, None, None);
         let mut matches = Vec::new();
-        for line in text.split('\n') {
-            if line.len() > MAX_LINE {
-                return Err(Error::LineTooLong);
-            }
-            let line = line.split('#').next().unwrap_or("").trim();
-            if line.is_empty() {
-                continue;
-            }
-            let (key, value) = match line.split_once(|c: char| c.is_ascii_whitespace()) {
-                Some((k, v)) => (k, v.trim()),
-                None => (line, ""),
-            };
+        for line in lines {
+            let (key, value) = (line.key, line.rest);
             if value.is_empty() {
                 // Every key needs a value (`dma 0` and `irqs 0` say "none").
                 return if matches!(key, "class" | "match" | "budget" | "dma" | "irqs" | "args") {
