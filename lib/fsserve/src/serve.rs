@@ -13,11 +13,12 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use granite::endpoint::{Endpoint, Event};
 use granite::interface::OutCap;
+use granite::notification::Notification;
 use granite::sys::rights;
 use granite::time;
 use pbr_fs::{Filesystem, Kind};
 use pbr_interfaces::pbr_file::{self as file, FileError, FileRights, NodeInfo, NodeKind, Space};
-use pbr_interfaces::pbr_fs_control::{self as control, ControlError};
+use pbr_interfaces::pbr_fs_control as control;
 use pbr_interfaces::pbr_fs_host as host;
 
 /// The badge of the control capability (`pbr.fs.control`), which only whoever started the
@@ -225,13 +226,12 @@ struct Control<'a, F: Filesystem> {
 }
 
 impl<F: Filesystem> control::Server for Control<'_, F> {
+    /// Answers at once, then (back in [`run`]) saves everything and stops. It has to be this
+    /// way round: saving writes to the volume through the storage service, which may be the
+    /// one asking, and it can't answer those writes while it waits for this answer.
     fn unmount(&mut self, reply: control::unmount::Reply) {
-        let r = self.core.unmount();
         self.stop = true;
-        answered(match r {
-            Ok(()) => reply.ok(),
-            Err(_) => reply.err(ControlError::Failed),
-        })
+        answered(reply.ok())
     }
 
     fn records(&mut self, reply: control::records::Reply) {
@@ -239,10 +239,32 @@ impl<F: Filesystem> control::Server for Control<'_, F> {
     }
 }
 
+/// The bit of the stop notification that asks the server to unmount.
+pub const STOP: u64 = 1;
+
 /// Serves `fs` on `endpoint` (with every right, so the server can mint from it) until it is
 /// unmounted, telling `parent` (`pbr.fs.host`) the root folder and the control capability
-/// first. Returns the exit status for the program.
-pub fn run<F: Filesystem>(fs: F, endpoint: Endpoint, parent: Endpoint, label: &str) -> i32 {
+/// first. Returns the exit status for the program: 0 if the volume was saved and marked clean
+/// when it was unmounted, 1 if not.
+///
+/// It is unmounted by `pbr.fs.control`'s `unmount`, or when [`STOP`] is signalled on `stop`.
+/// The storage service uses `stop`: signalling never waits, and the storage service must never
+/// wait for a server, since a server may at that moment be waiting for it (to write to its
+/// volume). `stop` is *bound* to the endpoint (note 0008), so its signals arrive in the same
+/// receive as calls.
+pub fn run<F: Filesystem>(
+    fs: F,
+    endpoint: Endpoint,
+    parent: Endpoint,
+    label: &str,
+    stop: Option<Notification>,
+) -> i32 {
+    if let Some(n) = &stop
+        && let Err(e) = endpoint.bind(n)
+    {
+        granite::println!("fs: can't bind the stop notification: {e}");
+        return 1;
+    }
     let mut core = Core::new(fs);
     let Ok(root) = core.root() else { return 1 };
     // The root's capability is the only one the server mints itself; everything else is
@@ -274,7 +296,7 @@ pub fn run<F: Filesystem>(fs: F, endpoint: Endpoint, parent: Endpoint, label: &s
                         granite::interface::unknown(r);
                     }
                     if c.stop {
-                        return 0;
+                        return unmount(&mut core);
                     }
                 } else if let Some((_, r)) =
                     file::dispatch(&mut Files { core: &mut core }, msg, &buffer, reply)
@@ -283,11 +305,23 @@ pub fn run<F: Filesystem>(fs: F, endpoint: Endpoint, parent: Endpoint, label: &s
                 }
             }
             Ok(Event::Gone(badge)) => core.gone(badge),
+            Ok(Event::Signal(bits)) if bits & STOP != 0 => return unmount(&mut core),
             Ok(Event::Signal(_)) => {}
             Err(e) => {
                 granite::println!("fs: receive failed: {e}");
                 time::sleep_ms(10);
             }
+        }
+    }
+}
+
+/// Saves everything and marks the volume clean: the exit status for the program.
+fn unmount<F: Filesystem>(core: &mut Core<F>) -> i32 {
+    match core.unmount() {
+        Ok(()) => 0,
+        Err(e) => {
+            granite::println!("fs: the volume couldn't be saved: {e:?}");
+            1
         }
     }
 }

@@ -25,5 +25,5 @@ fn main(mut start: granite::Start) -> i32 {
     };
     let mut fs = MemFs::new("Test");
     fs.clock = granite::time::wall_seconds;
-    pbr_fsserve::serve::run(fs, Endpoint(own), Endpoint(parent), "Test")
+    pbr_fsserve::serve::run(fs, Endpoint(own), Endpoint(parent), "Test", None)
 }
