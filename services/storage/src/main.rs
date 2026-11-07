@@ -16,7 +16,7 @@
 //! - [`HOST_BASE`] + a volume's number: `pbr.fs.host`, for the filesystem server it started
 //!   for that volume.
 //!
-//! It starts a filesystem server for each RockFS volume (note 0016, section 1), one per volume,
+//! It starts a filesystem server for each RockFS and FAT32 volume (note 0016, section 1), one per volume,
 //! each reaching only its own volume. The server says when the volume is ready, and from then
 //! `open` hands out copies of its root folder's capability.
 //!
@@ -61,7 +61,7 @@ granite::main!(main);
 const OWN: u32 = role::OWN;
 const DEVICES: u32 = 1001;
 /// The roles a filesystem server gets its volume's `pbr.block` and its stop notification at
-/// (`services/rockfs`).
+/// (`services/rockfs`, `services/fat`).
 const SERVER_BLOCK: u32 = 1003;
 const SERVER_STOP: u32 = 1004;
 /// The bit that asks a server to unmount (`pbr_fsserve::serve::STOP`).
@@ -145,8 +145,9 @@ struct Storage {
     endpoint: Endpoint,
     shut_down: bool,
     next_id: u32,
-    /// The RockFS server's program, from the start-up archive.
+    /// The filesystem servers' programs, from the start-up archive.
     rockfs: Option<Vec<u8>>,
+    fat: Option<Vec<u8>>,
     shutting_down: Option<ShuttingDown>,
 }
 
@@ -164,6 +165,10 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let selftest = start.args().split_whitespace().any(|w| w == "selftest");
     let endpoint = Endpoint(start.take(OWN).ok_or("started without an endpoint to serve")?);
     let devices = Endpoint(start.take(DEVICES).ok_or("started without the device manager")?);
+    let [rockfs, fat] = match start.take(role::ARCHIVE) {
+        Some(h) => programs(Memory(h), ["rockfs", "fat"]),
+        None => [None, None],
+    };
     let mut s = Storage {
         disks: Disks::new(devices::Client::new(devices)),
         cache: Cache::new(CACHE_PAGES),
@@ -171,13 +176,14 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         endpoint,
         shut_down: false,
         next_id: 1,
-        rockfs: start.take(role::ARCHIVE).and_then(|h| program(Memory(h), "rockfs")),
+        rockfs,
+        fat,
         shutting_down: None,
     };
-    if s.rockfs.is_none() {
-        granite::println!(
-            "storage: no RockFS server in the start-up archive; volumes won't be served."
-        );
+    for (name, p) in [("RockFS", &s.rockfs), ("FAT32", &s.fat)] {
+        if p.is_none() {
+            granite::println!("storage: no {name} server in the start-up archive.");
+        }
     }
     s.disks.find();
     let ids: Vec<u32> = s.disks.real.keys().copied().collect();
@@ -209,14 +215,16 @@ fn exit_status(s: &Spawned) -> Option<u64> {
     }
 }
 
-/// A copy of the program called `name` in the start-up archive. (It is copied so the archive
-/// can be unmapped; a program is a few hundred kilobytes.)
-fn program(archive: Memory, name: &str) -> Option<Vec<u8>> {
-    let mapping = archive.map(perm::READ).ok()?;
+/// Copies of the programs called `names` in the start-up archive. (They are copied so the
+/// archive can be unmapped.) `N` is a *const generic*: the function works for an array of any
+/// length, known when it is compiled.
+fn programs<const N: usize>(archive: Memory, names: [&str; N]) -> [Option<Vec<u8>>; N] {
+    let Ok(mapping) = archive.map(perm::READ) else { return [const { None }; N] };
     // SAFETY: the mapping is readable for its whole length while `mapping` lives, which is
     // longer than `bytes` is used, and nothing writes to it.
     let bytes = unsafe { core::slice::from_raw_parts(mapping.as_ptr(), mapping.len() as usize) };
-    Some(Archive::parse(bytes).ok()?.find(name)?.data.to_vec())
+    let Ok(archive) = Archive::parse(bytes) else { return [const { None }; N] };
+    names.map(|name| archive.find(name).map(|f| f.data.to_vec()))
 }
 
 impl Storage {
@@ -274,8 +282,8 @@ impl Storage {
             // `lib/partition` only reports volumes on the disk, so this can't happen.
             granite::println!("storage: volume {id} doesn't fit on disk {disk}");
         }
-        // Until a server starts for it (`start_server`), a volume isn't served: RockFS volumes
-        // get one at start-up, empty ones when formatted, FAT32 ones from stage 5.
+        // Until a server starts for it (`start_server`), a volume isn't served: RockFS and
+        // FAT32 volumes get one at start-up, empty ones when formatted.
         let state = VolumeState::Unsupported;
         granite::println!(
             "storage: volume {id}: disk {disk} partition {partition}, {} KiB, {filesystem:?} \"{label}\".",
@@ -301,16 +309,21 @@ impl Storage {
         self.volumes.iter_mut().find(|v| v.id == id)
     }
 
-    /// Starts a filesystem server for volume `id` if it holds RockFS, or, with `format`, puts a
-    /// new RockFS volume labelled `format` on it first. The server gets three capabilities: an
+    /// Starts a filesystem server for volume `id` if it holds RockFS or FAT32, or, with
+    /// `format`, puts a new RockFS volume labelled `format` on it first. The server gets three capabilities: an
     /// endpoint of its own; the volume's `pbr.block`; and `pbr.fs.host` here, under a *watched*
     /// badge (note 0013), so that when the server ends for any reason this service hears of it.
     fn start_server(&mut self, id: u32, format: Option<&str>) {
-        let Some(program) = self.rockfs.as_deref() else { return };
         let Some(v) = self.volume(id) else { return };
-        if v.server.is_some() || (format.is_none() && v.filesystem != Filesystem::RockFs) {
+        if v.server.is_some() {
             return;
         }
+        let (name, program) = match (format, v.filesystem) {
+            (Some(_), _) | (None, Filesystem::RockFs) => ("rockfs", self.rockfs.as_deref()),
+            (None, Filesystem::Fat32) => ("fat", self.fat.as_deref()),
+            _ => return,
+        };
+        let Some(program) = program else { return };
         let read_only = v.read_only;
         let args = match format {
             Some(label) => alloc::format!("volume {id} format {label}"),
@@ -343,7 +356,7 @@ impl Storage {
         // the service whose cache its volume goes through.
         let started = caps.map_err(|e| alloc::format!("{e}")).and_then(|caps| {
             process::spawn(&Spawn {
-                name: "rockfs",
+                name,
                 program,
                 budget: SERVER_BUDGET,
                 priority: 2,
@@ -819,9 +832,12 @@ impl host::Server for Host<'_> {
         server.root = Some(root);
         server._control = Some(control);
         v.state = VolumeState::Ready;
-        v.filesystem = Filesystem::RockFs;
+        // A volume just formatted held nothing before; now it holds RockFS.
+        if v.filesystem == Filesystem::Empty {
+            v.filesystem = Filesystem::RockFs;
+        }
         v.label = label;
-        granite::println!("storage: volume {} is ready: RockFS \"{}\".", v.id, v.label);
+        granite::println!("storage: volume {} is ready: {:?} \"{}\".", v.id, v.filesystem, v.label);
         answered(reply.ok());
     }
 

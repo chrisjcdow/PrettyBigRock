@@ -87,8 +87,8 @@ pub fn start(
     let mut admin = storage::Client::new(mint(ADMIN)?);
     let mut debug = storage_debug::Client::new(mint(DEBUG)?);
     // The service finds its disks before it answers, which can take a while.
-    admin.set_deadline(time::after_ms(60_000));
-    debug.set_deadline(time::after_ms(60_000));
+    admin.set_timeout_ms(60_000);
+    debug.set_timeout_ms(60_000);
     Ok(Storage { process, admin, debug })
 }
 
@@ -116,7 +116,7 @@ fn find<'a>(
 fn volume(s: &Storage, id: u32) -> Result<block::Client, String> {
     let ep = s.debug.volume(id).map_err(|e| format!("asking for volume {id}: {e}"))?;
     let mut c = block::Client::new(ep);
-    c.set_deadline(time::after_ms(60_000));
+    c.set_timeout_ms(60_000);
     Ok(c)
 }
 
@@ -167,14 +167,14 @@ fn ready(s: &Storage, ids: &[u32]) -> Result<(), String> {
 
 /// Opens volume `id` and checks its root folder works: the volume's label, and a file
 /// written and read back.
-fn use_volume(s: &Storage, id: u32, label: &str) -> Result<(), String> {
+fn use_volume(s: &Storage, id: u32, label: &str, filesystem: &str) -> Result<(), String> {
     let all = FileRights(FileRights::READ.0 | FileRights::WRITE.0);
     let mut root = file::Client::new(Endpoint(
         s.admin.open(id).map_err(|e| format!("opening volume {id}: {e}"))?,
     ));
-    root.set_deadline(time::after_ms(30_000));
+    root.set_timeout_ms(30_000);
     let space = root.space().map_err(|e| format!("volume {id}'s space: {e}"))?;
-    if space.label != label || space.filesystem != "RockFS" {
+    if space.label != label || space.filesystem != filesystem {
         return Err(format!("volume {id} says it is {space:?}"));
     }
     let f = root
@@ -197,7 +197,6 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
     let data_v = find(&list, Filesystem::RockFs, "Data", 1, 8 * MIB)?;
     let usb = find(&list, Filesystem::Fat32, "USB", 2, 34 * MIB)?;
     let home = find(&list, Filesystem::RockFs, "Home", 1, 4 * MIB)?;
-    find(&list, Filesystem::Fat32, "PICTURES", 2, 34 * MIB)?;
     let empty = find(&list, Filesystem::Empty, "", 0, 2 * MIB)?;
     let raw_v = find(&list, Filesystem::Empty, "", 3, 4 * MIB)?;
     if data_v.disk != usb.disk
@@ -266,7 +265,11 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
     }
 
     // Opening a volume gives its root folder, through its server.
-    use_volume(s, home.id, "Home")?;
+    use_volume(s, home.id, "Home", "RockFS")?;
+    // FAT32 volumes get their own servers too (the USB volume is tested in `fattest`).
+    let pictures = find(&list, Filesystem::Fat32, "PICTURES", 2, 34 * MIB)?;
+    ready(s, &[usb.id, pictures.id])?;
+    use_volume(s, pictures.id, "PICTURES", "FAT32")?;
 
     // A volume in memory: formatted as RockFS by its server, then served like any other.
     let tiny = s.admin.create_ram_volume(100 * 1024, "Tiny");
@@ -283,7 +286,7 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
     if ram.id != ram_id || !ram.in_memory {
         return Err(format!("the volume in memory is listed as {ram:?}"));
     }
-    use_volume(s, ram_id, "Scratch")?;
+    use_volume(s, ram_id, "Scratch", "RockFS")?;
     let r = volume(s, ram_id)?;
     if pbr_partition::rockfs_superblock(&read(&r, 0, 2)?).as_deref() != Some("Scratch") {
         return Err("the volume in memory doesn't start with its superblock".into());
@@ -304,7 +307,7 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
         return Err(format!("formatting left {list:?}"));
     }
     ready(s, &[formatted.id])?;
-    use_volume(s, formatted.id, "Formatted")?;
+    use_volume(s, formatted.id, "Formatted", "RockFS")?;
 
     // A disk driver crashing underneath: the volume's user sees nothing. Writing and flushing
     // reach the new driver, and reads of sectors never read before come from it.

@@ -692,6 +692,7 @@ fn qemu_test(root: &Path, img: &Path) -> Result {
         let _ = std::io::stdout().flush();
         match qemu::test(cfg, img, &work, BOOT_TEST_LIMIT)
             .and_then(|_| qemu::check_classic(cfg, &work, host.as_deref()))
+            .and_then(|_| qemu::check_fat(&work))
         {
             Ok(_) => println!("ok"),
             Err(e) => {

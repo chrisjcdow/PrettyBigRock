@@ -209,6 +209,29 @@ pub fn check_classic(cfg: &Config, work: &Path, rfs_host: Option<&Path>) -> Resu
     }
 }
 
+/// After a boot: the MBR test disk's FAT32 volume must pass `fsck.fat -n` and read back what
+/// the self-test wrote, as `tools/check_fat_after.py` checks with `mtools`.
+pub fn check_fat(work: &Path) -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (start, sectors) = crate::testdisks::MBR_FAT;
+    let out = Command::new("python3")
+        .arg(root.join("tools/check_fat_after.py"))
+        .arg(work.join(crate::testdisks::MBR_DISK))
+        .arg(start.to_string())
+        .arg(sectors.to_string())
+        .output()
+        .map_err(|e| format!("couldn't run python3: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the FAT32 test volume, after the boot:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
 /// The QEMU command for a configuration, with the firmware found on this computer.
 fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     let drive = format!("format=raw,file={},snapshot=on", image.display());
@@ -269,9 +292,12 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
         .arg(format!("if=none,id=testdisk,format=raw,file={},snapshot=on", disk.display()));
     cmd.args(["-device", "virtio-blk-pci,drive=testdisk"]);
     // The storage service's test disks (note 0018, section 7, test 2).
+    // The MBR disk is attached writable, so its FAT32 volume can be checked after the boot
+    // ([`check_fat`]); `make` remakes it for each boot.
     for (i, disk) in crate::testdisks::make(work)?.iter().enumerate() {
+        let snapshot = if disk.ends_with(crate::testdisks::MBR_DISK) { "" } else { ",snapshot=on" };
         cmd.arg("-drive")
-            .arg(format!("if=none,id=storage{i},format=raw,file={},snapshot=on", disk.display()));
+            .arg(format!("if=none,id=storage{i},format=raw,file={}{snapshot}", disk.display()));
         cmd.arg("-device").arg(format!("virtio-blk-pci,drive=storage{i}"));
     }
     let classic = classic_copy(cfg, work)?;

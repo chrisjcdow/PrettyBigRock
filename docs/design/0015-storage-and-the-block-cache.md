@@ -280,3 +280,5 @@ later change inside the service.
     disk again, so the new partition is a new volume;
   - the storage self-test's raw writes go to a partition no server uses (the test disks gained
     one), since writing under a mounted filesystem would damage it.
+- 7 November 2026, M5 stage 5: the storage service starts a `fat` server (`services/fat`, the
+  same roles) for each FAT32 volume.

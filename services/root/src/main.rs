@@ -16,6 +16,7 @@ mod classictest;
 mod crashtest;
 mod devtest;
 mod drivertest;
+mod fattest;
 mod filestest;
 mod kernel12;
 mod selftest;

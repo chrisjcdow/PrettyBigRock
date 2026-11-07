@@ -121,6 +121,12 @@ fn all(
     }
     step("storage", st.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("storage (partitions, volumes, the block cache, RockFS servers)");
+    let fat = crate::fattest::run(&storage.admin);
+    if let Ok(summary) = &fat {
+        granite::println!("FAT32 self-test passed: {summary}");
+    }
+    step("FAT32", fat.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("FAT32");
     let classic = crate::classictest::run(&storage.admin);
     if let Ok(summary) = &classic {
         granite::println!("The disk 1.3 made: {summary}");
