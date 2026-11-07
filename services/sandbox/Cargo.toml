@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-sandbox"
+description = "A session's sandbox manager: launches apps with only what they are granted (note 0017)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sandbox"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-archive = { path = "../../lib/archive" }
+pbr-files = { path = "../../lib/files" }
+pbr-filetree = { path = "../../lib/filetree" }
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-manifest = { path = "../../lib/manifest" }
+
+[lints]
+workspace = true
