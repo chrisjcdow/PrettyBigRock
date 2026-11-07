@@ -127,6 +127,12 @@ fn all(
     }
     step("FAT32", fat.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("FAT32");
+    let sandboxes = crate::sandboxtest::run(archive, archive_mem, &storage);
+    if let Ok(summary) = &sandboxes {
+        granite::println!("Sandbox self-test passed: {summary}");
+    }
+    step("users and sandboxes", sandboxes.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("users and sandboxed apps");
     let classic = crate::classictest::run(&storage.admin);
     if let Ok(summary) = &classic {
         granite::println!("The disk 1.3 made: {summary}");

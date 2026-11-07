@@ -19,6 +19,7 @@ mod drivertest;
 mod fattest;
 mod filestest;
 mod kernel12;
+mod sandboxtest;
 mod selftest;
 mod storagetest;
 
@@ -72,6 +73,17 @@ fn main(mut start: granite::Start) -> i32 {
             Ok(s) => Some(s),
             Err(e) => {
                 granite::println!("The root program can't start the storage service: {e}");
+                None
+            }
+        }
+    });
+    // The users service, with the storage service's `pbr.storage`: it finds the system
+    // volume and logs the first administrator in (note 0017).
+    let _users = _storage.as_ref().and_then(|s| {
+        match sandboxtest::start(&archive, archive_mem.0.raw(), s, "") {
+            Ok(u) => Some(u),
+            Err(e) => {
+                granite::println!("The root program can't start the users service: {e}");
                 None
             }
         }

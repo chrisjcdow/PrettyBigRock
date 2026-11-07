@@ -159,8 +159,9 @@ const BIOS_TARGET: &str = "x86_64-unknown-none";
 /// Where the kernel is linked (see kernel/src/arch/*/linker.ld).
 const KERNEL_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 
-/// How long a boot test may take. Emulating ARM on a PC is slow, so this is generous.
-const BOOT_TEST_LIMIT: Duration = Duration::from_secs(300);
+/// How long a boot test may take. Emulating ARM on a PC is slow, so this is generous: with M5's
+/// users and sandbox test, ARM's self-test takes about 330 seconds on a 2-CPU machine.
+const BOOT_TEST_LIMIT: Duration = Duration::from_secs(600);
 
 type Result<T = ()> = std::result::Result<T, String>;
 
