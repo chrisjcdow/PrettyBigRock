@@ -412,3 +412,15 @@ disks made by 1.3, including writing and reading back.
   left an empty file in `/Fill` that no folder named (harmless, and repaired by every check);
   the cause in 1.3 wasn't found, and the disk kept checks clean. Next: stage 4b, the RockFS
   server and the boot test with this disk.
+- **Stage 4b, the RockFS server** (Opus). `services/rockfs` joins `lib/rockfs` to
+  `lib/fsserve`; the storage service now starts one for every RockFS volume, formats volumes in
+  memory and empty disks (1.3's MBR layout), hands out root folders with `open`, and shuts down
+  by having every server save its volume. The boot tests found two real bugs on the way: a
+  deadline set once and used much later (deadlines are moments, not lengths), and a deadlock,
+  with the storage service waiting for a server's answer while that server waited to write
+  through it. The fix is a rule: the storage service never waits for a server; it signals a
+  stop notification bound to the server's endpoint and carries on serving. The boot tests
+  attach a fresh, writable copy of the disk 1.3 made: the root program finds every one of its
+  35 folders and files exactly as 1.3 left them, changes six things, and shuts down; afterwards
+  `rockfs.py` and 1.3's own code both find the disk clean, holding exactly what was expected.
+  That is M5's second "done when". Next: stage 5, FAT32 (Sonnet).

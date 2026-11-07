@@ -236,3 +236,10 @@ filesystems line by line against the specification before they go in.
     drawing saved from Paint into a fragmented volume (28 extents, a one-level tree), after a
     restart, because 1.3 allocates "next fit". The cross-checks read the disk with Rust,
     write to it, and hand it back to Python and C; the boot test with it is stage 4b.
+- 7 November 2026, built (M5 stage 4b): `services/rockfs`, the server (arguments
+  `volume ID`, then `readonly` or `format LABEL`); `lib/fsserve`'s `run` also takes a stop
+  notification. The boot tests attach a fresh, writable copy of the disk 1.3 made; the root
+  program compares all 35 folders and files with the manifest, makes six changes (a new folder,
+  a 300 KB file, an addition, a rename, a move, a removal) and shuts the storage service down.
+  The runner then checks the disk with `tools/check_classic_after.py`: `rockfs.py` and 1.3's own
+  code find it clean and holding exactly what was expected.

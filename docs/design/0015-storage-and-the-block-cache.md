@@ -259,3 +259,24 @@ later change inside the service.
     manager's endpoint at start-up role 1001.
 - 2 November 2026, M5 stage 3: `pbr.fs.host`'s `ready` also carries the control capability,
   and `pbr.fs.control` gained `records`.
+- 7 November 2026, M5 stage 4b, built with the RockFS server:
+  - the storage service starts the filesystem servers itself: the root program gives it the
+    start-up archive (role 4), and it starts a `rockfs` server for every RockFS volume it
+    finds, and for volumes it formats. Each server is a *tied* child with an 8 MiB budget paid
+    from the storage service's (now 128 MiB); its roles are its endpoint, `pbr.fs.host` here
+    (badge `0x2000_0000` + the volume's id, *watched*, so the service hears when the server
+    ends), the volume's `pbr.block` (1003) and a stop notification (1004);
+  - **the storage service never waits for a server.** A server writes through it, so a call
+    from the service to a server can deadlock: the boot tests found exactly that, a server
+    saving files just closed while the service waited for it to answer `unmount`. So
+    `shutdown` signals each server's stop notification (bound to the server's endpoint),
+    keeps serving their writes, and answers once every server has exited (with `DiskError`
+    if one didn't exit with status 0 within 30 seconds). `pbr.fs.control`'s `unmount` stays
+    for other callers;
+  - `open` duplicates the root folder capability from `ready`, with the rights the server
+    gave it; it answers `NotReady` while the server starts;
+  - volumes in memory and `format` are formatted by the server (its arguments say
+    `format LABEL`); `format` of an empty whole disk writes 1.3's MBR first and scans the
+    disk again, so the new partition is a new volume;
+  - the storage self-test's raw writes go to a partition no server uses (the test disks gained
+    one), since writing under a mounted filesystem would damage it.
