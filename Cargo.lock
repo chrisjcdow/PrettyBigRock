@@ -50,6 +50,9 @@ version = "0.0.0"
 [[package]]
 name = "pbr-devices"
 version = "0.0.0"
+dependencies = [
+ "pbr-manifest",
+]
 
 [[package]]
 name = "pbr-devmgr"
@@ -202,6 +205,13 @@ dependencies = [
  "pbr-elf",
  "pbr-platform",
  "pbr-ranges",
+]
+
+[[package]]
+name = "pbr-manifest"
+version = "0.0.0"
+dependencies = [
+ "pbr-filetree",
 ]
 
 [[package]]

@@ -33,6 +33,7 @@ members = [
     "lib/granite",
     "lib/interface-compiler",
     "lib/interfaces",
+    "lib/manifest",
     "lib/partition",
     "lib/platform",
     "lib/ranges",

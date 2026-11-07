@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-manifest"
+description = "Plain-text manifests, users and rules, and what an app is granted (note 0017)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pbr-filetree = { path = "../filetree" }
+
+[lints]
+workspace = true

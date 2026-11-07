@@ -134,6 +134,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-granite",
     "pbr-interface-compiler",
     "pbr-interfaces",
+    "pbr-manifest",
     "pbr-partition",
     "pbr-platform",
     "pbr-ranges",
