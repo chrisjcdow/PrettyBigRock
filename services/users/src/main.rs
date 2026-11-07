@@ -66,11 +66,11 @@ const SESSION_BASE: u64 = 0x100;
 const SANDBOX_USERS: u32 = 1001;
 const SANDBOX_SESSION: u64 = 1;
 /// A session's budget: the sandbox manager and every app it starts are paid from it.
-const SESSION_BUDGET: u64 = 48 << 20;
+const SESSION_BUDGET: u64 = 16 << 20;
 /// Sandbox managers run at the priority of services.
 const SESSION_PRIORITY: u8 = 2;
 /// The volume in memory used when there is no system volume.
-const RAM_VOLUME: u64 = 16 << 20;
+const RAM_VOLUME: u64 = 8 << 20;
 /// The label of a volume `setup` has to format first.
 const NEW_LABEL: &str = "PrettyBigRock";
 /// A capability that can be passed on: what clients are given.
@@ -142,6 +142,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let ended = Notification::create().map_err(|e| format!("a notification: {e}"))?;
     endpoint.bind(&ended).map_err(|e| format!("binding a notification: {e}"))?;
 
+    granite::println!("users: looking for the system volume.");
     let (system, users) = find_system(&storage, ignore_system)?;
     let mut s = Service {
         endpoint,

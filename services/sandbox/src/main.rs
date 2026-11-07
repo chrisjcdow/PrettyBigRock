@@ -289,18 +289,22 @@ impl Sandbox {
         if self.launches.len() >= MAX_LAUNCHES {
             return Err(SandboxError::TooMany);
         }
-        if self.archive.find(&format!("apps/{name}")).is_none() {
-            return Err(SandboxError::NoSuchApp);
-        }
-        // 1. The manifest.
+        // 1. The manifest. (A manifest without its program can still be found to be broken.)
+        let program = self.archive.find(&format!("apps/{name}"));
         let Some(text) = self.archive.find(&format!("apps/{name}.app")) else {
-            granite::println!("sandbox ({}): {name} has no manifest.", self.user);
-            return Err(SandboxError::BadManifest);
+            if program.is_some() {
+                granite::println!("sandbox ({}): {name} has no manifest.", self.user);
+                return Err(SandboxError::BadManifest);
+            }
+            return Err(SandboxError::NoSuchApp);
         };
         let app = App::parse(text.data).map_err(|e| {
             granite::println!("sandbox ({}): {name}'s manifest is malformed: {e:?}", self.user);
             SandboxError::BadManifest
         })?;
+        if program.is_none() {
+            return Err(SandboxError::NoSuchApp);
+        }
         // 2. What it gets. Every app in the start-up archive is a system app.
         let rules = self.rules().map_err(|e| {
             granite::println!(
