@@ -240,21 +240,27 @@ fn dir_entry(name: &[u8; 11], attr: u8, cluster: u32, size: u32) -> [u8; 32] {
 }
 
 /// Writes a directory and everything in it; returns its first cluster. `parent` is the parent's
-/// first cluster, or `None` for the root (which has no "." and ".." entries).
+/// first cluster, or `None` for the root (which has no "." and ".." entries). The root's first
+/// entry is the volume label, which FAT keeps there as well as in the boot sector (Linux's
+/// `fsck.fat` complains if the two don't match).
 fn write_dir(
     fat: &mut Fat,
     entries: &[(String, Node<'_>)],
     parent: Option<u32>,
+    label: Option<&[u8; 11]>,
 ) -> Result<u32, String> {
     // Allocate this directory's clusters first, so its children can point back at it, then
-    // fill them in once the children's clusters are known.
-    let dots = if parent.is_some() { 2 } else { 0 };
+    // fill them in once the children's clusters are known. `dots` counts the entries before
+    // the children: "." and "..", or the label.
+    let dots = if parent.is_some() { 2 } else { usize::from(label.is_some()) };
     let mut bytes = vec![0u8; (entries.len() + dots) * 32];
     let own = fat.store(&bytes)?;
     if let Some(p) = parent {
         bytes[..32].copy_from_slice(&dir_entry(b".          ", 0x10, own, 0));
         let up = if p == 2 { 0 } else { p }; // ".." of a top-level folder is 0, by convention
         bytes[32..64].copy_from_slice(&dir_entry(b"..         ", 0x10, up, 0));
+    } else if let Some(l) = label {
+        bytes[..32].copy_from_slice(&dir_entry(l, 0x08, 0, 0)); // 0x08: the volume label
     }
     for (i, (name, node)) in entries.iter().enumerate() {
         let sn = short_name(name)?;
@@ -263,7 +269,7 @@ fn write_dir(
                 let c = if data.is_empty() { 0 } else { fat.store(data)? };
                 dir_entry(&sn, 0x20, c, data.len() as u32)
             }
-            Node::Dir(sub) => dir_entry(&sn, 0x10, write_dir(fat, sub, Some(own))?, 0),
+            Node::Dir(sub) => dir_entry(&sn, 0x10, write_dir(fat, sub, Some(own), None)?, 0),
         };
         bytes[(i + dots) * 32..(i + dots + 1) * 32].copy_from_slice(&e);
     }
@@ -308,7 +314,7 @@ pub fn fat32_labelled(
         let parts: Vec<&str> = path.split('/').collect();
         insert(&mut root, &parts, data);
     }
-    let root_cluster = write_dir(&mut fat, &root, None)?;
+    let root_cluster = write_dir(&mut fat, &root, None, Some(label))?;
     if root_cluster != 2 {
         return Err("internal error: the root directory isn't at cluster 2".into());
     }

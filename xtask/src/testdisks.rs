@@ -114,9 +114,12 @@ pub fn gpt_disk(path: &Path) -> Result<(), String> {
 }
 
 /// Writes every storage test disk into `work`, and returns their paths.
+/// The MBR disk's file name (the boot tests attach it writable and check it afterwards).
+pub const MBR_DISK: &str = "test-mbr.img";
+
 pub fn make(work: &Path) -> Result<Vec<PathBuf>, String> {
     let (mbr, gpt, empty) =
-        (work.join("test-mbr.img"), work.join("test-gpt.img"), work.join("test-empty.img"));
+        (work.join(MBR_DISK), work.join("test-gpt.img"), work.join("test-empty.img"));
     mbr_disk(&mbr)?;
     gpt_disk(&gpt)?;
     fs::write(&empty, vec![0u8; MIB as usize * 2 * SECTOR]).map_err(|e| format!("{e}"))?;
@@ -176,6 +179,24 @@ mod tests {
         );
         let e = scan(&paths[2]);
         assert_eq!(summary(&e), [(0, 0, 2 * MIB, Filesystem::Empty, String::new())]);
+        // Linux's own checker finds both FAT32 volumes sound (when it's installed).
+        if Command::new("fsck.fat").arg("--help").output().is_ok() {
+            for (disk, (start, sectors)) in [(&paths[0], MBR_FAT), (&paths[1], GPT_FAT)] {
+                let bytes = fs::read(disk).unwrap();
+                let part = dir.join("part.img");
+                let at = start as usize * SECTOR;
+                fs::write(&part, &bytes[at..at + sectors as usize * SECTOR]).unwrap();
+                let out = Command::new("fsck.fat").arg("-n").arg(&part).output().unwrap();
+                assert!(
+                    out.status.success(),
+                    "fsck.fat -n on {}:\n{}",
+                    disk.display(),
+                    String::from_utf8_lossy(&out.stdout)
+                );
+            }
+        } else {
+            println!("the_test_disks: fsck.fat isn't installed; the FAT32 volumes weren't checked");
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }

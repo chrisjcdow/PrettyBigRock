@@ -101,7 +101,9 @@ The workspace can't reach `static.rust-lang.org`, so:
   `$(rustc --print sysroot)/lib/rustlib/src/rust/library`. The build tool then builds `core`
   from source (note 0002);
 - install QEMU with apt: `qemu-system-x86 qemu-system-arm qemu-efi-aarch64 ovmf`; for the
-  classic system, `nasm gcc-multilib`.
+  classic system, `nasm gcc-multilib`; for the FAT32 tests, `dosfstools mtools` (tests that
+  need them say so and are skipped without them, but a stage isn't finished until they've
+  run).
 
 The workspace has only 2 CPUs: a full `qemu-test` takes about 12 minutes. When a boot fails,
 the runner saves every core's registers and stack in `build/qemu/serial-*.registers.txt`;
