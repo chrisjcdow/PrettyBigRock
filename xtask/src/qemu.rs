@@ -159,6 +159,56 @@ fn test_disk(work: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// A short name for a configuration, for its files: `x86_64-uefi`, `aarch64-uefi-el2`.
+fn tag(cfg: &Config) -> String {
+    format!(
+        "{}-{}{}",
+        cfg.arch,
+        if cfg.bios { "bios" } else { "uefi" },
+        if cfg.el2 { "-el2" } else { "" }
+    )
+}
+
+/// A fresh copy of the data disk 1.3 made (`tests/data/classic-1.3.img.gz`) for one boot. It is
+/// attached writable, not as a snapshot, so the disk can be checked afterwards
+/// ([`check_classic`]).
+fn classic_copy(cfg: &Config, work: &Path) -> Result<PathBuf, String> {
+    let gz = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/data/classic-1.3.img.gz");
+    let out = Command::new("gzip")
+        .arg("-dc")
+        .arg(&gz)
+        .output()
+        .map_err(|e| format!("couldn't run gzip: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("gzip couldn't read {}", gz.display()));
+    }
+    let copy = work.join(format!("classic-{}.img", tag(cfg)));
+    fs::write(&copy, &out.stdout).map_err(|e| format!("{}: {e}", copy.display()))?;
+    Ok(copy)
+}
+
+/// After a boot: the data disk 1.3 made must have been shut down cleanly, with the self-test's
+/// changes and nothing else, as `tools/check_classic_after.py` checks with the Python tool and
+/// (given `rfs_host`) 1.3's own code.
+pub fn check_classic(cfg: &Config, work: &Path, rfs_host: Option<&Path>) -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut cmd = Command::new("python3");
+    cmd.arg(root.join("tools/check_classic_after.py"))
+        .arg(work.join(format!("classic-{}.img", tag(cfg))))
+        .arg(root.join("tests/data/classic-1.3.manifest"));
+    if let Some(host) = rfs_host {
+        cmd.arg(host);
+    }
+    let out = cmd.output().map_err(|e| format!("couldn't run python3: {e}"))?;
+    let text =
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!("the disk 1.3 made, after the boot:\n{text}"))
+    }
+}
+
 /// The QEMU command for a configuration, with the firmware found on this computer.
 fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     let drive = format!("format=raw,file={},snapshot=on", image.display());
@@ -224,6 +274,9 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
             .arg(format!("if=none,id=storage{i},format=raw,file={},snapshot=on", disk.display()));
         cmd.arg("-device").arg(format!("virtio-blk-pci,drive=storage{i}"));
     }
+    let classic = classic_copy(cfg, work)?;
+    cmd.arg("-drive").arg(format!("if=none,id=classic,format=raw,file={}", classic.display()));
+    cmd.args(["-device", "virtio-blk-pci,drive=classic"]);
     cmd.args(["-device", "virtio-keyboard-pci,id=vkbd,display=gpu"]);
     cmd.args(["-device", "virtio-mouse-pci,id=vmouse,display=gpu"]);
     cmd.arg("-no-reboot");

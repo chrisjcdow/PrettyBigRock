@@ -114,13 +114,19 @@ fn all(
     }
     step("crash and restart", crash.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("a driver crashed and restarted");
-    let storage = crate::storagetest::start(archive, &devmgr, true)?;
+    let storage = crate::storagetest::start(archive, archive_mem, &devmgr, true)?;
     let st = crate::storagetest::run(&storage, &devmgr);
     if let Ok(summary) = &st {
         granite::println!("Storage self-test passed: {summary}");
     }
     step("storage", st.as_ref().map(|_| ()).map_err(Clone::clone))?;
-    done.push("storage (partitions, volumes, the block cache)");
+    done.push("storage (partitions, volumes, the block cache, RockFS servers)");
+    let classic = crate::classictest::run(&storage.admin);
+    if let Ok(summary) = &classic {
+        granite::println!("The disk 1.3 made: {summary}");
+    }
+    step("the disk 1.3 made", classic.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("a data disk made by 1.3");
     let calls = load(f, &echo_ep);
     step("load", calls.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("calls on 4 threads to a service with 4 threads");

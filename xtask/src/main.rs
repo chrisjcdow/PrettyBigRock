@@ -674,11 +674,22 @@ fn qemu_test(root: &Path, img: &Path) -> Result {
     // PBR_QEMU_ONLY=<text> runs only the configurations whose name contains it (to save time
     // while working on one).
     let only = std::env::var("PBR_QEMU_ONLY").unwrap_or_default();
+    // 1.3's RockFS code, to check the disk 1.3 made after each boot. It needs a C compiler;
+    // without one, only the Python tool checks it.
+    let host = match build_rfs_host(root) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            println!("boot test: 1.3's code won't check the disk 1.3 made ({e})");
+            None
+        }
+    };
     for cfg in qemu::TESTS.iter().filter(|c| c.name.contains(&only)) {
         print!("boot test: {} ... ", cfg.name);
         use std::io::Write as _;
         let _ = std::io::stdout().flush();
-        match qemu::test(cfg, img, &work, BOOT_TEST_LIMIT) {
+        match qemu::test(cfg, img, &work, BOOT_TEST_LIMIT)
+            .and_then(|_| qemu::check_classic(cfg, &work, host.as_deref()))
+        {
             Ok(_) => println!("ok"),
             Err(e) => {
                 println!("FAILED");
@@ -831,18 +842,25 @@ fn interfaces(root: &Path) -> Result {
     Ok(())
 }
 
-fn classic(root: &Path) -> Result {
-    let dir = root.join("classic");
-    status(Command::new("sh").current_dir(&dir).arg("build.sh"))?;
+/// Builds `rfs_host`: 1.3's RockFS code (`classic/kernel/rockfs.c`) as a host program, for the
+/// cross-checks.
+fn build_rfs_host(root: &Path) -> Result<PathBuf> {
     let host = root.join("target").join("rfs_host");
     fs::create_dir_all(root.join("target")).map_err(|e| e.to_string())?;
     status(
         Command::new("gcc")
-            .current_dir(&dir)
+            .current_dir(root.join("classic"))
             .args(["-O1", "-Ikernel", "-include", "stdlib.h", "-o"])
             .arg(&host)
             .args(["tools/hosttest/rfs_host.c", "kernel/rockfs.c", "kernel/disk.c"]),
     )?;
+    Ok(host)
+}
+
+fn classic(root: &Path) -> Result {
+    let dir = root.join("classic");
+    status(Command::new("sh").current_dir(&dir).arg("build.sh"))?;
+    let host = build_rfs_host(root)?;
     let work = env::temp_dir().join("pbr-crosscheck");
     fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     status(

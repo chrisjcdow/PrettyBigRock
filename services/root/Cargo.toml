@@ -16,6 +16,7 @@ test = false
 bench = false
 
 [dependencies]
+pbr-crc = { path = "../../lib/crc" }
 pbr-test-protocol = { path = "../../tests/programs/protocol" }
 pbr-archive = { path = "../../lib/archive" }
 pbr-granite = { path = "../../lib/granite" }

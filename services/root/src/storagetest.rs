@@ -22,7 +22,10 @@ use granite::sys::rights;
 use granite::time;
 use pbr_archive::Archive;
 use pbr_interfaces::pbr_block::{self as block, BlockError};
-use pbr_interfaces::pbr_storage::{self as storage, Filesystem, StorageError, VolumeInfo};
+use pbr_interfaces::pbr_file::{self as file, FileRights, NodeKind};
+use pbr_interfaces::pbr_storage::{
+    self as storage, Filesystem, StorageError, VolumeInfo, VolumeState,
+};
 use pbr_interfaces::pbr_storage_debug as storage_debug;
 
 /// The storage service's start-up role for the device manager's endpoint (its own endpoint is
@@ -33,7 +36,9 @@ const DEVICES: u32 = 1001;
 const ADMIN: u64 = 1;
 const DEBUG: u64 = 2;
 /// What the storage service may use: its 16 MiB cache, and room for volumes in memory.
-const BUDGET: u64 = 64 * 1024 * 1024;
+/// The service's budget: its 16 MiB cache, volumes in memory, and 8 MiB for each filesystem
+/// server it starts (they are paid for from it).
+const BUDGET: u64 = 128 * 1024 * 1024;
 const SECTOR: usize = 512;
 const MIB: u64 = 1024 * 1024;
 
@@ -45,7 +50,13 @@ pub struct Storage {
 }
 
 /// Starts the storage service, giving it the device manager's `pbr.devices`.
-pub fn start(archive: &Archive<'_>, devmgr: &Devmgr, selftest: bool) -> Result<Storage, String> {
+/// The storage service gets the start-up archive, for its filesystem servers' programs.
+pub fn start(
+    archive: &Archive<'_>,
+    archive_mem: u32,
+    devmgr: &Devmgr,
+    selftest: bool,
+) -> Result<Storage, String> {
     let file = archive.find("storage").ok_or("storage isn't in the archive")?;
     let ep = Endpoint::create().map_err(|e| format!("creating an endpoint: {e}"))?;
     let devices = devmgr
@@ -56,6 +67,7 @@ pub fn start(archive: &Archive<'_>, devmgr: &Devmgr, selftest: bool) -> Result<S
         .map_err(|e| format!("copying the device manager's endpoint: {e}"))?;
     let caps = [
         (start_role::OWN, ep.0.raw(), rights::ALL, false),
+        (start_role::ARCHIVE, archive_mem, rights::READ | rights::MAP, false),
         (DEVICES, devices.into_raw(), rights::ALL, true),
     ];
     let process = process::spawn(&Spawn {
@@ -134,6 +146,49 @@ fn dirty(s: &Storage) -> Result<u32, String> {
     s.debug.cache().map(|r| r.dirty).map_err(|e| format!("asking about the cache: {e}"))
 }
 
+/// Waits until every volume in `ids` is served (at most 30 seconds).
+fn ready(s: &Storage, ids: &[u32]) -> Result<(), String> {
+    let end = time::after_ms(30_000);
+    loop {
+        let list = s.admin.list().map_err(|e| format!("listing volumes: {e}"))?;
+        let states: Vec<(u32, VolumeState)> =
+            list.iter().filter(|v| ids.contains(&v.id)).map(|v| (v.id, v.state)).collect();
+        if states.len() == ids.len() && states.iter().all(|(_, st)| *st == VolumeState::Ready) {
+            return Ok(());
+        }
+        if states.iter().any(|(_, st)| !matches!(st, VolumeState::Ready | VolumeState::Starting))
+            || time::now() > end
+        {
+            return Err(format!("volumes not served: {states:?}"));
+        }
+        time::sleep_ms(50);
+    }
+}
+
+/// Opens volume `id` and checks its root folder works: the volume's label, and a file
+/// written and read back.
+fn use_volume(s: &Storage, id: u32, label: &str) -> Result<(), String> {
+    let all = FileRights(FileRights::READ.0 | FileRights::WRITE.0);
+    let mut root = file::Client::new(Endpoint(
+        s.admin.open(id).map_err(|e| format!("opening volume {id}: {e}"))?,
+    ));
+    root.set_deadline(time::after_ms(30_000));
+    let space = root.space().map_err(|e| format!("volume {id}'s space: {e}"))?;
+    if space.label != label || space.filesystem != "RockFS" {
+        return Err(format!("volume {id} says it is {space:?}"));
+    }
+    let f = root
+        .create("storage test.txt", NodeKind::File, all)
+        .map_err(|e| format!("making a file on volume {id}: {e}"))?
+        .node;
+    f.write(0, b"written by the storage test").map_err(|e| format!("writing: {e}"))?;
+    f.sync().map_err(|e| format!("saving: {e}"))?;
+    match f.read(0, 100) {
+        Ok(d) if d == b"written by the storage test" => Ok(()),
+        other => Err(format!("volume {id}'s file read back as {other:?}")),
+    }
+}
+
 /// The storage self-test. Returns a short summary.
 pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
     let list = s.admin.list().map_err(|e| format!("listing volumes: {e}"))?;
@@ -144,9 +199,16 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
     let home = find(&list, Filesystem::RockFs, "Home", 1, 4 * MIB)?;
     find(&list, Filesystem::Fat32, "PICTURES", 2, 34 * MIB)?;
     let empty = find(&list, Filesystem::Empty, "", 0, 2 * MIB)?;
-    if data_v.disk != usb.disk || data_v.disk == home.disk || data_v.in_memory {
+    let raw_v = find(&list, Filesystem::Empty, "", 3, 4 * MIB)?;
+    if data_v.disk != usb.disk
+        || raw_v.disk != usb.disk
+        || data_v.disk == home.disk
+        || data_v.in_memory
+    {
         return Err(format!("the volumes are on the wrong disks: {list:?}"));
     }
+    // Every RockFS volume gets its own server, which mounts it and says it's ready.
+    ready(s, &[data_v.id, home.id])?;
 
     // A volume's capability: its sector 0 is the volume's first sector, and nothing past its
     // end can be reached.
@@ -173,10 +235,13 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
     refused("reading across the volume's end", d.read(end - 1, 2), BlockError::OutOfRange)?;
     refused("reading at a huge sector", d.read(u64::MAX, 1), BlockError::OutOfRange)?;
     refused("reading too much", d.read(0, 129), BlockError::BadArgument)?;
-    refused("writing part of a sector", d.write(0, &[1; 100]), BlockError::BadArgument)?;
 
     // Writes go through the cache: they read back at once, wait in the cache, and a flush
-    // writes them to the disk. The sectors around them don't change.
+    // writes them to the disk. The sectors around them don't change. They go to the raw
+    // partition, which no filesystem server uses: writing under a mounted filesystem would
+    // damage it.
+    let d = volume(s, raw_v.id)?;
+    refused("writing part of a sector", d.write(0, &[1; 100]), BlockError::BadArgument)?;
     let before = read(&d, 99, 5)?;
     let new = data(0x40, 3);
     d.write(100, &new).map_err(|e| format!("writing: {e}"))?;
@@ -200,7 +265,10 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
         return Err("a flush left pages waiting".into());
     }
 
-    // A volume in memory.
+    // Opening a volume gives its root folder, through its server.
+    use_volume(s, home.id, "Home")?;
+
+    // A volume in memory: formatted as RockFS by its server, then served like any other.
     let tiny = s.admin.create_ram_volume(100 * 1024, "Tiny");
     if !matches!(tiny, Err(CallError::Service(StorageError::BadArgument))) {
         return Err(format!("a 100 KiB volume in memory wasn't refused: {tiny:?}"));
@@ -209,25 +277,34 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
         .admin
         .create_ram_volume(4 * MIB, "Scratch")
         .map_err(|e| format!("making a volume in memory: {e}"))?;
+    ready(s, &[ram_id])?;
     let list = s.admin.list().map_err(|e| format!("listing volumes: {e}"))?;
-    let ram = find(&list, Filesystem::Empty, "Scratch", 0, 4 * MIB)?;
+    let ram = find(&list, Filesystem::RockFs, "Scratch", 0, 4 * MIB)?;
     if ram.id != ram_id || !ram.in_memory {
         return Err(format!("the volume in memory is listed as {ram:?}"));
     }
+    use_volume(s, ram_id, "Scratch")?;
     let r = volume(s, ram_id)?;
-    r.write(8, &big).map_err(|e| format!("writing to memory: {e}"))?;
-    if read(&r, 8, 128)? != big || read(&r, 0, 8)? != vec![0u8; 8 * SECTOR] {
-        return Err("the volume in memory read back wrongly".into());
+    if pbr_partition::rockfs_superblock(&read(&r, 0, 2)?).as_deref() != Some("Scratch") {
+        return Err("the volume in memory doesn't start with its superblock".into());
     }
     refused("reading past the volume in memory", r.read(8192, 1), BlockError::OutOfRange)?;
 
-    // Not until the filesystem servers exist: opening, formatting. Formatting something with
-    // data on it is refused.
+    // Formatting: refused for anything with data on it; an empty disk gets an MBR with one
+    // RockFS partition from 1 MiB, as 1.3 makes them, and is then served.
     let f = s.admin.format(data_v.id, "X");
     if !matches!(f, Err(CallError::Service(StorageError::NotEmpty))) {
         return Err(format!("formatting a RockFS volume wasn't refused: {f:?}"));
     }
-    let _ = empty;
+    s.admin.format(empty.id, "Formatted").map_err(|e| format!("formatting the empty disk: {e}"))?;
+    let list = s.admin.list().map_err(|e| format!("listing volumes: {e}"))?;
+    let formatted = find(&list, Filesystem::Empty, "", 1, MIB)
+        .or_else(|_| find(&list, Filesystem::RockFs, "Formatted", 1, MIB))?;
+    if formatted.disk != empty.disk || list.iter().any(|v| v.id == empty.id) {
+        return Err(format!("formatting left {list:?}"));
+    }
+    ready(s, &[formatted.id])?;
+    use_volume(s, formatted.id, "Formatted")?;
 
     // A disk driver crashing underneath: the volume's user sees nothing. Writing and flushing
     // reach the new driver, and reads of sectors never read before come from it.
@@ -237,6 +314,7 @@ pub fn run(s: &Storage, devmgr: &Devmgr) -> Result<String, String> {
     };
     let was = restarts(data_v.disk)?;
     devmgr.debug.stop(data_v.disk).map_err(|e| format!("stopping the disk's driver: {e}"))?;
+    // (`d` is the raw partition, on the same disk as `u`, the USB volume.)
     let newer = data(0xC0, 4);
     d.write(200, &newer).map_err(|e| format!("writing after the driver crashed: {e}"))?;
     d.flush().map_err(|e| format!("flushing after the driver crashed: {e}"))?;

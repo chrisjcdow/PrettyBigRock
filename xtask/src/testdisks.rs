@@ -24,6 +24,9 @@ const MIB: u64 = 2048; // sectors
 /// Where the MBR test disk's volumes are: (start, sectors).
 pub const MBR_ROCKFS: (u64, u64) = (MIB, 8 * MIB);
 pub const MBR_FAT: (u64, u64) = (9 * MIB, 34 * MIB);
+/// A partition no filesystem server uses (its contents are zeros, so it counts as empty), for
+/// the storage test's raw writes: writing under a mounted filesystem would damage it.
+pub const MBR_RAW: (u64, u64) = (43 * MIB, 4 * MIB);
 /// And the GPT test disk's.
 pub const GPT_ROCKFS: (u64, u64) = (MIB, 4 * MIB);
 pub const GPT_FAT: (u64, u64) = (5 * MIB, 34 * MIB);
@@ -69,10 +72,11 @@ fn mbr_entry(disk: &mut [u8], i: usize, kind: u8, start: u64, len: u64) {
 
 /// Writes the MBR test disk.
 pub fn mbr_disk(path: &Path) -> Result<(), String> {
-    let total = MBR_FAT.0 + MBR_FAT.1;
+    let total = MBR_RAW.0 + MBR_RAW.1;
     let mut disk = vec![0u8; total as usize * SECTOR];
     mbr_entry(&mut disk, 0, 0x7F, MBR_ROCKFS.0, MBR_ROCKFS.1);
     mbr_entry(&mut disk, 1, 0x0C, MBR_FAT.0, MBR_FAT.1);
+    mbr_entry(&mut disk, 2, 0xDA, MBR_RAW.0, MBR_RAW.1); // 0xDA: "non-filesystem data"
     let fat =
         image::fat32_labelled(&[("README.TXT", README)], MBR_FAT.0, MBR_FAT.1, b"USB        ")?;
     put(&mut disk, MBR_FAT.0, &fat);
@@ -158,6 +162,7 @@ mod tests {
             [
                 (1, MBR_ROCKFS.0, MBR_ROCKFS.1, Filesystem::RockFs, "Data".into()),
                 (2, MBR_FAT.0, MBR_FAT.1, Filesystem::Fat32, "USB".into()),
+                (3, MBR_RAW.0, MBR_RAW.1, Filesystem::Empty, String::new()),
             ]
         );
         let g = scan(&paths[1]);

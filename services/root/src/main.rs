@@ -12,6 +12,7 @@
 extern crate alloc;
 
 mod blocktest;
+mod classictest;
 mod crashtest;
 mod devtest;
 mod drivertest;
@@ -65,11 +66,13 @@ fn main(mut start: granite::Start) -> i32 {
             None
         }
     };
-    let _storage = devmgr.as_ref().and_then(|d| match storagetest::start(&archive, d, false) {
-        Ok(s) => Some(s),
-        Err(e) => {
-            granite::println!("The root program can't start the storage service: {e}");
-            None
+    let _storage = devmgr.as_ref().and_then(|d| {
+        match storagetest::start(&archive, archive_mem.0.raw(), d, false) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                granite::println!("The root program can't start the storage service: {e}");
+                None
+            }
         }
     });
     // Wait for ever.
