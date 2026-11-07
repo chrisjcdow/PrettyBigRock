@@ -260,6 +260,7 @@ dependencies = [
  "pbr-devices",
  "pbr-granite",
  "pbr-interfaces",
+ "pbr-manifest",
  "pbr-partition",
  "pbr-test-protocol",
 ]
@@ -325,6 +326,14 @@ dependencies = [
 [[package]]
 name = "pbr-test-protocol"
 version = "0.0.0"
+
+[[package]]
+name = "pbr-test-sandboxed"
+version = "0.0.0"
+dependencies = [
+ "pbr-files",
+ "pbr-granite",
+]
 
 [[package]]
 name = "pbr-users"

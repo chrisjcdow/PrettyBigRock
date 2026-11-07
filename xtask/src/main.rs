@@ -84,6 +84,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-test-probe", "probe", "probe"),
     ("pbr-test-memfs", "memfs", "memfs"),
     ("pbr-test-fileprobe", "fileprobe", "fileprobe"),
+    ("pbr-test-sandboxed", "sandboxed", "apps/sandboxed"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -94,6 +95,9 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("drivers/serial16550.drv", "drivers/serial16550.drv"),
     ("drivers/virtio-blk.drv", "drivers/virtio-blk.drv"),
     ("drivers/virtio-input.drv", "drivers/virtio-input.drv"),
+    // Apps' manifests sit beside them too (note 0017, section 4).
+    ("apps/sandboxed.app", "tests/programs/sandboxed/sandboxed.app"),
+    ("apps/broken.app", "tests/programs/sandboxed/broken.app"),
 ];
 
 /// Crates built for the programs' targets, checked with Clippy there.
@@ -119,6 +123,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-test-memfs",
     "pbr-test-probe",
     "pbr-test-protocol",
+    "pbr-test-sandboxed",
 ];
 
 /// Crates tested on this computer.

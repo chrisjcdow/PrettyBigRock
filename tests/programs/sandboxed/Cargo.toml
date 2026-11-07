@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-test-sandboxed"
+description = "The app the sandbox self-test launches through the sandbox manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sandboxed"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-granite = { path = "../../../lib/granite" }
+pbr-files = { path = "../../../lib/files" }
+
+[lints]
+workspace = true

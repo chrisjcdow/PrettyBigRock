@@ -51,6 +51,7 @@ members = [
     "tests/programs/memfs",
     "tests/programs/probe",
     "tests/programs/protocol",
+    "tests/programs/sandboxed",
     "tools/rockfs-rs",
     "xtask",
 ]

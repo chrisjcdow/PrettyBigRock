@@ -239,4 +239,14 @@ mod tests {
             }
         });
     }
+
+    /// The manifests the start-up archive carries for the self-test parse (or don't) as meant.
+    #[test]
+    fn the_shipped_manifests() {
+        let ok = App::parse(include_bytes!("../../../tests/programs/sandboxed/sandboxed.app"));
+        let ok = ok.unwrap();
+        assert!(ok.trusted && ok.places.len() == 3 && ok.title == "Sandbox test");
+        let broken = App::parse(include_bytes!("../../../tests/programs/sandboxed/broken.app"));
+        assert_eq!(broken, Err(Error::BadValue));
+    }
 }
