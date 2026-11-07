@@ -213,10 +213,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-rockfs-server"
+version = "0.0.0"
+dependencies = [
+ "pbr-fs",
+ "pbr-fsserve",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-rockfs",
+]
+
+[[package]]
 name = "pbr-root"
 version = "0.0.0"
 dependencies = [
  "pbr-archive",
+ "pbr-crc",
  "pbr-devices",
  "pbr-granite",
  "pbr-interfaces",
@@ -228,6 +240,7 @@ dependencies = [
 name = "pbr-storage"
 version = "0.0.0"
 dependencies = [
+ "pbr-archive",
  "pbr-blockcache",
  "pbr-granite",
  "pbr-interfaces",
