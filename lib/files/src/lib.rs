@@ -184,6 +184,11 @@ impl File {
     pub fn handle(&self) -> &Handle {
         &self.client.endpoint().0
     }
+
+    /// The capability itself, for keeping: what a launcher holds so it can revoke what it gave.
+    pub fn into_handle(self) -> Handle {
+        self.client.into_endpoint().0
+    }
 }
 
 /// A program's file tree, and its current folder.
