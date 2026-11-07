@@ -243,3 +243,13 @@ filesystems line by line against the specification before they go in.
   a 300 KB file, an addition, a rename, a move, a removal) and shuts the storage service down.
   The runner then checks the disk with `tools/check_classic_after.py`: `rockfs.py` and 1.3's own
   code find it clean and holding exactly what was expected.
+- 7 November 2026, built (M5 stage 5): `lib/fat` and `services/fat`, written by Sonnet and
+  reviewed by Opus, 105 host tests: reading volumes `mkfs.fat` made and `mtools` filled,
+  writing what `fsck.fat -n` passes and `mtools` reads back, the build tool's own volumes,
+  random operations against a model, full disks and hostile images. Overwrites inside a file's
+  clusters are written in place; growing and shrinking follow the order of section 3. FAT has
+  no inode numbers, so the library keeps a table from each `NodeId` to where its folder entry
+  is. The boot tests serve every FAT32 volume (ARM's boot partition too), write to the USB test
+  volume, and the runner checks it with `fsck.fat -n` and `mtools` (`tools/check_fat_after.py`).
+  The build tool's FAT32 writer gained the label entry in the root folder, which `fsck.fat`
+  wants.

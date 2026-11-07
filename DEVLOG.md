@@ -424,3 +424,16 @@ disks made by 1.3, including writing and reading back.
   35 folders and files exactly as 1.3 left them, changes six things, and shuts down; afterwards
   `rockfs.py` and 1.3's own code both find the disk clean, holding exactly what was expected.
   That is M5's second "done when". Next: stage 5, FAT32 (Sonnet).
+- **Stage 5, FAT32** (Sonnet wrote `lib/fat` and `services/fat`; Opus reviewed them and did the
+  storage wiring and boot tests). 105 host tests check `lib/fat` against Linux's own tools:
+  it reads what `mkfs.fat` and `mtools` write, and what it writes passes `fsck.fat -n` and
+  reads back the same with `mtools`. The storage service now serves every FAT32 volume; the
+  boot tests read the file the build tool put on the USB test volume, write long and
+  non-ASCII names, a folder and a 200 KB file, rename and move, and the runner checks the
+  volume afterwards with `fsck.fat -n` and `mtools`. On the way: the build tool's FAT32 writer
+  lacked the root folder's label entry (`fsck.fat` objected); the BIOS boot partition grew to
+  16 MiB, since a second filesystem server made the debug payload too big; and the RockFS
+  server's disk client had a deadline set once at start-up, so every call failed a minute
+  later. That was the second deadline bug, so generated clients now also take a timeout
+  counted from each call (`set_timeout_ms`), and long-lived clients use it. Next: stage 6,
+  users, the sandbox manager and manifests (Opus).
