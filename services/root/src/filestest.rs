@@ -113,7 +113,7 @@ pub fn run(archive: &Archive<'_>) -> Result<String, String> {
         return Err("memfs's ready call was malformed".into());
     };
     root.set_deadline(time::FOREVER);
-    ctl.set_deadline(time::after_ms(30_000));
+    ctl.set_timeout_ms(30_000);
     let r = (|| -> Result<String, String> {
         let summary = client(&root, &ctl)?;
         sandboxed(archive, &root)?;

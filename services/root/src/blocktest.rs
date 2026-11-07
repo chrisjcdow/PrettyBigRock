@@ -159,7 +159,7 @@ pub(crate) fn find_disk(d: &Devmgr) -> Result<(u32, block::Client), String> {
 /// The block device test. Returns a short summary.
 pub fn run(d: &Devmgr) -> Result<String, String> {
     let (_, mut c) = find_disk(d)?;
-    c.set_deadline(time::after_ms(60_000));
+    c.set_timeout_ms(60_000);
     let info = call("info", c.info())?;
     if info.sector_size != SECTOR as u32 || info.read_only {
         return Err(format!(

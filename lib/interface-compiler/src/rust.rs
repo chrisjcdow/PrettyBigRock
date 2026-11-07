@@ -689,18 +689,20 @@ impl Gen<'_> {
         let name = self.i.name.join(".");
         self.line("");
         self.line(&format!(
-            "/// A client of `{name}`: an endpoint capability, and a deadline for its calls."
+            "/// A client of `{name}`: an endpoint capability, and a deadline or timeout for its calls."
         ));
         self.line("#[derive(Debug)]");
         self.open("pub struct Client {");
         self.line("endpoint: ::granite::endpoint::Endpoint,");
         self.line("deadline: u64,");
+        self.line("/// Each call's own time limit in nanoseconds (0: none, just `deadline`).");
+        self.line("timeout: u64,");
         self.close("}");
         self.line("");
         self.open("impl Client {");
         self.line("/// A client calling `endpoint`, with no deadline.");
         self.open("pub fn new(endpoint: ::granite::endpoint::Endpoint) -> Self {");
-        self.line("Client { endpoint, deadline: ::granite::time::FOREVER }");
+        self.line("Client { endpoint, deadline: ::granite::time::FOREVER, timeout: 0 }");
         self.close("}");
         self.line("");
         self.line("/// The endpoint capability.");
@@ -714,10 +716,28 @@ impl Gen<'_> {
         self.close("}");
         self.line("");
         self.line(
-            "/// Sets the deadline (on the monotonic clock, in nanoseconds) for later calls.",
+            "/// Sets one deadline, a moment on the monotonic clock in nanoseconds, for every later",
         );
+        self.line(
+            "/// call. Calls after that moment fail at once: for a client kept for a long time, use",
+        );
+        self.line("/// [`Client::set_timeout_ms`].");
         self.open("pub fn set_deadline(&mut self, deadline: u64) {");
         self.line("self.deadline = deadline;");
+        self.line("self.timeout = 0;");
+        self.close("}");
+        self.line("");
+        self.line("/// Gives each later call `ms` milliseconds, counted from when it is made.");
+        self.open("pub fn set_timeout_ms(&mut self, ms: u64) {");
+        self.line("self.deadline = ::granite::time::FOREVER;");
+        self.line("self.timeout = ms.saturating_mul(1_000_000).max(1);");
+        self.close("}");
+        self.line("");
+        self.line("/// The deadline for a call made now.");
+        self.open("fn call_deadline(&self) -> u64 {");
+        self.line(
+            "if self.timeout == 0 { self.deadline } else { ::granite::time::now().saturating_add(self.timeout) }",
+        );
         self.close("}");
         for op in self.i.ops.clone() {
             self.line("");
@@ -733,7 +753,7 @@ impl Gen<'_> {
             let args = Self::args(&op.params);
             let m = &op.name;
             self.line(&format!(
-                "let (r_, b_) = {GI}::call(&self.endpoint, {m}::LABEL, {m}::encode_request({args}), {m}::REPLY_BUFFER, self.deadline)?;"
+                "let (r_, b_) = {GI}::call(&self.endpoint, {m}::LABEL, {m}::encode_request({args}), {m}::REPLY_BUFFER, self.call_deadline())?;"
             ));
             let error_fn = match op.error {
                 Some(e) => format!("{}::from_u32", self.type_name(e)),

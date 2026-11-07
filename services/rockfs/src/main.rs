@@ -120,7 +120,7 @@ fn main(mut start: granite::Start) -> i32 {
     let format: Option<String> = (args.get(2) == Some(&"format")).then(|| args[3..].join(" "));
 
     let mut host = host::Client::new(Endpoint(parent));
-    host.set_deadline(time::after_ms(30_000));
+    host.set_timeout_ms(30_000);
     // Says why the volume can't be served, and stops.
     let fail = |host: &host::Client, why: FsFailure, what: &dyn core::fmt::Display| -> i32 {
         granite::println!("rockfs: volume {id}: {what}");
@@ -129,7 +129,7 @@ fn main(mut start: granite::Start) -> i32 {
     };
 
     let mut client = block::Client::new(Endpoint(volume));
-    client.set_deadline(time::after_ms(60_000));
+    client.set_timeout_ms(60_000);
     let info = match client.info() {
         Ok(i) if i.sector_size as usize == SECTOR => i,
         Ok(i) => return fail(&host, FsFailure::Unsupported, &i.sector_size),

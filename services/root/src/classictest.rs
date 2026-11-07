@@ -120,7 +120,7 @@ pub fn run(admin: &storage::Client) -> Result<String, String> {
     let mut root = file::Client::new(Endpoint(
         admin.open(volume.id).map_err(|e| format!("opening the volume: {e}"))?,
     ));
-    root.set_deadline(time::after_ms(60_000));
+    root.set_timeout_ms(60_000);
 
     // Exactly what 1.3 left, byte for byte.
     let mut found = Vec::new();

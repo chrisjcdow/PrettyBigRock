@@ -281,7 +281,7 @@ pub fn run<F: Filesystem>(
         }
     };
     let mut client = host::Client::new(parent);
-    client.set_deadline(time::after_ms(30_000));
+    client.set_timeout_ms(30_000);
     if let Err(e) = client.ready(root_cap, control_cap, label) {
         granite::println!("fs: the host didn't take the root folder: {e}");
         return 1;

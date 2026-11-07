@@ -247,7 +247,8 @@ are only special where the grammar expects them.
 - a few names belong to the generated code: types can't be called `Client`, `Server`,
   `Reply`, `Request` or `Results`; constants can't be `VERSION`, `NAME`, `OP`, `LABEL`,
   `ALL` or the buffer and size names of section 9; operations can't be `new`, `endpoint`,
-  `into_endpoint`, `set_deadline`, `deadline` or a primitive type's name; a parameter can't
+  `into_endpoint`, `set_deadline`, `deadline`, `set_timeout_ms`, `call_deadline`, `timeout`
+  or a primitive type's name; a parameter can't
   be `reply`; a flexible enum can't have a value called `Unknown`.
 
 **Compatibility.** `version` is the interface's major version. Within a version, these are
@@ -330,8 +331,9 @@ For each interface it generates a module named after it (`pbr.file` becomes `pbr
   capability count of each direction (`REQUEST_FIXED`, `REQUEST_BUFFER`, `REQUEST_CAPS`, and
   the same for `REPLY_`), a `Request` struct (and `Results` when there are several results),
   functions to encode and decode each direction, and `Reply`, the responder (below);
-- **a client**, `Client`: an endpoint capability and a deadline for its calls, with one
-  method per operation. Small values are passed by value, strings, lists and structs by
+- **a client**, `Client`: an endpoint capability and a deadline for its calls (a fixed
+  moment, `set_deadline`) or a timeout (a length of time from each call, `set_timeout_ms`,
+  for a client kept for long), with one method per operation. Small values are passed by value, strings, lists and structs by
   reference, and handles are moved. It returns the result (nothing, the single result, or
   `Results`) or a `CallError<E>`: the operation's error `E`, a failure of the call itself, an
   unknown operation, a rejected request, a failed service, or a malformed reply. If the call
@@ -409,3 +411,6 @@ GPL-3.0-or-later, with a statement that its output is MIT-licensed.
   and the self-test-only `pbr.devices.debug` and `pbr.driver.debug`, notes 0011 and 0012). The
   generated code for `handle<any>`, which has no type to check, no longer trips Clippy's
   `let_and_return`.
+- 7 November 2026, M5 stage 5: generated clients gained `set_timeout_ms`, a limit counted from
+  each call. A deadline set once and used for long had caught us twice: a filesystem server's
+  disk client set to "60 seconds from now" at start-up failed every call after that minute.
