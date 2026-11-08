@@ -20,6 +20,7 @@ pbr-archive = { path = "../../lib/archive" }
 pbr-granite = { path = "../../lib/granite" }
 pbr-interfaces = { path = "../../lib/interfaces" }
 pbr-manifest = { path = "../../lib/manifest" }
+pbr-supervise = { path = "../../lib/supervise" }
 
 [lints]
 workspace = true

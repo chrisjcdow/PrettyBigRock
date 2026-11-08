@@ -46,16 +46,15 @@ use granite::time;
 use pbr_archive::Archive;
 use pbr_interfaces::pbr_file::{self as file, FileError, FileRights, NodeKind};
 use pbr_interfaces::pbr_storage::{self as storage, StorageError, VolumeState};
+use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
 use pbr_interfaces::pbr_users::{self as users_if, UserKind, UsersError};
 use pbr_interfaces::pbr_users_debug::{self as debug_if, DebugError};
 use pbr_manifest::users::{self as users_txt, Kind, User};
 use pbr_manifest::{Place, is_name, volume_names};
+use pbr_supervise::{Decision, History};
 
 granite::main!(main);
 
-/// The start-up role of the storage service's `pbr.storage` (this service's own endpoint is
-/// `role::OWN`). The root program uses the same number.
-const STORAGE: u32 = 1001;
 /// The badge of the root program's `pbr.users.debug` (self-test runs only).
 const DEBUG: u64 = 1;
 /// Sessions' badges: this plus the session's number.
@@ -79,6 +78,10 @@ const READ: FileRights = FileRights::READ;
 const READ_WRITE: FileRights = FileRights(FileRights::READ.0 | FileRights::WRITE.0);
 /// How long to wait for the storage service and filesystem servers.
 const CALL_MS: u64 = 60_000;
+/// How often to check that the storage service and the volumes the sessions hold are still
+/// there (note 0018, section 3), and how long such a check may wait.
+const CHECK_MS: u64 = 500;
+const CHECK_TIMEOUT_MS: u64 = 5_000;
 
 /// Where the users are kept.
 struct System {
@@ -97,13 +100,30 @@ struct Session {
     /// In self-test runs, a `pbr.sandbox` capability for the session, for the root program.
     test_cap: Option<Endpoint>,
     /// The capabilities its tree was made from: the sandbox manager got copies, so these are
-    /// the parents of everything the session holds.
-    _held: Vec<Handle>,
+    /// the parents of everything the session holds. They are also how a volume going is
+    /// noticed (`Service::check`).
+    held: Vec<file::Client>,
+    /// Its sandbox manager's crashes, for the restart policy.
+    history: History,
+}
+
+/// A session waiting to be started again after its sandbox manager ended.
+struct Pending {
+    user: User,
+    history: History,
+    /// When (milliseconds on the clock).
+    due: u64,
 }
 
 struct Service {
     endpoint: Endpoint,
+    /// The supervisor (the root program), through which the storage service is found.
+    parent: supervisor::Client,
     storage: storage::Client,
+    /// Self-test only: behave as if there were no system volume.
+    ignore_system: bool,
+    /// Sessions to start again.
+    pending: Vec<Pending>,
     /// The start-up archive, for sandbox managers (who read apps from it).
     archive: Handle,
     /// The sandbox manager's program.
@@ -133,10 +153,11 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     // (Self-test only: behave as if there were no system volume.)
     let ignore_system = selftest && args.contains(&"nosystem");
     let endpoint = Endpoint(start.take(role::OWN).ok_or("started without an endpoint to serve")?);
-    let mut storage = storage::Client::new(Endpoint(
-        start.take(STORAGE).ok_or("started without the storage service")?,
+    let mut parent = supervisor::Client::new(Endpoint(
+        start.take(role::PARENT).ok_or("started without a supervisor")?,
     ));
-    storage.set_timeout_ms(CALL_MS);
+    parent.set_timeout_ms(10_000);
+    let storage = find_storage(&parent)?;
     let archive = start.take(role::ARCHIVE).ok_or("started without the start-up archive")?;
     let sandbox = program(&archive, "sandbox").ok_or("no sandbox manager in the archive")?;
     let ended = Notification::create().map_err(|e| format!("a notification: {e}"))?;
@@ -146,7 +167,10 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let (system, users) = find_system(&storage, ignore_system)?;
     let mut s = Service {
         endpoint,
+        parent,
         storage,
+        ignore_system,
+        pending: Vec::new(),
         archive,
         sandbox,
         system,
@@ -160,7 +184,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     // section 3).
     match s.users.iter().find(|u| u.kind == Kind::Admin).cloned() {
         Some(admin) => {
-            if let Err(e) = s.start_session(&admin) {
+            if let Err(e) = s.start_session(&admin, History::new()) {
                 granite::println!("users: can't start {}'s session: {e}", admin.name);
             }
         }
@@ -272,6 +296,35 @@ fn set_up(root: &file::Client, name: &str, display: &str) -> Result<Vec<User>, S
 // ------------------------------------------------------------------------------------------
 // Volumes.
 
+/// The storage service, found through the supervisor (note 0018, section 2), waiting up to a
+/// minute for it to be running.
+fn find_storage(parent: &supervisor::Client) -> Result<storage::Client, String> {
+    let end = time::after_ms(60_000);
+    loop {
+        match parent.lookup("storage") {
+            Ok(h) => {
+                let mut c = storage::Client::new(Endpoint(h));
+                c.set_timeout_ms(CALL_MS);
+                return Ok(c);
+            }
+            Err(CallError::Service(SupervisorError::NotReady)) if time::now() < end => {
+                time::sleep_ms(50)
+            }
+            Err(e) => return Err(format!("finding the storage service: {e}")),
+        }
+    }
+}
+
+/// Whether a call failed because what it called has gone (it can be found again).
+fn lost<E>(e: &CallError<E>) -> bool {
+    matches!(
+        e,
+        CallError::Call(
+            granite::Error::PeerGone | granite::Error::Revoked | granite::Error::BadHandle
+        )
+    )
+}
+
 /// The storage service's volumes, once none is still starting (at most a minute after start).
 fn settled(storage: &storage::Client) -> Result<Vec<storage::VolumeInfo>, String> {
     let end = time::after_ms(60_000);
@@ -351,7 +404,8 @@ impl Service {
     }
 
     /// Starts `user`'s session: makes their tree and starts their sandbox manager with it.
-    fn start_session(&mut self, user: &User) -> Result<usize, String> {
+    /// `history` is its sandbox manager's crash history so far.
+    fn start_session(&mut self, user: &User, mut history: History) -> Result<usize, String> {
         let root = &self.system.root;
         let home_path = format!("Users/{}", user.name);
         let home = match open(root, &home_path, READ_WRITE) {
@@ -436,32 +490,158 @@ impl Service {
             if user.kind == Kind::Admin { "administrator" } else { "standard" },
             tree.len()
         );
+        history.started(now_ms());
+        let held = tree
+            .into_iter()
+            .map(|(_, h, _)| {
+                let mut c = file::Client::new(Endpoint(h));
+                c.set_timeout_ms(CHECK_TIMEOUT_MS);
+                c
+            })
+            .collect();
         self.sessions.push(Session {
             number,
             user: user.clone(),
             bit,
             sandbox,
             test_cap,
-            _held: tree.into_iter().map(|(_, h, _)| h).collect(),
+            held,
+            history,
         });
         Ok(self.sessions.len() - 1)
     }
 
-    /// Some sandbox managers have ended: their sessions go. (Starting them again is stage 7.)
+    /// Some sandbox managers have ended: their sessions are started again, with the restart
+    /// policy every supervisor uses (note 0018, section 3). (A sandbox manager stopped here, to
+    /// start its session afresh, is no longer in `sessions` when its end is noticed.)
     fn ended(&mut self, bits: u64) {
-        self.sessions.retain(|s| {
-            if bits & (1 << s.bit) == 0 {
-                return true;
+        let mut i = 0;
+        while i < self.sessions.len() {
+            let s = &self.sessions[i];
+            let state = s.sandbox.process.info().map(|i| i.state);
+            if bits & (1 << s.bit) == 0 || matches!(state, Ok(State::Running | State::Ending)) {
+                i += 1;
+                continue;
             }
-            match s.sandbox.process.info().map(|i| i.state) {
-                Ok(State::Running | State::Ending) => true,
-                state => {
-                    granite::println!("users: {}'s session has ended: {state:?}.", s.user.name);
-                    false
+            let mut s = self.sessions.remove(i);
+            match s.history.crashed(now_ms()) {
+                Decision::Restart { delay_ms } => {
+                    granite::println!(
+                        "users: {}'s session has ended ({state:?}); starting it again.",
+                        s.user.name
+                    );
+                    self.pending.push(Pending {
+                        user: s.user,
+                        history: s.history,
+                        due: now_ms() + delay_ms,
+                    });
+                }
+                Decision::GiveUp => granite::println!(
+                    "users: {}'s session has ended ({state:?}) too often; it is left logged out.",
+                    s.user.name
+                ),
+            }
+        }
+    }
+
+    /// Starts the sessions whose restart is due.
+    fn restart_due(&mut self) {
+        let now = now_ms();
+        let mut i = 0;
+        while i < self.pending.len() {
+            if self.pending[i].due > now {
+                i += 1;
+                continue;
+            }
+            let p = self.pending.remove(i);
+            if let Err(e) = self.start_session(&p.user, p.history) {
+                granite::println!("users: can't start {}'s session again: {e}", p.user.name);
+            }
+        }
+    }
+
+    /// Checks that the storage service, the system volume and every volume a session holds are
+    /// still there. A service or volume that went (its server was restarted) took everything
+    /// opened through it, so the sessions that depended on it start afresh with new
+    /// capabilities (note 0018, section 3): all of them if it was the storage service or the
+    /// system volume, otherwise just the ones that held the volume.
+    fn check(&mut self) {
+        let storage_gone = self.storage.list().is_err_and(|e| lost(&e));
+        let system_gone = self.system.root.info().is_err_and(|e| lost(&e));
+        if storage_gone || system_gone {
+            self.recover(storage_gone);
+            return;
+        }
+        let mut i = 0;
+        while i < self.sessions.len() {
+            if !self.sessions[i].held.iter().any(|c| c.info().is_err_and(|e| lost(&e))) {
+                i += 1;
+                continue;
+            }
+            let s = self.sessions.remove(i);
+            granite::println!(
+                "users: a volume {}'s session held has gone; starting it again.",
+                s.user.name
+            );
+            let _ = s.sandbox.process.stop(0);
+            if let Err(e) = self.start_session(&s.user, s.history) {
+                granite::println!("users: can't start {}'s session again: {e}", s.user.name);
+            }
+        }
+    }
+
+    /// The storage service (if `storage_gone`) or the system volume's server has gone: finds
+    /// them again, reads the users again, and starts every session that was running again.
+    fn recover(&mut self, storage_gone: bool) {
+        granite::println!(
+            "users: the {} has gone; starting the sessions again.",
+            if storage_gone { "storage service" } else { "system volume" }
+        );
+        let mut logged: Vec<(User, History)> = Vec::new();
+        for s in self.sessions.drain(..) {
+            let _ = s.sandbox.process.stop(0);
+            logged.push((s.user, s.history));
+        }
+        logged.extend(self.pending.drain(..).map(|p| (p.user, p.history)));
+        let end = time::after_ms(60_000);
+        let mut find_storage_again = storage_gone;
+        loop {
+            let found = (|| {
+                if find_storage_again {
+                    self.storage = find_storage(&self.parent)?;
+                }
+                find_system(&self.storage, self.ignore_system)
+            })();
+            match found {
+                Ok((system, users)) => {
+                    self.system = system;
+                    self.users = users;
+                    break;
+                }
+                Err(e) if time::now() < end => {
+                    granite::println!("users: {e}; trying again.");
+                    find_storage_again = true;
+                    time::sleep_ms(200);
+                }
+                Err(e) => {
+                    granite::println!("users: {e}; nobody can log in.");
+                    return;
                 }
             }
-        });
+        }
+        for (user, history) in logged {
+            // (Someone may have been removed from `users.txt` meanwhile.)
+            if let Some(u) = self.users.iter().find(|u| u.name == user.name).cloned()
+                && let Err(e) = self.start_session(&u, history)
+            {
+                granite::println!("users: can't start {}'s session again: {e}", u.name);
+            }
+        }
     }
+}
+
+fn now_ms() -> u64 {
+    time::now() / 1_000_000
 }
 
 /// Answers requests for ever.
@@ -474,8 +654,13 @@ fn serve(s: &mut Service) {
         }
     };
     let mut buffer = vec![0u8; 4096];
+    let mut next_check = time::after_ms(CHECK_MS);
     loop {
-        match ep.receive(&mut buffer, time::FOREVER) {
+        let mut wake = next_check;
+        if let Some(due) = s.pending.iter().map(|p| p.due).min() {
+            wake = wake.min(due * 1_000_000);
+        }
+        match ep.receive(&mut buffer, wake) {
             Ok(Event::Call(msg, reply)) => {
                 let badge = msg.badge;
                 let unknown = if badge == DEBUG && s.selftest {
@@ -490,12 +675,17 @@ fn serve(s: &mut Service) {
                 }
             }
             Ok(Event::Signal(bits)) => s.ended(bits),
-            Ok(Event::Gone(_)) => {}
+            Ok(Event::Gone(_)) | Err(granite::Error::TimedOut) => {}
             Err(e) => {
                 granite::println!("users: receive failed: {e}");
                 time::sleep_ms(10);
             }
         }
+        if time::now() >= next_check {
+            s.check();
+            next_check = time::after_ms(CHECK_MS);
+        }
+        s.restart_due();
     }
 }
 
@@ -720,7 +910,7 @@ impl debug_if::Server for Service {
         };
         let i = match self.sessions.iter().position(|s| s.user.name == name) {
             Some(i) => i,
-            None => match self.start_session(&user) {
+            None => match self.start_session(&user, History::new()) {
                 Ok(i) => i,
                 Err(e) => {
                     granite::println!("users: can't start {name}'s session: {e}");
