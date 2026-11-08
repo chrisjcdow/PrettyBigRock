@@ -55,6 +55,7 @@ pub const TESTS: &[Config] = &[
             "Device self-test passed",
             "Sandbox self-test passed",
             "Supervision self-test passed",
+            "Shell self-test passed",
             "the framebuffer",
             "a virtio keyboard and mouse",
             "a full ring",
@@ -83,6 +84,7 @@ pub const TESTS: &[Config] = &[
             "Device self-test passed",
             "Sandbox self-test passed",
             "Supervision self-test passed",
+            "Shell self-test passed",
             "the framebuffer",
             "a virtio keyboard and mouse",
             "a full ring",
@@ -111,6 +113,7 @@ pub const TESTS: &[Config] = &[
             "Device self-test passed",
             "Sandbox self-test passed",
             "Supervision self-test passed",
+            "Shell self-test passed",
             "the framebuffer",
             "a virtio keyboard and mouse",
             "a full ring",
@@ -136,6 +139,7 @@ pub const TESTS: &[Config] = &[
             "Device self-test passed",
             "Sandbox self-test passed",
             "Supervision self-test passed",
+            "Shell self-test passed",
             "the framebuffer",
             "a virtio keyboard and mouse",
             "a full ring",
@@ -240,6 +244,26 @@ pub fn check_fat(work: &Path) -> Result<(), String> {
     }
 }
 
+/// After a boot: the system volume the shell test changed must have been shut down cleanly,
+/// with the shell's changes on it, as `tools/check_shell_after.py` checks.
+pub fn check_shell(work: &Path) -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let out = Command::new("python3")
+        .arg(root.join("tools/check_shell_after.py"))
+        .arg(work.join(crate::testdisks::GPT_DISK))
+        .output()
+        .map_err(|e| format!("couldn't run python3: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the system volume, after the shell test:\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
 /// The QEMU command for a configuration, with the firmware found on this computer.
 fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     let drive = format!("format=raw,file={},snapshot=on", image.display());
@@ -300,10 +324,13 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
         .arg(format!("if=none,id=testdisk,format=raw,file={},snapshot=on", disk.display()));
     cmd.args(["-device", "virtio-blk-pci,drive=testdisk"]);
     // The storage service's test disks (note 0018, section 7, test 2).
-    // The MBR disk is attached writable, so its FAT32 volume can be checked after the boot
-    // ([`check_fat`]); `make` remakes it for each boot.
+    // The MBR and GPT disks are attached writable, so their FAT32 volume and system volume
+    // can be checked after the boot ([`check_fat`], [`check_shell`]); `make` remakes them for
+    // each boot.
     for (i, disk) in crate::testdisks::make(work)?.iter().enumerate() {
-        let snapshot = if disk.ends_with(crate::testdisks::MBR_DISK) { "" } else { ",snapshot=on" };
+        let writable = disk.ends_with(crate::testdisks::MBR_DISK)
+            || disk.ends_with(crate::testdisks::GPT_DISK);
+        let snapshot = if writable { "" } else { ",snapshot=on" };
         cmd.arg("-drive")
             .arg(format!("if=none,id=storage{i},format=raw,file={}{snapshot}", disk.display()));
         cmd.arg("-device").arg(format!("virtio-blk-pci,drive=storage{i}"));
@@ -357,8 +384,23 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     let start = Instant::now();
     let mut qmp = Qmp::new(qmp_path);
     let mut injected = [false; STAGES.len()];
+    let mut typed = 0;
     let result = loop {
         let text = fs::read_to_string(&log).unwrap_or_default();
+        // The shell test: a command each time the console starts waiting for a line.
+        if let Some(at) = text.find(SHELL_READY) {
+            let waiting = text[at..].matches(CONSOLE_READ).count();
+            if typed < SHELL_COMMANDS.len() && typed < waiting {
+                let (command, _, _) = SHELL_COMMANDS[typed];
+                eprintln!("  (typing: {command})");
+                if let Err(e) = qmp.type_line(command) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("typing into QEMU: {e}\n--- serial output ---\n{text}"));
+                }
+                typed += 1;
+            }
+        }
         // The guest says when it is waiting for keys; the keys are pressed from here.
         for (i, stage) in STAGES.iter().enumerate() {
             if !injected[i] && text.contains(stage.marker) {
@@ -406,6 +448,7 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     let _ = child.kill();
     let _ = child.wait();
     let text = result?.replace('\r', "");
+    check_conversation(&text)?;
     let missing: Vec<&str> = cfg.expect.iter().copied().filter(|e| !text.contains(e)).collect();
     // What the guest wrote to its second serial port.
     if cfg.arch == "x86_64" {
@@ -420,6 +463,102 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
         Ok(text)
     } else {
         Err(format!("the report is missing {missing:?}.\n--- serial output ---\n{text}"))
+    }
+}
+
+/// The shell test (docs/design/0018, section 7, test 8; `services/root/src/shelltest.rs`): the
+/// root program prints this once the shell is running on the console.
+const SHELL_READY: &str = "Shell self-test: type commands";
+/// What the console writes to the kernel log, in self-test runs, when it starts waiting for a
+/// line, and in front of every line it shows (`services/console`).
+const CONSOLE_READ: &str = "[console:read] ";
+const CONSOLE_LINE: &str = "[console] ";
+
+/// The commands typed into the shell, in order, each when the console next waits for a line:
+/// (the command; text the console must show in answer; text it mustn't). The answer is
+/// everything shown between the command and the next prompt. `tools/check_shell_after.py`
+/// checks the disk afterwards, so keep the folder, names and text the same as there.
+#[rustfmt::skip]
+const SHELL_COMMANDS: &[(&str, &[&str], &[&str])] = &[
+    ("whoami", &["chris"], &[]),
+    ("ls", &["Documents/", "Pictures/"], &[]),
+    ("mkdir Shelltest", &[], &[]),
+    ("cd Shelltest", &[], &[]),
+    ("pwd", &["/Home/Shelltest"], &[]),
+    ("write hello.txt Hello from the shell", &[], &[]),
+    ("cat hello.txt", &["Hello from the shell"], &[]),
+    ("mv hello.txt greeting.txt", &[], &[]),
+    ("write gone.txt bye", &[], &[]),
+    ("rm gone.txt", &[], &[]),
+    ("ls", &["greeting.txt"], &["hello.txt", "gone.txt"]),
+    ("cat /Home/Shelltest/nothing.txt", &["not found"], &[]),
+    ("run sandboxed greeting.txt -- idle", &["Started sandboxed as app"], &[]),
+    ("grants sandboxed", &[
+        "/Home/Shelltest/greeting.txt  read write  chosen",
+        "/Home/Documents  read write  manifest",
+        "/Home/Pictures  read  manifest",
+    ], &["Music"]),
+    ("revoke sandboxed /Home/Shelltest/greeting.txt",
+        &["Took /Home/Shelltest/greeting.txt back from sandboxed."], &[]),
+    ("grants sandboxed", &["/Home/Documents"], &["greeting.txt"]),
+    ("stop sandboxed", &[], &[]),
+    ("volumes", &["Home", "Pictures"], &[]),
+    ("frobnicate", &["frobnicate: no such command"], &[]),
+    ("shutdown", &["It's now safe to turn off your computer."], &[]),
+];
+
+/// Checks the console's answer to every command in [`SHELL_COMMANDS`].
+fn check_conversation(text: &str) -> Result<(), String> {
+    let Some(at) = text.find(SHELL_READY) else { return Ok(()) };
+    let lines: Vec<&str> = text[at..].lines().collect();
+    let mut i = 0;
+    for (command, want, unwanted) in SHELL_COMMANDS {
+        // The line the console showed when the command was entered: the prompt, then it.
+        let entered = lines[i..]
+            .iter()
+            .position(|l| l.starts_with(CONSOLE_LINE) && l.ends_with(&format!("> {command}")))
+            .ok_or_else(|| format!("the console never showed the command `{command}` entered"))?;
+        i += entered + 1;
+        // Its answer: what the console showed before it next waited for a line. (Other
+        // programs' log lines may be mixed in; only the console's count.)
+        let end = lines[i..]
+            .iter()
+            .position(|l| l.starts_with(CONSOLE_READ))
+            .map_or(lines.len(), |n| i + n);
+        let answer: Vec<&str> =
+            lines[i..end].iter().filter_map(|l| l.strip_prefix(CONSOLE_LINE)).collect();
+        let answer = answer.join("\n");
+        for w in *want {
+            if !answer.contains(w) {
+                return Err(format!("`{command}` answered {answer:?}, without {w:?}"));
+            }
+        }
+        for u in *unwanted {
+            if answer.contains(u) {
+                return Err(format!("`{command}` answered {answer:?}, with {u:?}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The QEMU key (its "qcode") that types `c` on a US keyboard, and whether Shift is needed.
+fn qcode(c: char) -> Option<(String, bool)> {
+    let plain = |k: &str| Some((String::from(k), false));
+    let shifted = |k: &str| Some((String::from(k), true));
+    match c {
+        'a'..='z' | '0'..='9' => plain(&c.to_string()),
+        'A'..='Z' => shifted(&c.to_ascii_lowercase().to_string()),
+        ' ' => plain("spc"),
+        '.' => plain("dot"),
+        '/' => plain("slash"),
+        '-' => plain("minus"),
+        '_' => shifted("minus"),
+        ',' => plain("comma"),
+        '\'' => plain("apostrophe"),
+        '"' => shifted("apostrophe"),
+        ':' => shifted("semicolon"),
+        _ => None,
     }
 }
 
@@ -554,6 +693,39 @@ impl Qmp {
             events.join(",")
         );
         self.command(&json)
+    }
+
+    /// Types `line` and presses Enter on the virtio keyboard, a key at a time, the way a person
+    /// would: each press and release is its own event, with a pause after each so the guest
+    /// has handed back its buffers (see `Flood` below).
+    fn type_line(&mut self, line: &str) -> Result<(), String> {
+        self.connect()?;
+        let key = |name: &str, down: bool| {
+            format!(
+                r#"{{"type":"key","data":{{"down":{down},"key":{{"type":"qcode","data":"{name}"}}}}}}"#
+            )
+        };
+        let mut keys: Vec<(String, bool)> = Vec::new();
+        for c in line.chars() {
+            keys.push(qcode(c).ok_or_else(|| format!("can't type {c:?}"))?);
+        }
+        keys.push((String::from("ret"), false));
+        let pause = || std::thread::sleep(Duration::from_millis(15));
+        for (name, shift) in keys {
+            if shift {
+                self.send(true, &[key("shift", true)])?;
+                pause();
+            }
+            self.send(true, &[key(&name, true)])?;
+            pause();
+            self.send(true, &[key(&name, false)])?;
+            pause();
+            if shift {
+                self.send(true, &[key("shift", false)])?;
+                pause();
+            }
+        }
+        Ok(())
     }
 
     fn inject(&mut self, stage: &Stage) -> Result<(), String> {

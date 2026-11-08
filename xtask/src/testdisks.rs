@@ -185,10 +185,12 @@ pub fn gpt_disk(path: &Path) -> Result<(), String> {
 /// Writes every storage test disk into `work`, and returns their paths.
 /// The MBR disk's file name (the boot tests attach it writable and check it afterwards).
 pub const MBR_DISK: &str = "test-mbr.img";
+/// The GPT disk's file name (attached writable too: its `Home` volume is the system volume,
+/// which the shell test changes and the runner checks afterwards).
+pub const GPT_DISK: &str = "test-gpt.img";
 
 pub fn make(work: &Path) -> Result<Vec<PathBuf>, String> {
-    let (mbr, gpt, empty) =
-        (work.join(MBR_DISK), work.join("test-gpt.img"), work.join("test-empty.img"));
+    let (mbr, gpt, empty) = (work.join(MBR_DISK), work.join(GPT_DISK), work.join("test-empty.img"));
     mbr_disk(&mbr)?;
     gpt_disk(&gpt)?;
     fs::write(&empty, vec![0u8; MIB as usize * 2 * SECTOR]).map_err(|e| format!("{e}"))?;

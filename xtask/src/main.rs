@@ -705,6 +705,7 @@ fn qemu_test(root: &Path, img: &Path) -> Result {
         match qemu::test(cfg, img, &work, BOOT_TEST_LIMIT)
             .and_then(|_| qemu::check_classic(cfg, &work, host.as_deref()))
             .and_then(|_| qemu::check_fat(&work))
+            .and_then(|_| qemu::check_shell(&work))
         {
             Ok(_) => println!("ok"),
             Err(e) => {
