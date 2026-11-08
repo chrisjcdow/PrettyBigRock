@@ -474,3 +474,20 @@ disks made by 1.3, including writing and reading back.
   and the kept DMA memory is released only after the new device manager has switched the
   devices off. Next: stage 8, the console and the shell (Sonnet, with Opus on the screen
   hand-over and review).
+- **Stage 8, the console and the text shell** (Sonnet wrote `lib/font`, `lib/terminal`, the
+  US layout, `services/console`, `lib/shell` and `apps/shell` from self-contained briefs; Opus
+  did the screen hand-over, the wiring and test 8, and reviewed). The screen hand-over found
+  that `Spawn::log` gave every child the kernel log with all rights, so any service, driver or
+  filesystem server could have taken the screen; now only the display driver holds `CONTROL`,
+  passed from the root program through the device manager, and it takes the screen when the
+  console first asks for the framebuffer. The console is a fourth supervised service; the users
+  service gives its terminal to the first administrator's session, whose sandbox manager starts
+  the shell on it and starts it again when it ends. The shell has the commands of note 0018
+  section 6 (without `check`, left for later), with its logic host-tested in `lib/shell`. Test
+  8 types twenty commands into the shell through QEMU's control socket, checks every answer the
+  console mirrors to the serial port, and then checks the system volume with the Python tool.
+  Review fixes: a failed `choose` left a launch waiting for good, so a few failed `run`s
+  blocked every later one (the caller's own oldest launch now makes room); and a shell started
+  again while its predecessor's `read_line` waited would have been refused (a newer
+  `read_line` now takes over). After `shutdown` the users service no longer takes the closed
+  volumes for a crash. Next: stage 9, the final review of M5.
