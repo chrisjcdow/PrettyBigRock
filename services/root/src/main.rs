@@ -21,6 +21,7 @@ mod filestest;
 mod kernel12;
 mod sandboxtest;
 mod selftest;
+mod shelltest;
 mod storagetest;
 mod supervisetest;
 mod supervisor;
@@ -76,7 +77,8 @@ fn main(mut start: granite::Start) -> i32 {
             return 1;
         }
     };
-    for kind in [supervisor::Kind::Devmgr, supervisor::Kind::Storage, supervisor::Kind::Users] {
+    use supervisor::Kind;
+    for kind in [Kind::Devmgr, Kind::Storage, Kind::Console, Kind::Users] {
         if let Err(e) = sup.start(kind, "") {
             granite::println!("The root program can't start {}: {e}", kind.program());
         }

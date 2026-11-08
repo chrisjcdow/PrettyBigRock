@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Christopher Cameron-Dow
 
 //! The root program as supervisor (docs/design/0018-supervision-shell-and-m5-tests.md,
-//! sections 1 to 4): it starts the system services (the device manager, the storage service
-//! and the users service), watches them, and starts one again when it ends, with the restart
+//! sections 1 to 4): it starts the system services (the device manager, the storage service,
+//! the console and the users service), watches them, and starts one again when it ends, with the restart
 //! policy every supervisor uses (`lib/supervise`).
 //!
 //! It also serves `pbr.supervisor` to them: **services find each other through it**, not
@@ -46,9 +46,10 @@ pub enum Kind {
     Devmgr,
     Storage,
     Users,
+    Console,
 }
 
-const KINDS: [Kind; 3] = [Kind::Devmgr, Kind::Storage, Kind::Users];
+const KINDS: [Kind; 4] = [Kind::Devmgr, Kind::Storage, Kind::Users, Kind::Console];
 
 impl Kind {
     /// Its program's name in the start-up archive.
@@ -57,6 +58,7 @@ impl Kind {
             Kind::Devmgr => "devmgr",
             Kind::Storage => "storage",
             Kind::Users => "users",
+            Kind::Console => "console",
         }
     }
 
@@ -65,18 +67,21 @@ impl Kind {
             Kind::Devmgr => 0,
             Kind::Storage => 1,
             Kind::Users => 2,
+            Kind::Console => 3,
         }
     }
 
     /// Its budget. The device manager's covers every driver of the self-test's machines; the
     /// storage service's its 16 MiB cache, volumes in memory and 8 MiB for each filesystem
-    /// server; the users service's three sessions of 16 MiB at once.
+    /// server; the users service's three sessions of 16 MiB at once. The console's holds its
+    /// text grid and its threads (the screen it draws on is the device's own memory).
     fn budget(self) -> u64 {
         const MIB: u64 = 1024 * 1024;
         match self {
             Kind::Devmgr => 96 * MIB,
             Kind::Storage => 128 * MIB,
             Kind::Users => 64 * MIB,
+            Kind::Console => 8 * MIB,
         }
     }
 }
@@ -90,12 +95,14 @@ const DEVMGR_LOG_CONTROL: u32 = 1001;
 pub const STORAGE_ADMIN: u64 = 1;
 
 /// Who may look up what (note 0018, section 2): the service, and the badge the capability
-/// carries (0 for none). Nobody else may look up anything. (The console, from stage 8, will
-/// look up `devices`, and the users service `console`.)
+/// carries (0 for none). Nobody else may look up anything. The console's endpoint serves
+/// `pbr.terminal`: the users service gives it to one session, whose shell uses it.
 fn rule(child: Kind, name: &str) -> Option<(Kind, u64)> {
     match (child, name) {
         (Kind::Storage, "devices") => Some((Kind::Devmgr, 0)),
+        (Kind::Console, "devices") => Some((Kind::Devmgr, 0)),
         (Kind::Users, "storage") => Some((Kind::Storage, STORAGE_ADMIN)),
+        (Kind::Users, "console") => Some((Kind::Console, 0)),
         _ => None,
     }
 }
@@ -388,16 +395,20 @@ impl Inner {
             .map_err(fail)?;
         let (own_rights, archive_rights) = match kind {
             // The device manager only receives on its endpoint.
-            Kind::Devmgr => (rights::RECEIVE, rights::READ | rights::MAP),
-            Kind::Storage => (rights::ALL, rights::READ | rights::MAP),
+            Kind::Devmgr => (rights::RECEIVE, Some(rights::READ | rights::MAP)),
+            Kind::Storage => (rights::ALL, Some(rights::READ | rights::MAP)),
             // The users service passes the archive on to its sandbox managers.
-            Kind::Users => (rights::ALL, rights::READ | rights::MAP | CLIENT),
+            Kind::Users => (rights::ALL, Some(rights::READ | rights::MAP | CLIENT)),
+            // The console starts no programs, so it needs no archive.
+            Kind::Console => (rights::ALL, None),
         };
         let mut caps = vec![
             (role::OWN, own.0.into_raw(), own_rights, true),
             (role::PARENT, parent.0.into_raw(), rights::SEND, true),
-            (role::ARCHIVE, self.archive_mem, archive_rights, false),
         ];
+        if let Some(r) = archive_rights {
+            caps.push((role::ARCHIVE, self.archive_mem, r, false));
+        }
         if kind == Kind::Devmgr {
             for (r, h) in &self.devices {
                 caps.push((*r, h.raw(), rights::ALL, false));
