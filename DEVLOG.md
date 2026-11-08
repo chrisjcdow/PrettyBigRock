@@ -497,3 +497,28 @@ disks made by 1.3, including writing and reading back.
   (The console's first look for devices can time out while the device manager is still
   starting drivers; its watcher finds them a moment later.) Next: stage 9, the final review of
   M5.
+- **Stage 9, documents and review** (Opus; Chris switched the session from Sonnet to Opus for
+  it). Read what M5 added since `856e031`, with most care for everything that hands out,
+  derives, checks or revokes capabilities: kernel 1.2's derived replies, watched badges and
+  tied processes; `lib/fsserve`, `lib/files` and `lib/filetree`; `lib/manifest`'s decision;
+  the sandbox manager, the users service, the storage service's volume capabilities, the
+  supervisor and the screen hand-over. Two things changed:
+  - **every capability given to a client now carries a badge.** The supervisor's lookups for
+    the device manager and the console, and the endpoint each driver hands the device manager,
+    were unbadged copies that could be copied, and a copy of an unbadged capability can be
+    minted with any badge: harmless today, since those services don't tell clients apart, but
+    a hole the day one does (the console's terminal reaches apps granted it);
+  - **`sync` needs the write right**, so a program that can only read a file can't make another
+    program's half-finished save durable (which would break RockFS's atomic save in a crash).
+
+  Questions it raised, for Chris, are in notes 0017 and 0018: the system volume is the first
+  RockFS volume with `System/users.txt`, so a USB stick could be taken for it once there is USB
+  storage (M7); the sandbox manager answers one request at a time, so a trusted program can
+  hold it up or fill its prepared launches; and one client can use all of a filesystem
+  server's records. `run-prettybigrock.bat` gained a virtio keyboard on ARM64, since QEMU's USB
+  keyboard there is one PrettyBigRock can't read yet (untested: batch files can't run in this
+  workspace). Every M5 note is marked built with what building taught, notes 0001, 0006, 0008
+  and 0009 have M5's changes, and README and ROADMAP describe M5 as done. Both "done when"s are
+  met, as note 0018's Changes says how: test 6 (an app checking from the inside that it holds
+  exactly its grants) and test 4 (the disk 1.3 made, compared file by file, changed, and found
+  clean afterwards by `rockfs.py` and 1.3's own code).
