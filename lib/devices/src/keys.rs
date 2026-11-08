@@ -365,6 +365,48 @@ pub fn from_evdev(code: u16) -> Option<u16> {
     EVDEV.iter().find(|(c, _)| *c == code).map(|(_, k)| *k)
 }
 
+/// The character a key types on a US keyboard, with Shift held (`shift`) or not. `None` for
+/// keys that type no character (Enter, Tab, the arrows, Shift itself, the function keys) and
+/// for codes that aren't keys at all.
+///
+/// This is the whole of the "layout" for now: a keyboard sends *which key* was pressed, by its
+/// position (note 0011, section 8), and a layout says what that position types. Other layouts
+/// come with the input service (note 0018, open questions). Caps Lock isn't handled.
+pub fn us(code: u16, shift: bool) -> Option<char> {
+    // The letters are numbered in order, so their characters are worked out, not listed.
+    if (key::A..=key::Z).contains(&code) {
+        let letter = b'a' + (code - key::A) as u8;
+        return Some(char::from(if shift { letter.to_ascii_uppercase() } else { letter }));
+    }
+    // Everything else is a pair: what the key types plain, and with Shift.
+    let (plain, shifted) = match code {
+        key::D1 => ('1', '!'),
+        key::D2 => ('2', '@'),
+        key::D3 => ('3', '#'),
+        key::D4 => ('4', '$'),
+        key::D5 => ('5', '%'),
+        key::D6 => ('6', '^'),
+        key::D7 => ('7', '&'),
+        key::D8 => ('8', '*'),
+        key::D9 => ('9', '('),
+        key::D0 => ('0', ')'),
+        key::SPACE => (' ', ' '),
+        key::MINUS => ('-', '_'),
+        key::EQUALS => ('=', '+'),
+        key::LEFT_BRACKET => ('[', '{'),
+        key::RIGHT_BRACKET => (']', '}'),
+        key::BACKSLASH => ('\\', '|'),
+        key::SEMICOLON => (';', ':'),
+        key::APOSTROPHE => ('\'', '"'),
+        key::GRAVE => ('`', '~'),
+        key::COMMA => (',', '<'),
+        key::PERIOD => ('.', '>'),
+        key::SLASH => ('/', '?'),
+        _ => return None,
+    };
+    Some(if shift { shifted } else { plain })
+}
+
 /// One step of the set 1 decoder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scan {
@@ -493,6 +535,95 @@ mod tests {
             for (i, a) in t.iter().enumerate() {
                 assert!(t.iter().skip(i + 1).all(|b| a.0 != b.0), "{a:?}");
             }
+        }
+    }
+
+    #[test]
+    fn the_us_layout_types_letters_digits_and_punctuation() {
+        for (i, c) in ('a'..='z').enumerate() {
+            let code = key::A + i as u16;
+            assert_eq!(us(code, false), Some(c));
+            assert_eq!(us(code, true), Some(c.to_ascii_uppercase()));
+        }
+        let others = [
+            (key::D1, '1', '!'),
+            (key::D2, '2', '@'),
+            (key::D3, '3', '#'),
+            (key::D4, '4', '$'),
+            (key::D5, '5', '%'),
+            (key::D6, '6', '^'),
+            (key::D7, '7', '&'),
+            (key::D8, '8', '*'),
+            (key::D9, '9', '('),
+            (key::D0, '0', ')'),
+            (key::SPACE, ' ', ' '),
+            (key::MINUS, '-', '_'),
+            (key::EQUALS, '=', '+'),
+            (key::LEFT_BRACKET, '[', '{'),
+            (key::RIGHT_BRACKET, ']', '}'),
+            (key::BACKSLASH, '\\', '|'),
+            (key::SEMICOLON, ';', ':'),
+            (key::APOSTROPHE, '\'', '"'),
+            (key::GRAVE, '`', '~'),
+            (key::COMMA, ',', '<'),
+            (key::PERIOD, '.', '>'),
+            (key::SLASH, '/', '?'),
+        ];
+        for (code, plain, shifted) in others {
+            assert_eq!((us(code, false), us(code, true)), (Some(plain), Some(shifted)));
+        }
+    }
+
+    /// Every code in the table either types a printable character (a different one for each
+    /// key and shift state, except that both states of Space are a space) or types nothing in
+    /// both states.
+    #[test]
+    fn the_us_layout_covers_the_whole_table() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut typing = 0;
+        for (name, code) in ALL {
+            match (us(*code, false), us(*code, true)) {
+                (None, None) => {}
+                (Some(plain), Some(shifted)) => {
+                    typing += 1;
+                    for c in [plain, shifted] {
+                        assert!(c.is_ascii_graphic() || c == ' ', "{name} types {c:?}");
+                    }
+                    assert!(seen.insert(plain), "{name} types {plain:?} twice over");
+                    if *code != key::SPACE {
+                        assert!(seen.insert(shifted), "{name} types {shifted:?} twice over");
+                    }
+                }
+                other => panic!("{name} types only in one state: {other:?}"),
+            }
+        }
+        // 26 letters, 10 digits, Space and 11 punctuation keys.
+        assert_eq!(typing, 48);
+        // Together they can type every printable ASCII character.
+        for c in ' '..='~' {
+            assert!(seen.contains(&c), "{c:?} can't be typed");
+        }
+        for code in [
+            key::ENTER,
+            key::ESCAPE,
+            key::BACKSPACE,
+            key::TAB,
+            key::CAPS_LOCK,
+            key::F1,
+            key::F12,
+            key::DELETE,
+            key::UP,
+            key::LEFT_SHIFT,
+            key::RIGHT_META,
+        ] {
+            assert_eq!((us(code, false), us(code, true)), (None, None), "{code}");
+        }
+    }
+
+    #[test]
+    fn the_us_layout_ignores_codes_that_are_not_keys() {
+        for code in [0, 84, 85, 255, 256, 1000, u16::MAX - 1, u16::MAX] {
+            assert_eq!((us(code, false), us(code, true)), (None, None), "{code}");
         }
     }
 
