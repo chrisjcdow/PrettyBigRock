@@ -52,7 +52,7 @@ struct Space { total: u64, free: u64, label: string<64>, filesystem: string<16> 
 @11 fn write(offset: u64, data: bytes<65536>) -> (written: u32) error FileError;
 /// Makes the file `size` bytes long.
 @12 fn set_size(size: u64) -> () error FileError;
-/// Makes this file's changes durable. Returns when they are on the disk.
+/// Makes this file's changes durable (needs `Write`). Returns when they are on the disk.
 @13 fn sync() -> () error FileError;
 
 /// Opens what `path` names, with at most this capability's rights.

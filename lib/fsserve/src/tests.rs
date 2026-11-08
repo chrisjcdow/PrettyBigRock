@@ -201,8 +201,14 @@ fn saving_when_the_last_writer_goes() {
     c.set_size(h, 1).unwrap();
     c.sync(h).unwrap();
     assert_eq!(c.fs.commits, 2);
-    c.gone(h);
+    // A reader can't make a writer's changes durable before the writer says so.
+    let (ro, _) = c.open(root, "f", READ).unwrap();
+    c.set_size(h, 2).unwrap();
+    assert_eq!(c.sync(ro), Err(Error::NoRight));
     assert_eq!(c.fs.commits, 2);
+    c.gone(ro);
+    c.gone(h);
+    assert_eq!(c.fs.commits, 3);
 }
 
 #[test]

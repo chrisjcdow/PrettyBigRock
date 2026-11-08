@@ -349,9 +349,13 @@ impl<F: Filesystem> Core<F> {
         Ok(())
     }
 
-    /// Makes the file's changes durable.
+    /// Makes the file's changes durable. Needs `WRITE`: otherwise a program that can only read
+    /// a file could make another's half-finished save durable, and a crash then would leave the
+    /// file half saved, which "write everything, then `sync`" promises never happens on RockFS
+    /// (note 0014, section 6).
     pub fn sync(&mut self, badge: Badge) -> Result<(), Error> {
         let o = self.file(badge)?;
+        Self::need(&o, WRITE)?;
         Ok(self.fs.commit(o.node)?)
     }
 
