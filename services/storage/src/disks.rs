@@ -8,6 +8,13 @@
 //! (note 0012). When that happens, calls to it fail with `PEER_GONE`; [`Disks`] asks the device
 //! manager for the new driver and repeats the call. Block reads, writes and flushes do the same
 //! thing if done twice, so repeating one is safe, and filesystem servers never notice.
+//!
+//! The device manager itself may end and be restarted by the root program (note 0018), taking
+//! every driver with it. Calls to it then fail with `PEER_GONE` too, and [`Disks`] looks it up
+//! again through the supervisor (`pbr.supervisor.lookup("devices")`) and carries on the same way.
+//! A disk is found again under the same number (the new device manager finds the devices in the
+//! same order) and must still have the same size, or its volumes fail rather than reach a
+//! different disk.
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -18,6 +25,7 @@ use granite::{Error, time};
 use pbr_blockcache::{Backend, IoError};
 use pbr_interfaces::pbr_block::{self as block, BlockError};
 use pbr_interfaces::pbr_devices::{self as devices, DeviceClass, DeviceState, DevicesError};
+use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
 
 /// Bytes in a sector: the only size supported in M5.
 pub const SECTOR: usize = 512;
@@ -25,8 +33,9 @@ pub const SECTOR: usize = 512;
 pub const RAM_DISK_BASE: u32 = 1000;
 /// How long a single call to a driver may take before the disk counts as failed.
 const CALL_MS: u64 = 30_000;
-/// How long to keep asking for a restarted driver.
-const RECONNECT_MS: u64 = 10_000;
+/// How long to keep asking for a restarted driver (or device manager, which restarts its
+/// drivers too).
+const RECONNECT_MS: u64 = 30_000;
 
 /// One disk.
 pub struct Disk {
@@ -42,7 +51,10 @@ pub struct Disk {
 
 /// Every disk: real ones through their drivers, and ones in memory.
 pub struct Disks {
-    devices: devices::Client,
+    /// The supervisor, to find the device manager through.
+    supervisor: supervisor::Client,
+    /// The device manager's `pbr.devices`, once found (and until it goes).
+    devices: Option<devices::Client>,
     pub real: BTreeMap<u32, Disk>,
     /// Disks in memory, by number: their bytes.
     pub ram: BTreeMap<u32, Vec<u8>>,
@@ -54,9 +66,45 @@ fn connection_lost<E>(e: &CallError<E>) -> bool {
 }
 
 impl Disks {
-    /// No disks yet; `devices` is the device manager's `pbr.devices`.
-    pub fn new(devices: devices::Client) -> Disks {
-        Disks { devices, real: BTreeMap::new(), ram: BTreeMap::new() }
+    /// No disks yet; the device manager is found through `supervisor`.
+    pub fn new(supervisor: supervisor::Client) -> Disks {
+        Disks { supervisor, devices: None, real: BTreeMap::new(), ram: BTreeMap::new() }
+    }
+
+    /// Makes `call` to the device manager, finding it through the supervisor first if need be,
+    /// and again if it went away (until `RECONNECT_MS` has passed).
+    fn with_devices<T>(
+        &mut self,
+        call: impl Fn(&devices::Client) -> Result<T, CallError<DevicesError>>,
+    ) -> Result<T, CallError<DevicesError>> {
+        let end = time::after_ms(RECONNECT_MS);
+        loop {
+            if self.devices.is_none() {
+                match self.supervisor.lookup("devices") {
+                    Ok(h) => {
+                        let mut c = devices::Client::new(Endpoint(h));
+                        c.set_timeout_ms(CALL_MS);
+                        self.devices = Some(c);
+                    }
+                    Err(e) if time::now() < end => {
+                        if !matches!(e, CallError::Service(SupervisorError::NotReady)) {
+                            granite::println!("storage: can't find the device manager: {e}");
+                        }
+                        time::sleep_ms(50);
+                        continue;
+                    }
+                    Err(_) => return Err(CallError::Call(Error::PeerGone)),
+                }
+            }
+            let Some(d) = &self.devices else { continue };
+            match call(d) {
+                Err(e) if connection_lost(&e) && time::now() < end => {
+                    granite::println!("storage: the device manager has gone; finding it again.");
+                    self.devices = None;
+                }
+                r => return r,
+            }
+        }
     }
 
     /// Finds every disk the device manager serves, waiting up to 30 seconds for drivers that
@@ -64,7 +112,7 @@ impl Disks {
     pub fn find(&mut self) {
         let end = time::after_ms(30_000);
         loop {
-            let list = match self.devices.list() {
+            let list = match self.with_devices(|d| d.list()) {
                 Ok(l) => l,
                 Err(e) => {
                     granite::println!("storage: can't list devices: {e}");
@@ -98,14 +146,18 @@ impl Disks {
     }
 
     /// Opens device `id`'s driver. `Err(true)` means "not ready yet, ask again".
-    fn connect(&self, id: u32) -> Result<block::Client, bool> {
-        match self.devices.open(id) {
+    fn connect(&mut self, id: u32) -> Result<block::Client, bool> {
+        match self.with_devices(|d| d.open(id)) {
             Ok(h) => {
                 let mut c = block::Client::new(Endpoint(h));
                 c.set_deadline(time::after_ms(CALL_MS));
                 Ok(c)
             }
-            Err(CallError::Service(DevicesError::NotReady)) => Err(true),
+            // Not ready, or not there yet (a restarted device manager lists its devices as it
+            // finds them).
+            Err(CallError::Service(DevicesError::NotReady | DevicesError::NoSuchDevice)) => {
+                Err(true)
+            }
             Err(_) => Err(false),
         }
     }
@@ -145,6 +197,21 @@ impl Disks {
         loop {
             match self.connect(id) {
                 Ok(c) => {
+                    // It must be the same disk: the same size (and read-only or not).
+                    let same = c.info().is_ok_and(|i| {
+                        self.real.get(&id).is_some_and(|d| {
+                            i.sector_count == d.sectors && i.read_only == d.read_only
+                        })
+                    });
+                    if !same {
+                        granite::println!(
+                            "storage: disk {id} isn't the disk it was; its volumes fail."
+                        );
+                        if let Some(d) = self.real.get_mut(&id) {
+                            d.failed = true;
+                        }
+                        return false;
+                    }
                     granite::println!("storage: reconnected to disk {id}'s driver.");
                     if let Some(d) = self.real.get_mut(&id) {
                         d.client = Some(c);

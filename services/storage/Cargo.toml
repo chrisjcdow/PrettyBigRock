@@ -21,6 +21,7 @@ pbr-blockcache = { path = "../../lib/blockcache" }
 pbr-granite = { path = "../../lib/granite" }
 pbr-interfaces = { path = "../../lib/interfaces" }
 pbr-partition = { path = "../../lib/partition" }
+pbr-supervise = { path = "../../lib/supervise" }
 
 [lints]
 workspace = true

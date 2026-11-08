@@ -46,20 +46,19 @@ use granite::time;
 use pbr_archive::Archive;
 use pbr_blockcache::{Cache, Error as CacheError};
 use pbr_interfaces::pbr_block::{self as block, BlockError, BlockInfo};
-use pbr_interfaces::pbr_devices as devices;
 use pbr_interfaces::pbr_fs_host::{self as host, FsFailure, HostError};
 use pbr_interfaces::pbr_storage::{
     self as storage, Filesystem, StorageError, VolumeInfo, VolumeState,
 };
 use pbr_interfaces::pbr_storage_debug::{self as debug, DebugError};
+use pbr_supervise::{Decision, History};
 
 granite::main!(main);
 
 /// Start-up roles: this service's endpoint (with every right, so it can mint capabilities from
-/// it), the start-up archive (for the filesystem servers' programs) and the device manager's
-/// `pbr.devices`.
+/// it), the start-up archive (for the filesystem servers' programs) and its supervisor's
+/// `pbr.supervisor` (role 5), through which it finds the device manager (note 0018, section 2).
 const OWN: u32 = role::OWN;
-const DEVICES: u32 = 1001;
 /// The roles a filesystem server gets its volume's `pbr.block` and its stop notification at
 /// (`services/rockfs`, `services/fat`).
 const SERVER_BLOCK: u32 = 1003;
@@ -113,6 +112,10 @@ struct Volume {
     in_memory: bool,
     /// Its filesystem server, while one runs.
     server: Option<Server>,
+    /// Its server's crashes, for the restart policy (`lib/supervise`).
+    history: History,
+    /// When its server is due to be started again (milliseconds), after a crash.
+    due: Option<u64>,
 }
 
 /// A filesystem server this service started.
@@ -127,6 +130,9 @@ struct Server {
     _control: Option<Endpoint>,
     /// Asked to unmount.
     unmounting: bool,
+    /// It said it couldn't serve the volume (damaged, or not a filesystem it knows): ending
+    /// then is no crash, and it isn't restarted.
+    gave_up: bool,
 }
 
 /// A `shutdown` waiting for servers to finish saving.
@@ -164,13 +170,16 @@ fn main(mut start: granite::Start) -> i32 {
 fn run(start: &mut granite::Start) -> Result<(), String> {
     let selftest = start.args().split_whitespace().any(|w| w == "selftest");
     let endpoint = Endpoint(start.take(OWN).ok_or("started without an endpoint to serve")?);
-    let devices = Endpoint(start.take(DEVICES).ok_or("started without the device manager")?);
+    let mut parent = pbr_interfaces::pbr_supervisor::Client::new(Endpoint(
+        start.take(role::PARENT).ok_or("started without a supervisor")?,
+    ));
+    parent.set_timeout_ms(10_000);
     let [rockfs, fat] = match start.take(role::ARCHIVE) {
         Some(h) => programs(Memory(h), ["rockfs", "fat"]),
         None => [None, None],
     };
     let mut s = Storage {
-        disks: Disks::new(devices::Client::new(devices)),
+        disks: Disks::new(parent),
         cache: Cache::new(CACHE_PAGES),
         volumes: Vec::new(),
         endpoint,
@@ -301,6 +310,8 @@ impl Storage {
             read_only,
             in_memory,
             server: None,
+            history: History::new(),
+            due: None,
         });
         id
     }
@@ -372,8 +383,15 @@ impl Storage {
         match started {
             Ok(spawned) => {
                 v.state = VolumeState::Starting;
-                v.server =
-                    Some(Server { spawned, stop, root: None, _control: None, unmounting: false });
+                v.history.started(now_ms());
+                v.server = Some(Server {
+                    spawned,
+                    stop,
+                    root: None,
+                    _control: None,
+                    unmounting: false,
+                    gave_up: false,
+                });
             }
             Err(e) => {
                 granite::println!("storage: volume {id}: can't start its server: {e}");
@@ -382,8 +400,13 @@ impl Storage {
         }
     }
 
-    /// Volume `id`'s server has ended (its `pbr.fs.host` capability went).
+    /// Volume `id`'s server has ended (its `pbr.fs.host` capability went). One that crashed is
+    /// started again on the same volume, with the restart policy every supervisor uses (note
+    /// 0018, section 3). Every capability for the volume failed with it (nothing can receive on
+    /// its server's endpoint any more), so whoever held the volume's root asks for it again; a
+    /// RockFS volume left unclean is checked when the new server mounts it.
     fn server_gone(&mut self, id: u32) {
+        let stopping = self.shut_down || self.shutting_down.is_some();
         let Some(v) = self.volume_mut(id) else { return };
         let Some(server) = v.server.take() else { return };
         let status = exit_status(&server.spawned);
@@ -396,6 +419,22 @@ impl Storage {
             } else {
                 let state = server.spawned.process.info().map(|i| i.state);
                 granite::println!("storage: volume {id} wasn't saved cleanly ({state:?}).");
+            }
+        } else if !server.gave_up && !stopping {
+            match v.history.crashed(now_ms()) {
+                Decision::Restart { delay_ms } => {
+                    granite::println!(
+                        "storage: volume {id}'s server stopped ({status:?}); starting it again."
+                    );
+                    v.state = VolumeState::Starting;
+                    v.due = Some(now_ms() + delay_ms);
+                }
+                Decision::GiveUp => {
+                    granite::println!(
+                        "storage: volume {id}'s server stopped ({status:?}) too often; the volume fails."
+                    );
+                    v.state = VolumeState::Failed;
+                }
             }
         } else if v.state != VolumeState::Damaged && v.state != VolumeState::Unsupported {
             granite::println!("storage: volume {id}'s server stopped ({status:?}).");
@@ -443,6 +482,24 @@ impl Storage {
         self.volumes.iter().find(|v| v.id == id)
     }
 
+    /// Starts the servers whose restart is due.
+    fn restart_due(&mut self) {
+        let now = now_ms();
+        let due: Vec<u32> =
+            self.volumes.iter().filter(|v| v.due.is_some_and(|t| t <= now)).map(|v| v.id).collect();
+        for id in due {
+            if let Some(v) = self.volume_mut(id) {
+                v.due = None;
+            }
+            self.start_server(id, None);
+        }
+    }
+
+    /// When the next server restart is due (nanoseconds on the kernel's clock), if any.
+    fn next_due(&self) -> Option<u64> {
+        self.volumes.iter().filter_map(|v| v.due).min().map(|ms| ms * 1_000_000)
+    }
+
     /// A capability for volume `id`'s `pbr.block`. It can be sent (and moved, which is how it
     /// travels in a message), but not copied: it reaches only that one volume anyway.
     fn volume_cap(&self, id: u32) -> granite::Result<Endpoint> {
@@ -467,7 +524,10 @@ fn serve(s: &mut Storage, selftest: bool) {
     let mut next_tick = time::after_ms(TICK_MS);
     granite::println!("storage: serving {} volumes.", s.volumes.len());
     loop {
-        let wake = s.shutting_down.as_ref().map_or(next_tick, |sd| next_tick.min(sd.deadline));
+        let mut wake = s.shutting_down.as_ref().map_or(next_tick, |sd| next_tick.min(sd.deadline));
+        if let Some(t) = s.next_due() {
+            wake = wake.min(t);
+        }
         match ep.receive(&mut buffer, wake) {
             Ok(Event::Call(msg, reply)) => {
                 let badge = msg.badge;
@@ -499,6 +559,7 @@ fn serve(s: &mut Storage, selftest: bool) {
             }
         }
         s.finish_shutdown();
+        s.restart_due();
         if time::now() >= next_tick {
             if !s.shut_down {
                 s.cache.write_back_older(&mut s.disks, now_ms().saturating_sub(WRITE_BACK_MS));
@@ -850,6 +911,9 @@ impl host::Server for Host<'_> {
             FsFailure::Unsupported => VolumeState::Unsupported,
             _ => VolumeState::Failed,
         };
+        if let Some(server) = &mut v.server {
+            server.gave_up = true;
+        }
         granite::println!("storage: volume {} can't be served: {reason:?}.", v.id);
         answered(reply.ok())
     }
@@ -875,5 +939,22 @@ impl debug::Server for Debug<'_> {
         let s = &*self.0;
         let dirty: usize = s.volumes.iter().map(|v| s.cache.dirty_pages(v.id)).sum();
         answered(reply.ok(s.cache.pages() as u32, dirty as u32))
+    }
+
+    fn stop_server(&mut self, id: u32, reply: debug::stop_server::Reply) {
+        let stopped = self
+            .0
+            .volume(id)
+            .and_then(|v| v.server.as_ref())
+            .is_some_and(|server| server.spawned.process.stop(9).is_ok());
+        answered(if stopped { reply.ok() } else { reply.err(DebugError::NoSuchVolume) })
+    }
+
+    fn flush(&mut self, reply: debug::flush::Reply) {
+        let s = &mut *self.0;
+        answered(match s.cache.flush_all(&mut s.disks) {
+            Ok(()) => reply.ok(),
+            Err(_) => reply.fail(),
+        })
     }
 }
