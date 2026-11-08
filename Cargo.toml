@@ -7,6 +7,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "apps/shell",
     "boot/bios",
     "boot/common",
     "boot/uefi",

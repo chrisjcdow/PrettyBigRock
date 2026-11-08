@@ -183,6 +183,14 @@ fn call_reason<E>(e: &CallError<E>) -> Reason {
     }
 }
 
+/// Why a `pbr.file` call failed: the filesystem's own answer, or the call not getting through.
+pub fn file_reason(e: &CallError<FileError>) -> Reason {
+    match e {
+        CallError::Service(e) => Reason::from(*e),
+        other => call_reason(other),
+    }
+}
+
 /// Which `pbr.sandbox` call failed, because a few errors read differently for each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SandboxOp {
@@ -345,6 +353,13 @@ mod tests {
         assert_eq!(Reason::from(granite::Error::TimedOut), Reason::TimedOut);
         let other = Reason::from(granite::Error::BadHandle).to_string();
         assert!(other.starts_with("the request failed"), "{other}");
+    }
+
+    #[test]
+    fn file_calls() {
+        assert_eq!(file_reason(&CallError::Service(FileError::NoSpace)), Reason::NoSpace);
+        assert_eq!(file_reason(&CallError::Call(granite::Error::PeerGone)), Reason::ServiceGone);
+        assert_eq!(file_reason(&CallError::Malformed), Reason::Garbled);
     }
 
     #[test]

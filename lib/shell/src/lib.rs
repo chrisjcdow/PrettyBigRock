@@ -45,4 +45,4 @@ pub mod words;
 pub use command::{AppRef, Command, LineError, ParseError, Problem, parse, parse_line};
 pub use files::FileShell;
 pub use fs::{Fs, Item, Space, Stat};
-pub use reason::{Failure, Reason, SandboxOp, UsersOp, sandbox_reason, users_reason};
+pub use reason::{Failure, Reason, SandboxOp, UsersOp, file_reason, sandbox_reason, users_reason};
