@@ -125,6 +125,32 @@ pub fn update_command(cfg: &mut impl Config, set: u16, clear: u16) {
     cfg.write(4, u32::from((now | set) & !clear));
 }
 
+/// Switches a function off, so that it can't write to memory or raise an interrupt: MSI and
+/// MSI-X off, then bus mastering (which is what lets a device do DMA) and its memory and I/O
+/// decoding. The device manager does this to a device after its driver crashes (note 0012,
+/// section 3), and to every device it is about to drive when it starts, in case an earlier
+/// device manager left one running (note 0018, section 4).
+pub fn quiet(cfg: &mut impl Config) {
+    let (caps, _) = capabilities(cfg);
+    for c in &caps {
+        let at = u16::from(c.offset);
+        match c.id {
+            // The message control register is the top half of the capability's first dword;
+            // its bit 0 enables MSI, and MSI-X's bit 15 enables MSI-X.
+            cap::MSI => {
+                let v = cfg.read(at);
+                cfg.write(at, v & !(1 << 16));
+            }
+            cap::MSIX => {
+                let v = cfg.read(at);
+                cfg.write(at, v & !(1 << 31));
+            }
+            _ => {}
+        }
+    }
+    update_command(cfg, 0, command::BUS_MASTER | command::MEMORY | command::IO);
+}
+
 /// A capability in the function's list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capability {
@@ -790,5 +816,31 @@ pub(crate) mod tests {
             let (caps, _) = capabilities(&mut raw);
             assert!(caps.len() <= MAX_CAPABILITIES);
         }
+    }
+
+    /// Switching a function off clears exactly MSI's and MSI-X's enable bits and the command
+    /// register's bus mastering and decoding, and leaves everything else.
+    #[test]
+    fn quieting() {
+        struct Cfg([u32; 64]);
+        impl Config for Cfg {
+            fn read(&mut self, o: u16) -> u32 {
+                self.0[usize::from(o) / 4]
+            }
+            fn write(&mut self, o: u16, v: u32) {
+                self.0[usize::from(o) / 4] = v;
+            }
+        }
+        let mut c = Cfg([0; 64]);
+        // Status: a capability list; command: I/O, memory, bus master and INTx disable.
+        c.0[1] = 0x0010_0000 | 0x0407;
+        c.0[0x34 / 4] = 0x40;
+        // MSI at 0x40 (enabled, 64-bit), MSI-X at 0x50 (enabled, function masked, 8 entries).
+        c.0[0x40 / 4] = 0x0081_5005;
+        c.0[0x50 / 4] = 0xC007_0011;
+        quiet(&mut c);
+        assert_eq!(c.0[1] & 0xFFFF, 0x0400);
+        assert_eq!(c.0[0x40 / 4], 0x0080_5005);
+        assert_eq!(c.0[0x50 / 4], 0x4007_0011);
     }
 }
