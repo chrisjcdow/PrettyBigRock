@@ -293,4 +293,20 @@ For an app launched by the sandbox manager, M5's tests (note 0018) check that:
     (stage 8). Starting a session again when its sandbox manager ends is stage 7.
   - **Testing**: `pbr.users.debug` (self-test runs only, like `pbr.storage.debug`) gives the
     root program each session's `pbr.users` and `pbr.sandbox`, so it can stand in for the shell.
+- 8 November 2026, M5 stage 8: **the terminal and the shell as built.**
+  - The users service finds the console through the supervisor and gives its terminal to one
+    session, the first administrator's (the one started at start-up), at the sandbox manager's
+    role 1002. Its 500 ms check also watches the console: if it goes or comes, that session
+    starts afresh with the terminal there is now.
+  - That session's sandbox manager starts `apps/shell` on it, as an ordinary launch from the
+    shell's manifest (`trusted`, `terminal`), and starts it again when it ends, with the
+    restart policy, unless the terminal itself has gone. An app granted `terminal` gets it at
+    role 1002, next to `pbr.sandbox` (1000) and `pbr.users` (1001). A session without the
+    terminal gives none, even to an app whose manifest asks for it.
+  - `pbr.users` gained `shutdown` (administrators only): the storage service saves every
+    volume. Afterwards the users service no longer finds or restarts anything.
+  - A launch can't be cancelled, so one a caller gave up on (a `choose` that failed) used to
+    take one of the 8 places for good. When they are all taken, the caller's own oldest launch
+    now makes room (never another caller's), and launches prepared by trusted apps that have
+    ended go.
 

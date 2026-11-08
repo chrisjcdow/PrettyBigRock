@@ -307,4 +307,34 @@ traits, which are settled first.
     after the time it reports having switched its devices off, and that the right number of
     memory objects is kept again afterwards. The runner waits for `Supervision self-test
     passed`.
+- 8 November 2026, stage 8 (built): the console and the shell.
+  - **The screen hand-over** is in note 0010's Changes: only the display driver can take the
+    screen, and it does so when the console first asks for the framebuffer.
+  - **The console** (`services/console`, with `lib/terminal` and `lib/font`) is a fourth
+    supervised service, started between storage and users, which may look up `devices`; the
+    users service may look up `console`. One thread serves `pbr.terminal` and draws; a watcher
+    thread finds the screen and keyboards (and finds them again after a driver or device
+    manager restart), and a thread per keyboard reads its ring, waking the main thread through
+    a notification bound to its endpoint. A newer `read_line` takes over from a waiting one,
+    which is answered `Busy`: otherwise a shell started again while its predecessor's
+    `read_line` waited would be refused until someone pressed Enter. The screen must have 4
+    bytes a pixel for now (QEMU's firmware screens do); otherwise the console works without
+    one.
+  - **Who starts the shell**: the sandbox manager of the session that holds the terminal (note
+    0017, Changes), not the console.
+  - **The shell's commands** are as in section 6 except `check VOLUME`, left out of M5: it
+    would need a check operation in every filesystem server. `run` takes the app's own
+    arguments after `--` (`run APP [FILE…] [-- ARGS…]`). `shutdown` is `pbr.users.shutdown`.
+    Its logic is in `lib/shell`, host-tested; `apps/shell` is the glue.
+  - **Test 8 as built** (`services/root/src/shelltest.rs`): it runs straight after the
+    supervision test, since the 1.3 disk test shuts the storage service down too. The console
+    mirrors to the kernel log in self-test runs (`[console] <text>`, `[console:read]
+    <prompt>` when it waits, `[console:clear]`); the runner types a command each time the
+    console waits, through QMP into the virtio keyboard, a key at a time, and checks each
+    answer (`SHELL_COMMANDS` in `xtask/src/qemu.rs`): `whoami`, `ls`, `mkdir`, `cd`, `pwd`,
+    `write`, `cat`, `mv`, `rm`, an error, `run` with a chosen file, `grants`, `revoke`,
+    `stop`, `volumes`, an unknown command and `shutdown`. The root program waits for the
+    shutdown and starts a new storage service for the tests after. The GPT test disk is now
+    attached writable, and `tools/check_shell_after.py` checks its system volume afterwards:
+    shut down cleanly, undamaged, with the shell's file there and the removed one gone.
 
