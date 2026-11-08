@@ -15,86 +15,57 @@
 //! user's rules between launches (rules are read afresh at each launch).
 
 use crate::storagetest::Storage;
+use crate::supervisor::{Kind, Supervisor};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use granite::endpoint::Endpoint;
 use granite::interface::CallError;
 use granite::notification::Notification;
-use granite::process::{self, Process, Spawn, Spawned, State, role as start_role};
+use granite::process::{Process, State};
 use granite::sys::rights;
 use granite::time;
-use pbr_archive::Archive;
 use pbr_interfaces::pbr_file::{self as file, FileError, FileRights, NodeKind};
 use pbr_interfaces::pbr_sandbox::{self as sandbox, GrantReason, SandboxError};
 use pbr_interfaces::pbr_storage::{Filesystem, VolumeState};
 use pbr_interfaces::pbr_users::{self as users, User, UserKind, UsersError};
 use pbr_interfaces::pbr_users_debug as users_debug;
 
-/// The users service's start-up role for `pbr.storage` (`services/users`'s `STORAGE`).
-const STORAGE: u32 = 1001;
 /// The badge of the root program's `pbr.users.debug` (`services/users`'s `DEBUG`).
-const DEBUG: u64 = 1;
-/// The users service's budget: up to three sessions of 16 MiB at once, and its own needs.
-const BUDGET: u64 = 64 * 1024 * 1024;
+pub const DEBUG: u64 = 1;
 const CLIENT: u32 = rights::SEND | rights::TRANSFER | rights::DUPLICATE;
 const R: FileRights = FileRights::READ;
 const RW: FileRights = FileRights(FileRights::READ.0 | FileRights::WRITE.0);
 
 /// The users service, and the root program's way to talk to it.
 pub struct Users {
-    pub process: Spawned,
+    pub process: Process,
     pub debug: users_debug::Client,
 }
 
-/// Starts the users service, giving it a copy of the root program's `pbr.storage` and the
-/// start-up archive (its sandbox managers read apps from it).
-pub fn start(
-    archive: &Archive<'_>,
-    archive_mem: u32,
-    storage: &Storage,
-    args: &str,
-) -> Result<Users, String> {
-    let program = archive.find("users").ok_or("users isn't in the archive")?;
-    let ep = Endpoint::create().map_err(|e| format!("creating an endpoint: {e}"))?;
-    let st = storage
-        .admin
-        .endpoint()
-        .0
-        .duplicate(CLIENT)
-        .map_err(|e| format!("copying the storage service's endpoint: {e}"))?;
-    let caps = [
-        (start_role::OWN, ep.0.raw(), rights::ALL, false),
-        // The archive can be copied, as the users service passes it on to sandbox managers.
-        (start_role::ARCHIVE, archive_mem, rights::READ | rights::MAP | CLIENT, false),
-        (STORAGE, st.into_raw(), rights::ALL, true),
-    ];
-    let process = process::spawn(&Spawn {
-        name: "users",
-        program: program.data,
-        budget: BUDGET,
-        priority: 2,
-        caps: &caps,
-        log: true,
-        args,
-        tied: false,
-        file_tree: &[],
-    })
-    .map_err(|e| format!("starting users: {e}"))?;
-    let mut debug =
-        users_debug::Client::new(ep.mint(DEBUG, CLIENT).map_err(|e| format!("minting: {e}"))?);
+/// Starts the users service under the supervisor with `args` (it looks the storage service up
+/// through the supervisor), and connects to it.
+pub fn start(sup: &Supervisor, args: &str) -> Result<Users, String> {
+    sup.start(Kind::Users, args)?;
+    connect(sup)
+}
+
+/// The users service the supervisor is running, with a client for it.
+pub fn connect(sup: &Supervisor) -> Result<Users, String> {
+    let process = sup.process(Kind::Users).ok_or("the users service isn't running")?;
+    let mut debug = users_debug::Client::new(sup.client(Kind::Users, DEBUG, 30)?);
     // It finds the system volume (waiting for volumes still starting) before it answers.
     debug.set_timeout_ms(120_000);
     Ok(Users { process, debug })
 }
 
 /// A session, as its shell would hold it.
-struct Session {
-    users: users::Client,
-    sandbox: sandbox::Client,
+pub(crate) struct Session {
+    pub users: users::Client,
+    pub sandbox: sandbox::Client,
 }
 
-fn session(u: &Users, name: &str) -> Result<Session, String> {
+pub(crate) fn session(u: &Users, name: &str) -> Result<Session, String> {
     let r = u.debug.session(name).map_err(|e| format!("{name}'s session: {e}"))?;
     let mut users = users::Client::new(Endpoint(r.users));
     let mut sandbox = sandbox::Client::new(Endpoint(r.sandbox));
@@ -231,16 +202,15 @@ fn user(name: &str, kind: UserKind, display: &str) -> User {
 }
 
 /// The users and sandbox self-test. Returns a short summary.
-pub fn run(archive: &Archive<'_>, archive_mem: u32, storage: &Storage) -> Result<String, String> {
-    let u = start(archive, archive_mem, storage, "selftest")?;
+pub fn run(sup: &Supervisor, storage: &Storage) -> Result<String, String> {
+    let u = start(sup, "")?;
     let r = with_system_volume(&u, storage).map_err(|e| {
-        let state = u.process.process.info().map(|i| i.state);
+        let state = u.process.info().map(|i| i.state);
         format!("{e} (the users service: {state:?})")
     });
-    let _ = u.process.process.stop(0);
-    let _ = wait(&u.process.process, 30);
+    sup.retire(Kind::Users)?;
     let summary = r?;
-    without_system_volume(archive, archive_mem, storage)?;
+    without_system_volume(sup, storage)?;
     Ok(summary)
 }
 
@@ -560,12 +530,8 @@ fn disk_id(storage: &Storage, label: &str) -> Result<u32, String> {
 
 /// With no system volume (here: told to ignore it), the users are kept in memory, with an
 /// administrator called `owner`.
-fn without_system_volume(
-    archive: &Archive<'_>,
-    archive_mem: u32,
-    storage: &Storage,
-) -> Result<(), String> {
-    let u = start(archive, archive_mem, storage, "selftest nosystem")?;
+fn without_system_volume(sup: &Supervisor, storage: &Storage) -> Result<(), String> {
+    let u = start(sup, "nosystem")?;
     let r = (|| {
         let sys = u.debug.system().map_err(|e| format!("asking for the system volume: {e}"))?;
         let list = storage.admin.list().map_err(|e| format!("listing volumes: {e}"))?;
@@ -580,7 +546,6 @@ fn without_system_volume(
         }
         Ok(())
     })();
-    let _ = u.process.process.stop(0);
-    let _ = wait(&u.process.process, 30);
+    sup.retire(Kind::Users)?;
     r
 }

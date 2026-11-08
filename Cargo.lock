@@ -263,6 +263,7 @@ dependencies = [
  "pbr-interfaces",
  "pbr-manifest",
  "pbr-partition",
+ "pbr-supervise",
  "pbr-test-protocol",
 ]
 
@@ -287,6 +288,7 @@ dependencies = [
  "pbr-granite",
  "pbr-interfaces",
  "pbr-partition",
+ "pbr-supervise",
 ]
 
 [[package]]
@@ -348,6 +350,7 @@ dependencies = [
  "pbr-granite",
  "pbr-interfaces",
  "pbr-manifest",
+ "pbr-supervise",
 ]
 
 [[package]]

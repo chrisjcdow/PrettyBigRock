@@ -409,7 +409,7 @@ pub fn run(d: &Devmgr) -> Result<String, String> {
     }
 
     // Many restarts leave nothing behind.
-    let used = || d.process.process.info().map(|i| i.used).map_err(|e| format!("{e}"));
+    let used = || d.process.info().map(|i| i.used).map_err(|e| format!("{e}"));
     let before = used()?;
     for _ in 0..20 {
         slowest = slowest.max(cycle(d, id, How::Crash(CrashKind::Exit), &answers)?);

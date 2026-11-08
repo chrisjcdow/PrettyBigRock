@@ -23,6 +23,7 @@ pbr-granite = { path = "../../lib/granite" }
 pbr-devices = { path = "../../lib/devices" }
 pbr-interfaces = { path = "../../lib/interfaces" }
 pbr-manifest = { path = "../../lib/manifest" }
+pbr-supervise = { path = "../../lib/supervise" }
 pbr-partition = { path = "../../lib/partition" }
 
 [lints]

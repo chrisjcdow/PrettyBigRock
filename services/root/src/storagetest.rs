@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! Starting the storage service, and its self-test (docs/design/0015-storage-and-the-block-
+//! Connecting to the storage service, and its self-test (docs/design/0015-storage-and-the-block-
 //! cache.md; note 0018, section 7, test 2). The build tool attaches three disks for it
 //! (`xtask/src/testdisks.rs`): an MBR disk with a RockFS volume `Data` and a FAT32 volume
 //! `USB`, a GPT disk with a RockFS volume `Home` and a FAT32 volume `PICTURES`, and an empty
@@ -11,16 +11,15 @@
 //! underneath changes nothing a volume's user can see.
 
 use crate::blocktest::Devmgr;
+use crate::supervisor::{Kind, Supervisor};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use granite::endpoint::Endpoint;
 use granite::interface::CallError;
-use granite::process::{self, Spawn, Spawned, role as start_role};
-use granite::sys::rights;
+use granite::process::Process;
 use granite::time;
-use pbr_archive::Archive;
 use pbr_interfaces::pbr_block::{self as block, BlockError};
 use pbr_interfaces::pbr_file::{self as file, FileRights, NodeKind};
 use pbr_interfaces::pbr_storage::{
@@ -28,64 +27,26 @@ use pbr_interfaces::pbr_storage::{
 };
 use pbr_interfaces::pbr_storage_debug as storage_debug;
 
-/// The storage service's start-up role for the device manager's endpoint (its own endpoint is
-/// `role::OWN`).
-const DEVICES: u32 = 1001;
 /// Badges of the capabilities the root program mints from the storage service's endpoint
 /// (`services/storage`'s `ADMIN` and `DEBUG`).
 const ADMIN: u64 = 1;
 const DEBUG: u64 = 2;
-/// What the storage service may use: its 16 MiB cache, and room for volumes in memory.
-/// The service's budget: its 16 MiB cache, volumes in memory, and 8 MiB for each filesystem
-/// server it starts (they are paid for from it).
-const BUDGET: u64 = 128 * 1024 * 1024;
 const SECTOR: usize = 512;
 const MIB: u64 = 1024 * 1024;
 
 /// The storage service, and ways to talk to it.
 pub struct Storage {
-    pub process: Spawned,
+    pub process: Process,
     pub admin: storage::Client,
     pub debug: storage_debug::Client,
 }
 
-/// Starts the storage service, giving it the device manager's `pbr.devices`.
-/// The storage service gets the start-up archive, for its filesystem servers' programs.
-pub fn start(
-    archive: &Archive<'_>,
-    archive_mem: u32,
-    devmgr: &Devmgr,
-    selftest: bool,
-) -> Result<Storage, String> {
-    let file = archive.find("storage").ok_or("storage isn't in the archive")?;
-    let ep = Endpoint::create().map_err(|e| format!("creating an endpoint: {e}"))?;
-    let devices = devmgr
-        .client
-        .endpoint()
-        .0
-        .duplicate(rights::SEND | rights::TRANSFER | rights::DUPLICATE)
-        .map_err(|e| format!("copying the device manager's endpoint: {e}"))?;
-    let caps = [
-        (start_role::OWN, ep.0.raw(), rights::ALL, false),
-        (start_role::ARCHIVE, archive_mem, rights::READ | rights::MAP, false),
-        (DEVICES, devices.into_raw(), rights::ALL, true),
-    ];
-    let process = process::spawn(&Spawn {
-        name: "storage",
-        program: file.data,
-        budget: BUDGET,
-        priority: 2,
-        caps: &caps,
-        log: true,
-        args: if selftest { "selftest" } else { "" },
-        tied: false,
-        file_tree: &[],
-    })
-    .map_err(|e| format!("starting storage: {e}"))?;
-    let client = rights::SEND | rights::TRANSFER | rights::DUPLICATE;
-    let mint = |badge| ep.mint(badge, client).map_err(|e| format!("minting: {e}"));
-    let mut admin = storage::Client::new(mint(ADMIN)?);
-    let mut debug = storage_debug::Client::new(mint(DEBUG)?);
+/// The storage service the supervisor is running, with clients for it. (After it is restarted,
+/// these fail, and a new `Storage` is made.)
+pub fn connect(sup: &Supervisor) -> Result<Storage, String> {
+    let process = sup.process(Kind::Storage).ok_or("the storage service isn't running")?;
+    let mut admin = storage::Client::new(sup.client(Kind::Storage, ADMIN, 30)?);
+    let mut debug = storage_debug::Client::new(sup.client(Kind::Storage, DEBUG, 30)?);
     // The service finds its disks before it answers, which can take a while.
     admin.set_timeout_ms(60_000);
     debug.set_timeout_ms(60_000);

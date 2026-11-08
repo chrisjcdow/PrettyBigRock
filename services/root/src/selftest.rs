@@ -5,6 +5,7 @@
 //! when", checked from inside running programs. Two programs exchange messages and
 //! capabilities, a program can't reach anything it wasn't given, and revocation works.
 
+use crate::supervisor::{Kind, Supervisor};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -32,7 +33,7 @@ pub(crate) struct Files<'a> {
 }
 
 /// Runs every test; returns the process's exit status (0 if all passed).
-pub fn run(archive: &Archive<'_>, archive_mem: u32, start: &mut granite::Start) -> i32 {
+pub fn run(archive: &Archive<'static>, archive_mem: u32, start: &mut granite::Start) -> i32 {
     let (Some(echo), Some(probe)) = (archive.find("echo"), archive.find("probe")) else {
         granite::println!("Program self-test FAILED: the test programs aren't in the archive");
         return 1;
@@ -51,7 +52,7 @@ pub fn run(archive: &Archive<'_>, archive_mem: u32, start: &mut granite::Start) 
 }
 
 fn all(
-    archive: &Archive<'_>,
+    archive: &Archive<'static>,
     archive_mem: u32,
     f: &Files<'_>,
     start: &mut granite::Start,
@@ -92,9 +93,12 @@ fn all(
     }
     step("files", files.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("files and file trees");
-    // The device manager gets copies of the device capabilities; the device tests then take
-    // the root program's own.
-    let devmgr = crate::blocktest::start(archive, archive_mem, start, true)?;
+    // The supervisor starts the services from here on. It copies the device capabilities
+    // first, for every device manager it starts; the device tests then take the root program's
+    // own.
+    let sup = Supervisor::new(*archive, archive_mem, start, true)?;
+    sup.start(Kind::Devmgr, "")?;
+    let devmgr = crate::blocktest::connect(&sup)?;
     let copies = crate::drivertest::copy_inputs(start)?;
     let devices = crate::devtest::run(f, start);
     step("device access", devices.as_ref().map(|_| ()).map_err(Clone::clone))?;
@@ -114,7 +118,8 @@ fn all(
     }
     step("crash and restart", crash.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("a driver crashed and restarted");
-    let storage = crate::storagetest::start(archive, archive_mem, &devmgr, true)?;
+    sup.start(Kind::Storage, "")?;
+    let storage = crate::storagetest::connect(&sup)?;
     let st = crate::storagetest::run(&storage, &devmgr);
     if let Ok(summary) = &st {
         granite::println!("Storage self-test passed: {summary}");
@@ -127,12 +132,25 @@ fn all(
     }
     step("FAT32", fat.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("FAT32");
-    let sandboxes = crate::sandboxtest::run(archive, archive_mem, &storage);
+    let sandboxes = crate::sandboxtest::run(&sup, &storage);
     if let Ok(summary) = &sandboxes {
         granite::println!("Sandbox self-test passed: {summary}");
     }
     step("users and sandboxes", sandboxes.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("users and sandboxed apps");
+    // The supervision test crashes these services. Capabilities to an instance that has ended
+    // (its process, or anything it made) keep its whole budget taken from the root program's
+    // (note 0006, section 9), so the old ones are let go of first, and new ones made after.
+    drop(storage);
+    drop(devmgr);
+    let supervision = crate::supervisetest::run(&sup);
+    if let Ok(summary) = &supervision {
+        granite::println!("Supervision self-test passed: {summary}");
+    }
+    step("supervision", supervision.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("services crashed and restarted");
+    // The services were restarted: connect to the new ones.
+    let storage = crate::storagetest::connect(&sup)?;
     let classic = crate::classictest::run(&storage.admin);
     if let Ok(summary) = &classic {
         granite::println!("The disk 1.3 made: {summary}");
@@ -143,8 +161,9 @@ fn all(
     step("load", calls.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("calls on 4 threads to a service with 4 threads");
 
-    storage.process.process.stop(0).map_err(|e| format!("stopping storage: {e}"))?;
-    devmgr.process.process.stop(0).map_err(|e| format!("stopping devmgr: {e}"))?;
+    drop(storage);
+    sup.retire(Kind::Storage).map_err(|e| format!("stopping storage: {e}"))?;
+    sup.retire(Kind::Devmgr).map_err(|e| format!("stopping devmgr: {e}"))?;
     echo.process.stop(0).map_err(|e| format!("stopping echo: {e}"))?;
     match wait(&echo, 30)? {
         State::Stopped(0) => {}

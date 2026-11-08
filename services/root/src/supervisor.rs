@@ -1,0 +1,587 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Christopher Cameron-Dow
+
+//! The root program as supervisor (docs/design/0018-supervision-shell-and-m5-tests.md,
+//! sections 1 to 4): it starts the system services (the device manager, the storage service
+//! and the users service), watches them, and starts one again when it ends, with the restart
+//! policy every supervisor uses (`lib/supervise`).
+//!
+//! It also serves `pbr.supervisor` to them: **services find each other through it**, not
+//! through capabilities fixed when they start. A fixed table, [`rule`], says who may look up
+//! what. After a service is restarted, calls through its clients' old capabilities fail with
+//! `PEER_GONE`, and they look it up again. For that to happen, nobody else may hold a capability
+//! that can *receive* on a service's endpoint (the kernel fails callers only once the last
+//! receiving capability has gone): so each service's endpoint is moved to it, and this module
+//! keeps only a copy that can send and mint badged copies for clients.
+//!
+//! The device manager also gives it copies of its DMA memory to keep (`keep`, section 4): if the
+//! device manager dies, its devices might still be writing into that memory, so it must not be
+//! freed (and reused) until the next device manager has switched every device off and says so
+//! with `release_kept`.
+//!
+//! The work happens on a thread of its own, so that the root program's main thread can run the
+//! self-test meanwhile; the two share the children's records behind a lock.
+
+use alloc::format;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::mem::ManuallyDrop;
+use granite::Handle;
+use granite::endpoint::{Endpoint, Event};
+use granite::lock::Lock;
+use granite::memory::Memory;
+use granite::notification::Notification;
+use granite::process::{self, Process, Spawn, Spawned, State, role};
+use granite::sys::rights;
+use granite::time;
+use pbr_archive::Archive;
+use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
+use pbr_supervise::{Decision, History};
+
+/// The services the root program supervises.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Devmgr,
+    Storage,
+    Users,
+}
+
+const KINDS: [Kind; 3] = [Kind::Devmgr, Kind::Storage, Kind::Users];
+
+impl Kind {
+    /// Its program's name in the start-up archive.
+    pub fn program(self) -> &'static str {
+        match self {
+            Kind::Devmgr => "devmgr",
+            Kind::Storage => "storage",
+            Kind::Users => "users",
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Kind::Devmgr => 0,
+            Kind::Storage => 1,
+            Kind::Users => 2,
+        }
+    }
+
+    /// Its budget. The device manager's covers every driver of the self-test's machines; the
+    /// storage service's its 16 MiB cache, volumes in memory and 8 MiB for each filesystem
+    /// server; the users service's three sessions of 16 MiB at once.
+    fn budget(self) -> u64 {
+        const MIB: u64 = 1024 * 1024;
+        match self {
+            Kind::Devmgr => 96 * MIB,
+            Kind::Storage => 128 * MIB,
+            Kind::Users => 64 * MIB,
+        }
+    }
+}
+
+/// The badge of the storage service's `pbr.storage` for administrators (`services/storage`'s
+/// `ADMIN`): what the users service gets when it looks up `storage`.
+pub const STORAGE_ADMIN: u64 = 1;
+
+/// Who may look up what (note 0018, section 2): the service, and the badge the capability
+/// carries (0 for none). Nobody else may look up anything. (The console, from stage 8, will
+/// look up `devices`, and the users service `console`.)
+fn rule(child: Kind, name: &str) -> Option<(Kind, u64)> {
+    match (child, name) {
+        (Kind::Storage, "devices") => Some((Kind::Devmgr, 0)),
+        (Kind::Users, "storage") => Some((Kind::Storage, STORAGE_ADMIN)),
+        _ => None,
+    }
+}
+
+/// The most memory objects kept for the device manager (one per device with DMA memory, for
+/// this instance and the one before).
+const MAX_KEPT: usize = 128;
+/// A capability that can be passed on, but not received on.
+const CLIENT: u32 = rights::SEND | rights::TRANSFER | rights::DUPLICATE;
+
+/// The badge of a child's `pbr.supervisor` capability: which child, and which time it was
+/// started (its *generation*). A capability left over from an earlier instance is told apart.
+fn badge(kind: Kind, generation: u32) -> u64 {
+    ((kind.index() as u64 + 1) << 32) | u64::from(generation)
+}
+
+fn from_badge(b: u64) -> Option<(Kind, u32)> {
+    let kind = *KINDS.get(((b >> 32) as usize).checked_sub(1)?)?;
+    Some((kind, b as u32))
+}
+
+/// One supervised service.
+struct Child {
+    kind: Kind,
+    /// Its arguments.
+    args: String,
+    /// How many times it has been started.
+    generation: u32,
+    /// The running instance.
+    running: Option<Spawned>,
+    /// An unbadged copy of the running instance's endpoint that can send and mint, not receive.
+    endpoint: Option<Endpoint>,
+    history: History,
+    /// When a restart is due (milliseconds on the clock).
+    due: Option<u64>,
+    restarts: u32,
+    /// Stopped on purpose (or given up on): not restarted.
+    retired: bool,
+    /// Memory kept for it, with the generation that asked.
+    kept: Vec<(u32, Memory)>,
+    /// The last `release_kept`: which generation asked, and when (nanoseconds).
+    released: Option<(u32, u64)>,
+}
+
+struct Inner {
+    archive: Archive<'static>,
+    archive_mem: u32,
+    /// The root program's own copies of the device capabilities, for each device manager.
+    devices: Vec<(u32, Handle)>,
+    selftest: bool,
+    /// The endpoint children's `pbr.supervisor` capabilities are minted from.
+    endpoint: Endpoint,
+    /// Signalled with a child's bit (its index) when it ends; bound to `endpoint`.
+    ended: Notification,
+    children: Vec<Child>,
+}
+
+/// The supervisor: cheap to clone, shared between the root program's threads.
+#[derive(Clone)]
+pub struct Supervisor(Arc<Lock<Inner>>);
+
+fn now_ms() -> u64 {
+    time::now() / 1_000_000
+}
+
+/// A copy of the handle numbered `raw`, which belongs to someone else (it isn't closed here).
+fn copy(raw: u32) -> granite::Result<Handle> {
+    // `ManuallyDrop` stops the wrapper closing the original when it goes out of scope.
+    let original = ManuallyDrop::new(Handle::from_raw(raw));
+    original.duplicate(rights::ALL)
+}
+
+impl Supervisor {
+    /// A supervisor with nothing started yet. It copies the device capabilities in `start`
+    /// now, for every device manager it will start, and starts its thread.
+    pub fn new(
+        archive: Archive<'static>,
+        archive_mem: u32,
+        start: &granite::Start,
+        selftest: bool,
+    ) -> Result<Supervisor, String> {
+        let mut devices = Vec::new();
+        for r in
+            [role::DEVICE_MEMORY, role::INTERRUPTS, role::MSI_POOL, role::IO_PORTS, role::MACHINE]
+        {
+            if let Some(h) = start.peek(r) {
+                devices.push((r, copy(h).map_err(|e| format!("copying device access: {e}"))?));
+            }
+        }
+        let endpoint = Endpoint::create().map_err(|e| format!("an endpoint: {e}"))?;
+        let ended = Notification::create().map_err(|e| format!("a notification: {e}"))?;
+        endpoint.bind(&ended).map_err(|e| format!("binding: {e}"))?;
+        let receiver =
+            Endpoint(endpoint.0.duplicate(rights::ALL).map_err(|e| format!("copying: {e}"))?);
+        let sup = Supervisor(Arc::new(Lock::new(Inner {
+            archive,
+            archive_mem,
+            devices,
+            selftest,
+            endpoint,
+            ended,
+            children: Vec::new(),
+        })));
+        let s = sup.clone();
+        granite::thread::spawn(move || s.run(&receiver))
+            .map_err(|e| format!("starting the supervisor's thread: {e}"))?;
+        Ok(sup)
+    }
+
+    /// Starts `kind` with `args`: for the first time, or again after it was retired.
+    pub fn start(&self, kind: Kind, args: &str) -> Result<(), String> {
+        let mut g = self.0.lock();
+        if !g.children.iter().any(|c| c.kind == kind) {
+            g.children.push(Child {
+                kind,
+                args: String::new(),
+                generation: 0,
+                running: None,
+                endpoint: None,
+                history: History::new(),
+                due: None,
+                restarts: 0,
+                retired: false,
+                kept: Vec::new(),
+                released: None,
+            });
+        }
+        let i = g.children.iter().position(|c| c.kind == kind).ok_or("no child")?;
+        if g.children[i].running.is_some() {
+            return Err(format!("{} is already running", kind.program()));
+        }
+        g.children[i].args = String::from(args);
+        g.children[i].retired = false;
+        g.children[i].history = History::new();
+        g.spawn(i)
+    }
+
+    /// The thread: serves `pbr.supervisor`, notices children ending, and restarts them.
+    fn run(&self, ep: &Endpoint) {
+        let mut buffer = vec![0u8; 1024];
+        loop {
+            let wake = {
+                let g = self.0.lock();
+                g.children
+                    .iter()
+                    .filter_map(|c| c.due)
+                    .min()
+                    .map_or(time::FOREVER, |t| time::after_ms(t.saturating_sub(now_ms())))
+            };
+            match ep.receive(&mut buffer, wake) {
+                Ok(Event::Call(msg, reply)) => {
+                    let mut calls = Calls(self);
+                    if let Some((_, reply)) = supervisor::dispatch(&mut calls, msg, &buffer, reply)
+                    {
+                        granite::interface::unknown(reply);
+                    }
+                }
+                Ok(Event::Signal(bits)) => self.0.lock().ended(bits),
+                Ok(Event::Gone(_)) | Err(granite::Error::TimedOut) => {}
+                Err(e) => {
+                    granite::println!("supervisor: receive failed: {e}");
+                    time::sleep_ms(10);
+                }
+            }
+            self.0.lock().restart_due();
+        }
+    }
+
+    // --------------------------------------------------------------------------------------
+    // For the root program's own use (and the self-test).
+
+    /// A client capability for `kind`'s running instance, carrying `badge` (0 for none),
+    /// waiting up to `secs` seconds for one to be running.
+    pub fn client(&self, kind: Kind, badge: u64, secs: u64) -> Result<Endpoint, String> {
+        let end = time::after_ms(secs * 1000);
+        loop {
+            {
+                let g = self.0.lock();
+                if let Some(ep) = g.child(kind).and_then(|c| c.endpoint.as_ref()) {
+                    let made = if badge == 0 {
+                        ep.0.duplicate(CLIENT).map(Endpoint)
+                    } else {
+                        ep.mint(badge, CLIENT)
+                    };
+                    return made.map_err(|e| format!("a capability for {}: {e}", kind.program()));
+                }
+            }
+            if time::now() > end {
+                return Err(format!("{} isn't running", kind.program()));
+            }
+            time::sleep_ms(20);
+        }
+    }
+
+    /// The running instance's process (to watch and ask about, and stop).
+    pub fn process(&self, kind: Kind) -> Option<Process> {
+        let g = self.0.lock();
+        let p = &g.child(kind)?.running.as_ref()?.process;
+        p.0.duplicate(rights::INSPECT | rights::WATCH | rights::STOP).ok().map(Process)
+    }
+
+    /// How many times `kind` has been started.
+    pub fn generation(&self, kind: Kind) -> u32 {
+        self.0.lock().child(kind).map_or(0, |c| c.generation)
+    }
+
+    /// Waits up to `secs` seconds for `kind` to have been started more than `generation`
+    /// times, and to be running.
+    pub fn wait_started(&self, kind: Kind, generation: u32, secs: u64) -> Result<u32, String> {
+        let end = time::after_ms(secs * 1000);
+        loop {
+            {
+                let g = self.0.lock();
+                if let Some(c) = g.child(kind)
+                    && c.generation > generation
+                    && c.running.is_some()
+                {
+                    return Ok(c.generation);
+                }
+            }
+            if time::now() > end {
+                return Err(format!("{} wasn't started again in {secs} seconds", kind.program()));
+            }
+            time::sleep_ms(20);
+        }
+    }
+
+    /// Stops `kind`'s running instance as a crash would, so that it is restarted (self-test).
+    pub fn crash(&self, kind: Kind) -> Result<(), String> {
+        let g = self.0.lock();
+        let c = g.child(kind).ok_or("not started")?;
+        let p = &c.running.as_ref().ok_or("not running")?.process;
+        p.stop(9).map_err(|e| format!("stopping {}: {e}", kind.program()))
+    }
+
+    /// Stops `kind` for good (until it is started again), and waits for it to end.
+    pub fn retire(&self, kind: Kind) -> Result<(), String> {
+        let process = {
+            let mut g = self.0.lock();
+            let Some(c) = g.children.iter_mut().find(|c| c.kind == kind) else { return Ok(()) };
+            c.retired = true;
+            c.due = None;
+            c.endpoint = None;
+            c.running.take()
+        };
+        let Some(s) = process else { return Ok(()) };
+        let n = Notification::create().map_err(|e| format!("{e}"))?;
+        let _ = s.process.watch(&n, 1);
+        let _ = s.process.stop(0);
+        let _ = n.wait(time::after_ms(30_000));
+        match s.process.info().map(|i| i.state) {
+            Ok(State::Running | State::Ending) => {
+                Err(format!("{} didn't stop in 30 seconds", kind.program()))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The generations whose memory is kept for `kind`.
+    pub fn kept(&self, kind: Kind) -> Vec<u32> {
+        self.0.lock().child(kind).map_or(Vec::new(), |c| c.kept.iter().map(|(g, _)| *g).collect())
+    }
+
+    /// The last `release_kept` from `kind`: which generation, and when (nanoseconds).
+    pub fn released(&self, kind: Kind) -> Option<(u32, u64)> {
+        self.0.lock().child(kind).and_then(|c| c.released)
+    }
+}
+
+impl Inner {
+    fn child(&self, kind: Kind) -> Option<&Child> {
+        self.children.iter().find(|c| c.kind == kind)
+    }
+
+    /// Starts child `i` (another generation).
+    fn spawn(&mut self, i: usize) -> Result<(), String> {
+        let kind = self.children[i].kind;
+        let generation = self.children[i].generation + 1;
+        let program = self
+            .archive
+            .find(kind.program())
+            .ok_or(format!("{} isn't in the archive", kind.program()))?;
+        let fail = |e: granite::Error| format!("starting {}: {e}", kind.program());
+        // Its endpoint is moved to it; this keeps a copy that can only send and mint.
+        let own = Endpoint::create().map_err(fail)?;
+        let minter = Endpoint(own.0.duplicate(CLIENT).map_err(fail)?);
+        let parent = self
+            .endpoint
+            .mint(badge(kind, generation), rights::SEND | rights::TRANSFER)
+            .map_err(fail)?;
+        let (own_rights, archive_rights) = match kind {
+            // The device manager only receives on its endpoint.
+            Kind::Devmgr => (rights::RECEIVE, rights::READ | rights::MAP),
+            Kind::Storage => (rights::ALL, rights::READ | rights::MAP),
+            // The users service passes the archive on to its sandbox managers.
+            Kind::Users => (rights::ALL, rights::READ | rights::MAP | CLIENT),
+        };
+        let mut caps = vec![
+            (role::OWN, own.0.into_raw(), own_rights, true),
+            (role::PARENT, parent.0.into_raw(), rights::SEND, true),
+            (role::ARCHIVE, self.archive_mem, archive_rights, false),
+        ];
+        if kind == Kind::Devmgr {
+            for (r, h) in &self.devices {
+                caps.push((*r, h.raw(), rights::ALL, false));
+            }
+        }
+        let c = &mut self.children[i];
+        let mut args = c.args.clone();
+        if self.selftest && !args.split_whitespace().any(|w| w == "selftest") {
+            args =
+                if args.is_empty() { String::from("selftest") } else { format!("selftest {args}") };
+        }
+        let spawned = process::spawn(&Spawn {
+            name: kind.program(),
+            program: program.data,
+            budget: kind.budget(),
+            priority: 2,
+            caps: &caps,
+            log: true,
+            args: &args,
+            tied: false,
+            file_tree: &[],
+        })
+        .map_err(|e| {
+            let (used, limit) =
+                process::info(process::self_handle()).map_or((0, 0), |i| (i.used, i.budget));
+            format!(
+                "starting {}: {e} (the root program's memory: {used} of {limit})",
+                kind.program()
+            )
+        })?;
+        spawned.process.watch(&self.ended, 1 << kind.index()).map_err(fail)?;
+        c.history.started(now_ms());
+        c.generation = generation;
+        c.running = Some(spawned);
+        c.endpoint = Some(minter);
+        c.due = None;
+        if generation > 1 {
+            granite::println!(
+                "supervisor: {} started again ({} restarts).",
+                kind.program(),
+                c.restarts
+            );
+        }
+        Ok(())
+    }
+
+    /// Children whose bit is in `bits` may have ended.
+    fn ended(&mut self, bits: u64) {
+        for c in &mut self.children {
+            if bits & (1 << c.kind.index()) == 0 {
+                continue;
+            }
+            let Some(s) = &c.running else { continue };
+            let state = s.process.info().map(|i| i.state);
+            if matches!(state, Ok(State::Running | State::Ending)) {
+                continue;
+            }
+            // Its clients' capabilities fail now: nothing can receive on its endpoint.
+            c.running = None;
+            c.endpoint = None;
+            granite::println!("supervisor: {} ended: {state:?}.", c.kind.program());
+            if c.retired {
+                continue;
+            }
+            match c.history.crashed(now_ms()) {
+                Decision::Restart { delay_ms } => {
+                    c.restarts += 1;
+                    c.due = Some(now_ms() + delay_ms);
+                }
+                Decision::GiveUp => {
+                    c.retired = true;
+                    granite::println!(
+                        "supervisor: {} ended too often; it is left stopped.",
+                        c.kind.program()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Starts the children whose restart is due.
+    fn restart_due(&mut self) {
+        let now = now_ms();
+        for i in 0..self.children.len() {
+            if self.children[i].due.is_some_and(|t| t <= now) {
+                self.children[i].due = None;
+                if let Err(e) = self.spawn(i) {
+                    granite::println!("supervisor: {e}");
+                    self.children[i].retired = true;
+                }
+            }
+        }
+    }
+}
+
+/// `pbr.supervisor`, answering one call; the caller is known by its badge.
+struct Calls<'a>(&'a Supervisor);
+
+/// The child calling, if its badge is for its running instance.
+fn caller(g: &Inner, badge: u64) -> Option<usize> {
+    let (kind, generation) = from_badge(badge)?;
+    g.children
+        .iter()
+        .position(|c| c.kind == kind && c.generation == generation && c.running.is_some())
+}
+
+fn answered(r: granite::Result<()>) {
+    if let Err(e) = r
+        && e != granite::Error::PeerGone
+    {
+        granite::println!("supervisor: answer failed: {e}");
+    }
+}
+
+impl supervisor::Server for Calls<'_> {
+    fn lookup(&mut self, name: String, reply: supervisor::lookup::Reply) {
+        let result = {
+            let g = self.0.0.lock();
+            match caller(&g, reply.badge()).and_then(|i| rule(g.children[i].kind, &name)) {
+                None => Err(SupervisorError::NotAllowed),
+                Some((target, badge)) => match g.child(target).and_then(|c| c.endpoint.as_ref()) {
+                    None => Err(SupervisorError::NotReady),
+                    Some(ep) => {
+                        let made = if badge == 0 {
+                            ep.0.duplicate(CLIENT).map(Endpoint)
+                        } else {
+                            ep.mint(badge, CLIENT)
+                        };
+                        made.map_err(|_| SupervisorError::NotReady)
+                    }
+                },
+            }
+        };
+        answered(match result {
+            Ok(ep) => reply.ok(ep.0),
+            Err(e) => reply.err(e),
+        });
+    }
+
+    fn keep(&mut self, memory: Memory, reply: supervisor::keep::Reply) {
+        let result = {
+            let mut g = self.0.0.lock();
+            match caller(&g, reply.badge()) {
+                Some(i) if g.children[i].kind == Kind::Devmgr => {
+                    let c = &mut g.children[i];
+                    if c.kept.len() >= MAX_KEPT {
+                        Err(SupervisorError::TooMany)
+                    } else {
+                        c.kept.push((c.generation, memory));
+                        Ok(())
+                    }
+                }
+                _ => Err(SupervisorError::NotAllowed),
+            }
+        };
+        answered(match result {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.err(e),
+        });
+    }
+
+    fn release_kept(&mut self, reply: supervisor::release_kept::Reply) {
+        let result = {
+            let mut g = self.0.0.lock();
+            match caller(&g, reply.badge()) {
+                Some(i) => {
+                    let c = &mut g.children[i];
+                    let generation = c.generation;
+                    let before = c.kept.len();
+                    // Dropping a `Memory` closes the capability: once the device manager's own
+                    // copies have gone with it, the memory is freed.
+                    c.kept.retain(|(g, _)| *g >= generation);
+                    c.released = Some((generation, time::now()));
+                    if before > c.kept.len() {
+                        granite::println!(
+                            "supervisor: released {} memory objects kept for the previous {}.",
+                            before - c.kept.len(),
+                            c.kind.program()
+                        );
+                    }
+                    Ok(())
+                }
+                None => Err(SupervisorError::NotAllowed),
+            }
+        };
+        answered(match result {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.err(e),
+        });
+    }
+}

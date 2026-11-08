@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! Starting the device manager, and the block device test (docs/design/0011-drivers.md): the
+//! Connecting to the device manager, and the block device test (docs/design/0011-drivers.md): the
 //! root program asks the device manager for the disks, finds the test disk the build attaches
 //! (`xtask` writes it, with the pattern in [`pattern`]), and reads, writes and re-reads it.
 
+use crate::supervisor::{Kind, Supervisor};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -12,19 +13,12 @@ use alloc::vec::Vec;
 use granite::Handle;
 use granite::endpoint::Endpoint;
 use granite::interface::CallError;
-use granite::process::{self, Spawn, Spawned, role as start_role};
-use granite::sys::rights;
+use granite::process::Process;
 use granite::time;
-use pbr_archive::Archive;
 use pbr_interfaces::pbr_block::{self as block, BlockError};
 use pbr_interfaces::pbr_devices::{self as devices, DeviceClass, DeviceState};
 use pbr_interfaces::pbr_devices_debug as devices_debug;
 
-/// The role of the device manager's public endpoint.
-const PUBLIC: u32 = start_role::OWN;
-/// What the device manager may use: enough for every driver of the self-test's machines (five
-/// disks, two input devices, and on x86-64 PS/2 and a serial port).
-const BUDGET: u64 = 96 * 1024 * 1024;
 const SECTOR: usize = 512;
 /// The size of the test disk, in sectors.
 const TEST_SECTORS: u64 = 2048;
@@ -44,63 +38,18 @@ fn sectors(first: u64, count: u32) -> Vec<u8> {
 
 /// The device manager, and a way to talk to it.
 pub struct Devmgr {
-    pub process: Spawned,
+    pub process: Process,
     pub client: devices::Client,
     /// `pbr.devices.debug`, served in self-test runs.
     pub debug: devices_debug::Client,
 }
 
-/// Starts the device manager. With `keep` the root program keeps its device capabilities (the
-/// device tests use them) and the device manager is started in self-test mode; without, the
-/// capabilities move to the device manager.
-pub fn start(
-    archive: &Archive<'_>,
-    archive_mem: u32,
-    start: &granite::Start,
-    keep: bool,
-) -> Result<Devmgr, String> {
-    let file = archive.find("devmgr").ok_or("devmgr isn't in the archive")?;
-    let public = Endpoint::create().map_err(|e| format!("creating an endpoint: {e}"))?;
-    let all = rights::ALL;
-    let mut caps = vec![
-        (start_role::ARCHIVE, archive_mem, all, false),
-        (PUBLIC, public.0.raw(), rights::RECEIVE, false),
-    ];
-    for r in [
-        start_role::DEVICE_MEMORY,
-        start_role::INTERRUPTS,
-        start_role::MSI_POOL,
-        start_role::IO_PORTS,
-        start_role::MACHINE,
-    ] {
-        if let Some(h) = start.peek(r) {
-            caps.push((r, h, all, !keep));
-        }
-    }
-    let process = process::spawn(&Spawn {
-        name: "devmgr",
-        program: file.data,
-        budget: BUDGET,
-        priority: 2,
-        caps: &caps,
-        log: true,
-        args: if keep { "selftest" } else { "" },
-        tied: false,
-        file_tree: &[],
-    })
-    .map_err(|e| format!("starting devmgr: {e}"))?;
-    let client = devices::Client::new(Endpoint(
-        public
-            .0
-            .duplicate(rights::SEND | rights::TRANSFER | rights::DUPLICATE)
-            .map_err(|e| format!("{e}"))?,
-    ));
-    let debug = devices_debug::Client::new(Endpoint(
-        public
-            .0
-            .duplicate(rights::SEND | rights::TRANSFER | rights::DUPLICATE)
-            .map_err(|e| format!("{e}"))?,
-    ));
+/// The device manager the supervisor is running, with clients for it. (After the device manager
+/// is restarted, these fail, and a new `Devmgr` is made.)
+pub fn connect(sup: &Supervisor) -> Result<Devmgr, String> {
+    let process = sup.process(Kind::Devmgr).ok_or("the device manager isn't running")?;
+    let client = devices::Client::new(sup.client(Kind::Devmgr, 0, 30)?);
+    let debug = devices_debug::Client::new(sup.client(Kind::Devmgr, 0, 30)?);
     Ok(Devmgr { process, client, debug })
 }
 
