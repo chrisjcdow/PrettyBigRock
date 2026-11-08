@@ -1,7 +1,7 @@
 # 0017: Users, the sandbox manager and app manifests
 
-Status: Accepted · 2 November 2026 · Related: DESIGN.md D5, D6, principle 5, sections 7.1 to 7.3;
-notes 0011, 0014, 0015, 0018; milestone M5
+Status: Accepted · 2 November 2026, built 8 November 2026 · Related: DESIGN.md D5, D6, principle 5,
+sections 7.1 to 7.3; notes 0011, 0014, 0015, 0018; milestone M5
 
 ## The problem
 
@@ -255,6 +255,15 @@ For an app launched by the sandbox manager, M5's tests (note 0018) check that:
 - Editing rules through `pbr.users` (with the settings app).
 - A recovery session that ignores a user's rules, for when an administrator's own rules file is
   broken (launches are refused until it is fixed; see Changes).
+- **Which volume is the system volume.** The first RockFS volume with `System/users.txt` wins,
+  so a USB stick carrying one could be taken for the system disk (and, with nobody logging in
+  yet, its first administrator would get the terminal). Before USB storage (M7): prefer the
+  disk the system started from, or record the system volume's identity, and treat removable
+  disks as data only.
+- The sandbox manager answers one request at a time. A trusted program can hold it up (a chosen
+  capability whose server doesn't answer, for up to 10 seconds) or fill every prepared launch,
+  so the shell can't be started again; a way to cancel a launch (stage 8's open question) and
+  a limit per caller would settle it.
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
@@ -309,4 +318,13 @@ For an app launched by the sandbox manager, M5's tests (note 0018) check that:
     take one of the 8 places for good. When they are all taken, the caller's own oldest launch
     now makes room (never another caller's), and launches prepared by trusted apps that have
     ended go.
-
+- 8 November 2026, end of M5: restarting (stage 7) is in note 0018's Changes: the users service
+  is supervised by the root program, finds the storage service and the console through
+  `pbr.supervisor`, checks every 500 ms that what each session holds is still there, and starts
+  sessions afresh (and a sandbox manager that ends, with the restart policy). The stage 9
+  review found the capability handling as the note describes it; open questions it raised are
+  below: the system volume is the first RockFS volume found with `System/users.txt`, so a
+  removable disk could be taken for it, and nobody logs in yet; and the sandbox manager answers
+  one request at a time, so a trusted program can hold it up for 10 seconds with a chosen
+  capability that doesn't answer, or keep the shell from starting again by filling every
+  prepared launch.

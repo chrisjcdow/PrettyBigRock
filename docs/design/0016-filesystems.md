@@ -1,7 +1,7 @@
 # 0016: Filesystems: RockFS in Rust, FAT32, and checking them against 1.3
 
-Status: Accepted · 2 November 2026 · Related: DESIGN.md sections 8 and 12; ROCKFS.md; notes 0002,
-0014, 0015; milestone M5
+Status: Accepted · 2 November 2026, built 8 November 2026 · Related: DESIGN.md sections 8 and 12;
+ROCKFS.md; notes 0002, 0014, 0015; milestone M5
 
 ## The problem
 
@@ -253,3 +253,10 @@ filesystems line by line against the specification before they go in.
   volume, and the runner checks it with `fsck.fat -n` and `mtools` (`tools/check_fat_after.py`).
   The build tool's FAT32 writer gained the label entry in the root folder, which `fsck.fat`
   wants.
+- 8 November 2026, end of M5: a filesystem server that ends is started again on the same
+  volume by the storage service (note 0018, Changes), except when it said it couldn't serve the
+  volume or while shutting down; test 7 crashes the system volume's RockFS server and finds its
+  files intact. Both libraries check that a folder can't be moved inside itself (walking up from
+  the destination) and that offsets can't overflow; their hostile-image tests mount and walk
+  randomly damaged volumes without a panic. `lib/fsserve` now refuses `sync` without `Write`
+  (note 0014, Changes).

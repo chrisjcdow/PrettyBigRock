@@ -1,7 +1,7 @@
 # 0018: Supervising services, the console and text shell, and how M5 is tested
 
-Status: Accepted · 2 November 2026 · Related: DESIGN.md principle 6, sections 8 and 11; notes 0011
-to 0017; milestone M5
+Status: Accepted · 2 November 2026, built 8 November 2026 · Related: DESIGN.md principle 6, sections
+8 and 11; notes 0011 to 0017; milestone M5
 
 ## The problem
 
@@ -239,6 +239,9 @@ traits, which are settled first.
 - Keeping apps' work across a filesystem or session restart.
 - Crash reports that survive a restart (the logging service).
 - Keyboard layouts other than US (the input service, M6).
+- A filesystem server's records are shared by all its clients: one program can open files until
+  the server's limit or budget is reached, and the others are refused (note 0014's open
+  question on limits per program).
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
@@ -337,4 +340,28 @@ traits, which are settled first.
     shutdown and starts a new storage service for the tests after. The GPT test disk is now
     attached writable, and `tools/check_shell_after.py` checks its system volume afterwards:
     shut down cleanly, undamaged, with the shell's file there and the removed one gone.
-
+- 8 November 2026, stage 9 (review and documents).
+  - **The tests as built run in this order**, after M4's: kernel 1.2, files, devices and the
+    crash test, storage, FAT32, the sandbox, supervision, the shell, then the 1.3 disk (which
+    shuts the storage service down) and the load test. Each is a step of the program self-test,
+    so the runner's `Program self-test passed` means every one passed; it also waits for
+    `Sandbox self-test passed`, `Supervision self-test passed` and `Shell self-test passed`, and
+    afterwards checks the 1.3 disk, the FAT32 volume and the system volume with the Python
+    tools, 1.3's own code, `fsck.fat` and `mtools`.
+  - **M5's "done when", and how it is shown.** *A program sees exactly the files it was
+    given*: test 6 launches `tests/programs/sandboxed` from its manifest in two sessions; from
+    the inside it tries the first 512 handle slots (four generations of each), walks its whole tree
+    from `/`, climbs with `..` from every entry, and must find exactly what the root program
+    says it was granted, read-only where granted read-only; then a `revoke` takes one grant from
+    one app while another app's grant of the same folder keeps working. Test 8 does the same
+    through the shell (`run` with a chosen file, `grants`, `revoke`). *A 1.3 data disk opens
+    with its files intact*: test 4 attaches a fresh copy of the disk 1.3 itself made
+    (`tests/data/classic-1.3.img.gz`), compares all 35 folders and files with its manifest,
+    changes six things and shuts down; the runner then has `tools/rockfs.py` and 1.3's own C
+    code check it clean and holding exactly what was expected. Both pass on all four
+    configurations.
+  - **The review** (Opus) read what M5 added, with most care for everything that hands out,
+    derives, checks or revokes capabilities. Two things changed: `sync` needs `Write` (note
+    0014, Changes), and clients are never given an unbadged capability they could mint badges
+    from (note 0008, Changes). Questions it raised are open questions in note 0017 (the system
+    volume; the sandbox manager answering one request at a time) and below.

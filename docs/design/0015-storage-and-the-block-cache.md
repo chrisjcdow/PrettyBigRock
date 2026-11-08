@@ -1,7 +1,7 @@
 # 0015: Storage: disks, partitions, volumes and the shared block cache
 
-Status: Accepted · 2 November 2026 · Related: DESIGN.md section 12; notes 0011, 0012, 0014, 0016,
-0018; milestone M5
+Status: Accepted · 2 November 2026, built 8 November 2026 · Related: DESIGN.md section 12; notes
+0011, 0012, 0014, 0016, 0018; milestone M5
 
 ## The problem
 
@@ -282,3 +282,11 @@ later change inside the service.
     one), since writing under a mounted filesystem would damage it.
 - 7 November 2026, M5 stage 5: the storage service starts a `fat` server (`services/fat`, the
   same roles) for each FAT32 volume.
+- 8 November 2026, end of M5: the storage service as supervised (stage 7) is in note 0018's
+  Changes: it is started by the root program's supervisor, finds the device manager through
+  `pbr.supervisor`'s `lookup` (no longer at start-up role 1001), finds its disks again after a
+  device manager restart (same number, same size, same read-only setting, or the volumes
+  fail), waits up to 30 seconds for a driver to come back, and restarts crashed filesystem
+  servers with the restart policy. `pbr.storage.debug` gained `stop_server` and `flush` for
+  the supervision test. `shutdown` is reached by administrators through `pbr.users.shutdown`
+  (the shell's `shutdown`); after it the volumes stay closed until the next start.

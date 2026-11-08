@@ -1,7 +1,7 @@
 # 0013: Kernel interface 1.2: derived capabilities, watched badges, tied processes and the wall clock
 
-Status: Accepted · 2 November 2026 · Related: DESIGN.md sections 6.3 and 7; notes 0006, 0007,
-0008, 0012, 0014, 0018; milestone M5
+Status: Accepted · 2 November 2026, built 8 November 2026 · Related: DESIGN.md sections 6.3 and 7;
+notes 0006, 0007, 0008, 0012, 0014, 0018; milestone M5
 
 ## The problem
 
@@ -193,3 +193,15 @@ wall-clock field. No new error codes or rights.
   capability table's add and remove hooks (copies and moves share the record, so a move never
   passes through zero); tested in the program self-test (`services/root/src/kernel12.rs`), not
   in `lib/captree`, since the counts live in the kernel.
+- 8 November 2026, end of M5: what uses it, as built. **Derived replies**: every capability a
+  filesystem server hands out from `open`, `create` and `reduce` (`lib/fsserve`), so revoking a
+  folder takes everything opened through it, which the sandbox manager's `revoke` relies on.
+  **Watched badges**: the filesystem servers' records (freed when their gone notices arrive;
+  test 3 opens 1000 files and finds the record count back where it started), and the storage
+  service's `pbr.fs.host` capabilities, which tell it a filesystem server has ended. **Tied
+  processes**: filesystem servers (to the storage service), drivers (to the device manager),
+  sandbox managers (to the users service) and apps (to their sandbox manager), so that a
+  supervisor told a service has ended knows that everything it started has ended too. **The
+  wall clock**: file times on RockFS and FAT32. The stage 9 review found nothing to change in
+  the kernel; one rule for services followed from section 1's "badge 0 is refused" (note 0008,
+  Changes: clients are never given unbadged copyable capabilities).

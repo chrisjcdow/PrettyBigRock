@@ -1,7 +1,7 @@
 # 0014: Files: file capabilities, `pbr.file`, and each program's file tree
 
-Status: Accepted · 2 November 2026 · Related: DESIGN.md principles 1 and 5, sections 7.1, 7.2, 9
-and 12; notes 0006, 0008, 0013, 0015, 0016, 0017; milestone M5
+Status: Accepted · 2 November 2026, built 8 November 2026 · Related: DESIGN.md principles 1 and 5,
+sections 7.1, 7.2, 9 and 12; notes 0006, 0008, 0013, 0015, 0016, 0017; milestone M5
 
 ## The problem
 
@@ -59,7 +59,7 @@ endpoint rights, note 0006):
 | Bit | Right | On a file | On a folder |
 |-----|-------|-----------|-------------|
 | 0 | `Read` | Read its contents | List it; open what's inside it for reading |
-| 1 | `Write` | Change its contents and size | Create, remove and rename what's inside it; open what's inside it for writing |
+| 1 | `Write` | Change its contents and size; `sync` | Create, remove and rename what's inside it; open what's inside it for writing |
 
 Anyone holding a capability may ask for its `info` and the volume's `space`. Rights only ever
 shrink: whatever is opened through a folder gets at most the folder's rights, and `reduce`
@@ -149,7 +149,7 @@ struct Space { total: u64, free: u64, label: string<64>, filesystem: string<16> 
 @10 fn read(offset: u64, max: u32) -> (data: bytes<65536>) error FileError;
 @11 fn write(offset: u64, data: bytes<65536>) -> (written: u32) error FileError;
 @12 fn set_size(size: u64) -> () error FileError;
-/// Makes this file's changes durable (section 6). Returns when they are on the disk.
+/// Makes this file's changes durable (section 6; needs `Write`). Returns when they are on the disk.
 @13 fn sync() -> () error FileError;
 
 // Folders. Paths are relative to this folder (section 4).
@@ -305,3 +305,11 @@ in `/Home/Documents`.
   - the filesystem side is `lib/fs` (the `Filesystem` and `BlockDevice` traits, note 0016)
     and `lib/fsserve` (the object table, `pbr.file`, and `memfs`, a filesystem in memory used
     by its tests and by the `memfs` test program).
+- 8 November 2026, end of M5 (stage 9 review): **`sync` needs `Write`.** Without it, a program
+  that can only read a file could make another's half-finished save durable, and a crash then
+  would leave the file half saved, which section 6 promises "write everything, then `sync`"
+  never does on RockFS. Nothing that synced lacked the right. As built, too: the server's
+  records are charged to it (each derived capability's badge record, note 0013), so its
+  65536-record limit and its budget bound what clients can make it hold; one client can still
+  use all of them (open questions).
+
