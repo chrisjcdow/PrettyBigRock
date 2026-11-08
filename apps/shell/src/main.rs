@@ -411,9 +411,9 @@ impl Shell {
     fn run_app(&self, app: &str, files: &[String], args: &str) -> Result<String, Failure> {
         let sandbox = self.sandbox_service().map_err(|r| Failure::new(app, r))?;
         let disk = &self.files.fs().0;
-        // Open every file first. A launch that has been prepared and never started stays in
-        // the sandbox manager until the session ends (there is no way to cancel one, and only
-        // a few can wait), so what can be checked here is checked before `prepare`.
+        // Open every file first, so that what can be checked here is checked before `prepare`:
+        // a launch that is prepared and never started can't be cancelled (it waits in the
+        // sandbox manager until this shell's later launches push it out).
         let mut chosen: Vec<(&str, String, pbr_files::File)> = Vec::new();
         for typed in files {
             let path = self.files.absolute(typed)?;
