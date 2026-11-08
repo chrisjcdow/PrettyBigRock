@@ -21,6 +21,7 @@ pbr-devices = { path = "../../lib/devices" }
 pbr-driver = { path = "../../lib/driver" }
 pbr-granite = { path = "../../lib/granite" }
 pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-supervise = { path = "../../lib/supervise" }
 pbr-platform = { path = "../../lib/platform" }
 
 [lints]

@@ -38,6 +38,7 @@ members = [
     "lib/platform",
     "lib/ranges",
     "lib/rockfs",
+    "lib/supervise",
     "lib/virtio",
     "services/devmgr",
     "services/fat",

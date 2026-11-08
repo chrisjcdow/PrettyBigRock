@@ -64,6 +64,7 @@ dependencies = [
  "pbr-granite",
  "pbr-interfaces",
  "pbr-platform",
+ "pbr-supervise",
 ]
 
 [[package]]
@@ -287,6 +288,10 @@ dependencies = [
  "pbr-interfaces",
  "pbr-partition",
 ]
+
+[[package]]
+name = "pbr-supervise"
+version = "0.0.0"
 
 [[package]]
 name = "pbr-test-echo"

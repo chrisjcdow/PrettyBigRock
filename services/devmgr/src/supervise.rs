@@ -21,8 +21,8 @@ use granite::process::State;
 use granite::time;
 use pbr_devices::msix;
 use pbr_devices::pci::{self, command};
-use pbr_devices::restart::Decision;
 use pbr_interfaces::pbr_devices::DeviceState;
+use pbr_supervise::Decision;
 
 /// How long to wait at most for a notification. The kernel tells us when a process ends; this
 /// only makes sure a missed wake-up can't leave a crash unnoticed for long.
@@ -148,7 +148,7 @@ fn crashed(id: u32) {
             e.restarts += 1;
             e.due = Some(now + delay_ms);
         }
-        Decision::Disable => {
+        Decision::GiveUp => {
             e.state = DeviceState::Disabled;
             e.due = None;
             granite::println!("devmgr: {name} crashed too often; it is left alone.");

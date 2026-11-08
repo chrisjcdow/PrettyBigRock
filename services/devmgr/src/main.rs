@@ -35,12 +35,12 @@ use pbr_archive::Archive;
 use pbr_devices::machine::Machine;
 use pbr_devices::manifest::{Class, Legacy, Manifest, Target, choose};
 use pbr_devices::pci;
-use pbr_devices::restart::History;
 use pbr_driver::{Service, serve};
 use pbr_interfaces::pbr_devices::{self as devices, DeviceInfo, DeviceState, DevicesError};
 use pbr_interfaces::pbr_devices_debug::{self as devices_debug, DebugError};
 use pbr_interfaces::pbr_driver_host::{self as host, HostError};
 use pbr_platform::acpi;
+use pbr_supervise::History;
 
 granite::main!(main);
 

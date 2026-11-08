@@ -21,7 +21,6 @@ pub mod msix;
 pub mod pci;
 pub mod record;
 pub mod regs;
-pub mod restart;
 
 /// A small deterministic random number generator for tests (xorshift64*).
 #[cfg(test)]

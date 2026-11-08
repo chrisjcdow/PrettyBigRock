@@ -36,7 +36,7 @@ PrettyBigRock/
 │   ├── captree/            the capability derivation tree (note 0006)
 │   ├── crc/                CRC-32, for partition tables and RockFS
 │   ├── devices/            PCI configuration space, MSI-X, driver manifests, the device
-│   │                       record, key tables and the restart policy (notes 0011, 0012)
+│   │                       record and key tables (notes 0011, 0012)
 │   ├── driver/             what every driver is built on (note 0011)
 │   ├── elf/                reading kernels' and programs' ELF files (notes 0004, 0009)
 │   ├── granite/            granite, the native library programs are built on (note 0009)
@@ -45,6 +45,7 @@ PrettyBigRock/
 │   ├── partition/          MBR and GPT partition tables, identifying filesystems (note 0015)
 │   ├── platform/           page tables, ACPI and device trees, shared by loaders and kernel
 │   ├── ranges/             ranges, kernel-owned subtraction and the vector queue (note 0010)
+│   ├── supervise/          the restart policy every supervisor uses (notes 0012, 0018)
 │   └── virtio/             the virtio PCI transport, virtqueues, block and input (note 0011)
 ├── drivers/              drivers, one program each, with its manifest beside it (note 0011)
 │   ├── <name>/             the driver
