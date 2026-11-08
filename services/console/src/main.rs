@@ -21,7 +21,7 @@
 //!
 //! A `read_line` call is not answered when it arrives: its `Reply` (the one-time capability for
 //! answering a call) is kept until the user presses Enter, and the call's sender waits for that.
-//! Only one can wait at a time; a second is answered `Busy`.
+//! Only one can wait at a time: a second takes over, and the first is answered `Busy`.
 //!
 //! In self-test runs (`selftest` among the arguments) everything shown is also written to the
 //! kernel log in the format of `lib/terminal`'s `mirror` module, because the test runner reads
@@ -274,7 +274,17 @@ impl terminal_if::Server for Calls<'_> {
         // read, and mirrored.)
         if console.shared.keyboards() == 0 {
             answered(reply.err(TerminalError::Closed));
-        } else if console.waiting.is_some() || console.terminal.begin_read(&prompt).is_err() {
+            return;
+        }
+        // A newer `read_line` takes over from a waiting one, which is answered `Busy`. The
+        // terminal has one user, the shell, which waits for each line before asking for the
+        // next; so a second one means the first caller has most likely gone (it ended and was
+        // started again), and there is no way to tell that from its reply until it is answered.
+        if let Some(old) = console.waiting.take() {
+            console.terminal.abandon_read();
+            answered(old.err(TerminalError::Busy));
+        }
+        if console.terminal.begin_read(&prompt).is_err() {
             answered(reply.err(TerminalError::Busy));
         } else {
             // Not answered yet: the caller waits until Enter is pressed.

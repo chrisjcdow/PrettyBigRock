@@ -26,7 +26,9 @@ interface pbr.terminal version 1;
 
 /// What can go wrong.
 flexible enum TerminalError {
-    /// Another call is waiting for a line already.
+    /// Another `read_line` came while this one waited, and took over from it. (The terminal
+    /// has one user, which asks for a line at a time; a second means the first caller has
+    /// probably gone, which the console can't otherwise tell.)
     Busy @1,
     /// The console has no screen or no keyboard to serve with.
     Closed @2,
