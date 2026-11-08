@@ -5,7 +5,6 @@
 //! message goes to the serial port (if there is one) and to the first screen (if there is one).
 
 mod fb;
-mod font;
 mod uart;
 
 use crate::sync::{IrqSpinLock, Level};

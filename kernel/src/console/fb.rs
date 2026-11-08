@@ -3,8 +3,9 @@
 
 //! A text console drawn on a framebuffer, with the 1.x font.
 
-use super::font;
+// The font is shared with the console service, so both draw the same letters.
 use pbr_bootinfo::Framebuffer;
+use pbr_font as font;
 
 /// Background: the dusk blue of the 1.x desktop.
 const BACKGROUND: (u8, u8, u8) = (0x1B, 0x26, 0x3B);
