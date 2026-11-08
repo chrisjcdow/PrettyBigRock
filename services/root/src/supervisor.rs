@@ -417,8 +417,9 @@ impl Inner {
             // manager, for the display driver alone (note 0010, section 7). Every other
             // program's log is given without it (`Spawn::log`).
             if granite::log::handle() != 0 {
-                // (`DUPLICATE` so that it can give the driver a copy, again with nothing but `CONTROL`.)
-                let mask = rights::CONTROL | rights::DUPLICATE;
+                // (With `DUPLICATE` and `TRANSFER`, so that it can give the driver a copy, which
+                // has nothing but `CONTROL`.)
+                let mask = rights::CONTROL | rights::DUPLICATE | rights::TRANSFER;
                 caps.push((DEVMGR_LOG_CONTROL, granite::log::handle(), mask, false));
             }
         }
