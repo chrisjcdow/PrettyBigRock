@@ -521,4 +521,6 @@ disks made by 1.3, including writing and reading back.
   and 0009 have M5's changes, and README and ROADMAP describe M5 as done. Both "done when"s are
   met, as note 0018's Changes says how: test 6 (an app checking from the inside that it holds
   exactly its grants) and test 4 (the disk 1.3 made, compared file by file, changed, and found
-  clean afterwards by `rockfs.py` and 1.3's own code).
+  clean afterwards by `rockfs.py` and 1.3's own code). `cargo xtask ci` passed on all four
+  configurations with the review's fixes. **M5 is done**; the Stress workflow's results come
+  from Chris.
