@@ -456,3 +456,21 @@ disks made by 1.3, including writing and reading back.
   trusted app with many volumes would have hit; it now keeps them all. ARM's self-test now
   takes about 330 seconds in this workspace (the new test about 85 of them), so a boot test
   may take 600 seconds instead of 300. Next: stage 7, supervision (Opus).
+- **Stage 7, supervision** (Opus). The restart policy moved to `lib/supervise`. The root
+  program now supervises the device manager, the storage service and the users service from a
+  thread of its own (`services/root/src/supervisor.rs`), serving `pbr.supervisor`: services
+  find each other through `lookup`, and the device manager has its DMA memory kept with
+  `keep` until the next device manager has switched every device it drives off and called
+  `release_kept`. The storage service finds the device manager again after it restarts and
+  restarts crashed filesystem servers; the users service finds the storage service again,
+  notices lost volumes, and restarts sessions. Two things building it taught: the root program
+  had kept a receiving copy of each service's endpoint, so clients would never have seen
+  `PEER_GONE` (endpoints are now moved to the services); and a capability to anything a dead
+  process made keeps its whole budget taken, so a device manager restart needs room for two
+  device managers while the old one's DMA memory is kept (both in note 0018's Changes, the
+  second also an open question). Drivers are now tied to the device manager. The new
+  supervision self-test crashes the system volume's RockFS server, the storage service and the
+  device manager in turn; each comes back with what depends on it, the files read back intact,
+  and the kept DMA memory is released only after the new device manager has switched the
+  devices off. Next: stage 8, the console and the shell (Sonnet, with Opus on the screen
+  hand-over and review).

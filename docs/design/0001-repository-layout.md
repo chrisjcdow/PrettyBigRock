@@ -144,3 +144,5 @@ The build tool's own tests check steps 1 and 3 match.
 - 7 November 2026, M5 stage 6: `lib/manifest`, `services/users`, `services/sandbox` (all
   GPL-3.0-or-later) and `tests/programs/sandboxed` (with the manifests the start-up archive
   carries as `apps/sandboxed.app` and `apps/broken.app`).
+- 8 November 2026, M5 stage 7: `lib/supervise` (the restart policy, moved out of
+  `lib/devices`).

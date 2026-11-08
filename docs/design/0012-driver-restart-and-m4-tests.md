@@ -302,3 +302,8 @@ unless GitHub is linked by then.
     The boot-test runner now asks QEMU for every core's registers and stack when the kernel
     stops or a run times out, since a kernel on a trampled stack can't finish its own
     report.
+- 8 November 2026, M5 stage 7 (note 0018): the restart policy moved to `lib/supervise`, where
+  `Disable` is now `GiveUp`; drivers are *tied* to the device manager (note 0013), so they end
+  with it; switching a function off also switches MSI off (`pbr_devices::pci::quiet`), and a
+  new device manager does it to every device it is about to drive before starting any driver.
+

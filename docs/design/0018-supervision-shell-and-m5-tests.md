@@ -232,6 +232,10 @@ traits, which are settled first.
 ## Open questions
 
 - Services that hang rather than end (liveness checks), for drivers and services alike.
+- Charging memory a supervisor keeps (the device manager's DMA memory) to the supervisor, so
+  that a crashed device manager's whole budget isn't held until the next one releases it.
+- Telling a client that a service has gone without its having to call (the users service
+  checks every 500 ms).
 - Keeping apps' work across a filesystem or session restart.
 - Crash reports that survive a restart (the logging service).
 - Keyboard layouts other than US (the input service, M6).
@@ -252,3 +256,55 @@ traits, which are settled first.
   trees (an administrator's with every volume, a standard user's with none); `add` and `setup`;
   and, started again told to ignore the system volume, users kept in memory with `owner`. The
   runner waits for `Sandbox self-test passed`.
+- 8 November 2026, stage 7 (built): supervision as built, and what building it taught.
+  - **Endpoints are moved to the services, not shared.** The kernel fails callers with
+    `PEER_GONE` only once no capability that can *receive* on an endpoint is left. The root
+    program used to keep a full copy of the endpoints it made for services, which would have
+    left their clients waiting for ever after a crash. Each service's endpoint is now moved to
+    it, and its supervisor keeps an unbadged copy that can only send and mint clients'
+    capabilities. (The users service already did this for sandbox managers.)
+  - **The root program's supervisor** (`services/root/src/supervisor.rs`) runs on a thread of
+    its own, beside the self-test. It serves `pbr.supervisor` under a badge for each child *and
+    each time it was started*, so a capability left over from an earlier instance is refused.
+    The lookup table as built: the storage service may look up `devices`; the users service may
+    look up `storage` (and gets the administrators' badge). The console comes in stage 8. Only
+    the device manager may `keep`.
+  - **Switching devices off** (section 4) is done by every device manager when it starts, the
+    first one too. It covers every PCI function a driver is chosen for, not every function: a
+    function nobody drives was never given to anyone, and one of them may be the display the
+    kernel's own console is on. (A bridge must keep forwarding for the devices behind it.) MSI is
+    switched off as well as MSI-X (`pbr_devices::pci::quiet`, host-tested). Drivers are now
+    *tied* to the device manager; they weren't before.
+  - **Budgets** (note 0006, section 9): a capability to anything an ended process made, its
+    process capability included, keeps that process's *whole* budget taken from its parent's.
+    So while the root program keeps the old device manager's DMA memory, the old device
+    manager's 96 MiB stays taken, and restarting it needs room for a second one. In 512 MiB
+    there is room, and the test checks it. Services let go of a dead instance's capabilities
+    at once: the users service when it notices, the storage service at its next call to a
+    driver, and the self-test before it crashes anything. Charging kept memory to whoever keeps
+    it is an open question below.
+  - **Filesystem servers** are restarted with the policy, on the same volume, by the storage
+    service: not when the server said it couldn't serve the volume (damaged, unsupported), nor
+    while shutting down. While one is due, the volume is `Starting`, and `open` answers
+    `NotReady`.
+  - **The storage service** finds the device manager through `lookup`. If the device manager
+    restarts, the storage service finds it again, and finds each disk again under the same
+    number (the new device manager finds devices in the same order). The disk must have the same
+    size and the same read-only setting, or its volumes fail rather than reach a different disk.
+    It waits up to 30 seconds for a driver or device manager to come back (10 before).
+  - **The users service** finds the storage service through `lookup`, and notices what it
+    depends on going by checking every 500 ms: the storage service, the system volume's root,
+    and the volumes each session holds. If the storage service or the system volume went, every
+    session starts afresh, with `users.txt` read again. If another volume went, only the
+    sessions that held it start afresh. A sandbox manager that ends is restarted with the
+    policy. A system volume in memory is lost with the storage service; a new one is made, with
+    `owner` again.
+  - **Test 7 as built** (`services/root/src/supervisetest.rs`): new self-test-only operations
+    `pbr.storage.debug.stop_server` and `flush`, and `pbr.devices.debug.quieted`. Before
+    crashing the storage service the test flushes the cache: a real crash loses what was only
+    in the cache, and FAT32, which the runner checks afterwards, isn't made to survive that
+    (RockFS is). The test checks that the kept memory was released by the new device manager,
+    after the time it reports having switched its devices off, and that the right number of
+    memory objects is kept again afterwards. The runner waits for `Supervision self-test
+    passed`.
+
