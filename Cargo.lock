@@ -217,6 +217,7 @@ dependencies = [
  "pbr-bootinfo",
  "pbr-captree",
  "pbr-elf",
+ "pbr-font",
  "pbr-platform",
  "pbr-ranges",
 ]
