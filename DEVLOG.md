@@ -490,4 +490,10 @@ disks made by 1.3, including writing and reading back.
   blocked every later one (the caller's own oldest launch now makes room); and a shell started
   again while its predecessor's `read_line` waited would have been refused (a newer
   `read_line` now takes over). After `shutdown` the users service no longer takes the closed
-  volumes for a crash. Next: stage 9, the final review of M5.
+  volumes for a crash. Boot tests may now take 1200 seconds: with the shell test, ARM's
+  self-test (and x86's, under emulation on a busy 2-CPU machine) takes over 600. A normal boot
+  was checked by hand on x86-64 (BIOS): the users service logs `owner` in with the terminal,
+  the shell starts, and `whoami`, `help`, `ls /` and `df` typed through QEMU show on the screen.
+  (The console's first look for devices can time out while the device manager is still
+  starting drivers; its watcher finds them a moment later.) Next: stage 9, the final review of
+  M5.
