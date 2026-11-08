@@ -215,7 +215,11 @@ A notification is a `u64` of signal bits.
 
 Every process has a **budget** in bytes, and a count of how much of it is used.
 - **Creating a process** takes a budget out of the creator's own: the creator's "used" goes up
-  by that amount until the child ends, then it's given back.
+  by that amount until the child ends, then it's given back. More exactly, it's given back
+  once nothing the child made is left: the objects a process made are charged to its budget,
+  so while anyone still holds a capability to one of them (a memory object, an endpoint, or
+  the child's own process capability), the child's *whole* budget stays taken (found in M5,
+  note 0018, Changes). Whoever keeps such a capability should let it go once it's done with.
 - **The root program** starts with all free memory, less the kernel's reserve.
 - **What's charged**, to the process that creates it:
   - memory objects: their pages;
@@ -261,3 +265,7 @@ Every process has a **budget** in bytes, and a count of how much of it is used.
   bit 8 is `BIND` (it was `WAIT`, which nothing used); device memory's bit 8 is `DMA`, memory's
   is `BUS` and the kernel log's is `CONTROL`. I/O ports use only the common rights and `READ`
   and `WRITE`.
+- 8 November 2026, end of M5: section 9 says when a child's budget is really given back (what
+  M5's supervision taught, note 0018); and a rule M5 follows (note 0008, Changes): a client is
+  never given an *unbadged* endpoint capability it can copy, since a copy of one can be minted
+  with any badge (section 5).

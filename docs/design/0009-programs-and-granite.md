@@ -139,6 +139,8 @@ Roles:
 | 5 | An endpoint to whoever started it (its parent) |
 | 6 | Its message page's memory object |
 | 7 to 11 | The root program only, from M4: device memory, interrupts, the message-signalled interrupt pool, I/O ports and the machine description (note 0010, section 8) |
+| 12 | From M5: the program's file tree, a read-only memory object describing its entries (note 0014, section 8) |
+| 100 to 355 | From M5: the capabilities for the file tree's entries 0 to 255 (note 0014, section 8) |
 | 1000 and up | Specific to the program, agreed with its launcher |
 
 The arguments are a UTF-8 string, at most 3 KiB in total, so the whole block fits in one
@@ -149,7 +151,8 @@ archive, and all of memory as its budget. Its arguments are the kernel command l
 can see `selftest`. From M4 it also gets one capability for all device memory, one for all
 interrupts, the message-signalled interrupt pool, one for all I/O ports (x86-64) and the
 machine description (roles 7 to 11; note 0010, section 8), which it hands to the device
-manager. Its kernel log capability has `CONTROL`, for the display driver.
+manager. Its kernel log capability has `CONTROL`, for the display driver; from M5 it is the
+only program given it, apart from the display driver (note 0010, Changes).
 
 ### 5. A Rust target for programs
 
@@ -318,3 +321,11 @@ Actions.
 - 2 November 2026, M4: start-up roles 7 to 11 for the root program, replacing a capability per
   device (note 0010, section 8); the root program starts the device manager, and in self-test
   runs adds the device, block and crash tests (note 0012).
+- 8 November 2026, end of M5: start-up roles 12 and 100 to 355, a program's file tree (note
+  0014). `granite`'s `Spawn` gained `tied` (the child ends with its launcher, note 0013),
+  `file_tree`, and `log` now gives the kernel log *without* `CONTROL`, so only the programs
+  given it on purpose can take the screen (note 0010, Changes). `granite` keeps every start-up
+  capability (it kept only the first 64, and dropped the rest silently). The root program now
+  starts the device manager, the storage service, the console and the users service, and
+  supervises them, serving `pbr.supervisor` at their role 5 (note 0018); in self-test runs it
+  adds M5's tests after M4's.

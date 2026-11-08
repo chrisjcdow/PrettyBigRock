@@ -39,31 +39,53 @@ PrettyBigRock/
 │   │                       record and key tables (notes 0011, 0012)
 │   ├── driver/             what every driver is built on (note 0011)
 │   ├── elf/                reading kernels' and programs' ELF files (notes 0004, 0009)
+│   ├── fat/                FAT32, read and write (note 0016)
+│   ├── files/              a program's file tree, and files by path (note 0014)
+│   ├── filetree/           the file tree's format and path rules (note 0014)
+│   ├── font/               the text font the kernel's console and the console service share
+│   ├── fs/                 the traits every filesystem implements (notes 0014, 0016)
+│   ├── fsserve/            what every filesystem server is built on: records, rights, gone
+│   │                       notices (note 0014)
 │   ├── granite/            granite, the native library programs are built on (note 0009)
 │   ├── interface-compiler/ turns interface files into Rust (note 0008)
 │   ├── interfaces/         the code generated from interfaces/ (note 0008)
+│   ├── manifest/           app manifests, users.txt, rules, and what an app is granted
+│   │                       (note 0017)
 │   ├── partition/          MBR and GPT partition tables, identifying filesystems (note 0015)
 │   ├── platform/           page tables, ACPI and device trees, shared by loaders and kernel
 │   ├── ranges/             ranges, kernel-owned subtraction and the vector queue (note 0010)
+│   ├── rockfs/             RockFS, read and write (note 0016, ROCKFS.md)
+│   ├── shell/              the text shell's commands, built and tested on the host (note 0018)
 │   ├── supervise/          the restart policy every supervisor uses (notes 0012, 0018)
+│   ├── terminal/           a grid of text cells drawn on a screen (note 0018)
 │   └── virtio/             the virtio PCI transport, virtqueues, block and input (note 0011)
 ├── drivers/              drivers, one program each, with its manifest beside it (note 0011)
 │   ├── <name>/             the driver
 │   └── <name>.drv          its manifest: what it drives and what it needs
 ├── services/             system services, one program each
-│   ├── root/               the first program, which starts everything else (note 0009)
+│   ├── root/               the first program, which starts and supervises the system
+│   │                       services (notes 0009, 0018)
 │   ├── devmgr/             the device manager (note 0011)
-│   └── storage/            the storage service: disks, volumes, the block cache (note 0015)
-├── apps/                 apps (from M6)
+│   ├── storage/            the storage service: disks, volumes, the block cache (note 0015)
+│   ├── rockfs/             the RockFS filesystem server (note 0016)
+│   ├── fat/                the FAT32 filesystem server (note 0016)
+│   ├── console/            the console: the screen and keyboards as a terminal (note 0018)
+│   ├── users/              users and sessions (note 0017)
+│   └── sandbox/            a session's sandbox manager (note 0017)
+├── apps/                 apps, one program each (note 0017)
+│   └── <name>/             the app, with its manifest <name>.app inside (from M5: shell,
+│                           the text shell); the start-up archive carries it as apps/<name>.app
 ├── interfaces/           interface files (`.pbi`) for messages (note 0008)
 ├── targets/              the Rust targets programs are built for (note 0009)
 ├── tests/
-│   └── programs/           test programs for the program self-test: echo, probe, and the
-│                           protocol they share
+│   ├── programs/           test programs for the self-tests: echo, probe and the protocol
+│   │                       they share, memfs, fileprobe, sandboxed
+│   └── data/               the data disk 1.3 made, and its manifest (note 0016)
 ├── ports/                software ported from elsewhere, each under its own licence (from M9)
 ├── xtask/                the build tool (`cargo xtask`)
-├── tools/                tools for other computers, such as tools/rockfs.py, and the
-│                         independent checkers (startarc.py, pbi_check.py)
+├── tools/                tools for other computers, such as tools/rockfs.py and rockfs-rs,
+│                         the independent checkers (startarc.py, pbi_check.py,
+│                         rockfs_cross.py) and the boot tests' after-checks (check_*.py)
 │
 ├── classic/              PrettyBigRock 1.x, the C system (D17)
 │   ├── build.sh            builds classic/build/prettybigrock.img
@@ -93,8 +115,9 @@ Rules:
 - **Processor-specific code is only in `kernel/src/arch/`, `kernel/src/board/` and `boot/`.**
   Libraries, drivers, services and apps are written once for every architecture.
 - **A folder's licence is fixed** (note 0009, section 7): MPL-2.0 for `lib/granite`,
-  `lib/elf`, `lib/archive`, `lib/filetree`, `lib/files` and `targets/`; MIT for `interfaces/` and `lib/interfaces`;
-  GPL-3.0-or-later for everything else. `cargo xtask check` checks every file says so.
+  `lib/elf`, `lib/archive`, `lib/filetree`, `lib/files`, `lib/font` and `targets/`; MIT for
+  `interfaces/` and `lib/interfaces`; GPL-3.0-or-later for everything else. `cargo xtask check`
+  checks every file says so.
 - **`ports/` is separate from everything else**, because ported software isn't part of the OS
   (DESIGN.md section 14) and carries its own licences.
 - **Folders listed as "from M*n*" don't exist yet.** They're created by the milestone that
@@ -146,3 +169,8 @@ The build tool's own tests check steps 1 and 3 match.
   carries as `apps/sandboxed.app` and `apps/broken.app`).
 - 8 November 2026, M5 stage 7: `lib/supervise` (the restart policy, moved out of
   `lib/devices`).
+- 8 November 2026, M5 stage 8: `lib/font` (MPL-2.0, shared with the kernel's console),
+  `lib/terminal`, `lib/shell`, `services/console`, `apps/shell` (the first app, with its
+  manifest `apps/shell/shell.app`) and `tools/check_shell_after.py`.
+- 8 November 2026, end of M5 (stage 9): the tree above brought up to date with everything M5
+  added.

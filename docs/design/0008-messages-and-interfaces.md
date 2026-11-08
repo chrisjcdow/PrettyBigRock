@@ -414,3 +414,10 @@ GPL-3.0-or-later, with a statement that its output is MIT-licensed.
 - 7 November 2026, M5 stage 5: generated clients gained `set_timeout_ms`, a limit counted from
   each call. A deadline set once and used for long had caught us twice: a filesystem server's
   disk client set to "60 seconds from now" at start-up failed every call after that minute.
+- 8 November 2026, end of M5 (stage 9 review): **every capability given to a client carries a
+  badge**, even from a service that doesn't tell its clients apart. An unbadged capability
+  with `DUPLICATE` can be minted from (note 0006, section 5), so its holder could make copies
+  with any badge and pass itself off as another client the day the service starts using
+  badges. The supervisor's lookups for the device manager and the console, and the endpoint
+  each driver hands the device manager for its clients, were unbadged; they now carry badge 1
+  (`ANY_CLIENT` in `services/root/src/supervisor.rs`, `CLIENT_BADGE` in `lib/driver`).
