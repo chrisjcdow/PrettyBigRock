@@ -164,6 +164,10 @@ name = "pbr-filetree"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-font"
+version = "0.0.0"
+
+[[package]]
 name = "pbr-fs"
 version = "0.0.0"
 

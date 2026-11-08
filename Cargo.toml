@@ -26,6 +26,7 @@ members = [
     "lib/elf",
     "lib/fat",
     "lib/filetree",
+    "lib/font",
     "lib/files",
     "lib/fs",
     "lib/fsserve",

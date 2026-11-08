@@ -138,6 +138,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-elf",
     "pbr-fat",
     "pbr-filetree",
+    "pbr-font",
     "pbr-fs",
     "pbr-fsserve",
     "pbr-granite",
@@ -933,6 +934,7 @@ fn licence_for(rel: &Path) -> &'static str {
         || under("lib/archive/")
         || under("lib/filetree/")
         || under("lib/files/")
+        || under("lib/font/")
         || under("targets/")
     {
         "MPL-2.0"
@@ -1003,6 +1005,7 @@ mod tests {
     fn licences_by_folder() {
         assert_eq!(licence_for(Path::new("lib/granite/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/elf/Cargo.toml")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("lib/font/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("interfaces/echo.pbi")), "MIT");
         assert_eq!(licence_for(Path::new("lib/interfaces/build.rs")), "MIT");
         assert_eq!(licence_for(Path::new("kernel/src/main.rs")), "GPL-3.0-or-later");
