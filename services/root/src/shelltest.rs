@@ -56,10 +56,13 @@ pub fn run(sup: &Supervisor) -> Result<String, String> {
             apps.iter().any(|a| a.app == "shell" && a.running && a.trusted).then_some(())
         })?;
         granite::println!("{READY}");
-        // The runner's last command is `shutdown`: the storage service then refuses to work.
+        // The runner's last command is `shutdown`: the storage service then refuses to open
+        // volumes (it still lists them).
         let storage = storagetest::connect(sup)?;
+        let volume = storage.admin.list().map_err(|e| format!("listing volumes: {e}"))?;
+        let volume = volume.first().ok_or("no volumes")?.id;
         within(TYPING_SECS, "the shell's shutdown", || {
-            matches!(storage.admin.list(), Err(CallError::Service(StorageError::ShutDown)))
+            matches!(storage.admin.open(volume), Err(CallError::Service(StorageError::ShutDown)))
                 .then_some(())
         })?;
         drop(storage);

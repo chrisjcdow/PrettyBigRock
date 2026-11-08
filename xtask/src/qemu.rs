@@ -470,9 +470,10 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
 /// root program prints this once the shell is running on the console.
 const SHELL_READY: &str = "Shell self-test: type commands";
 /// What the console writes to the kernel log, in self-test runs, when it starts waiting for a
-/// line, and in front of every line it shows (`services/console`).
-const CONSOLE_READ: &str = "[console:read] ";
-const CONSOLE_LINE: &str = "[console] ";
+/// line, and in front of every line it shows (`services/console`), after the tag the kernel puts
+/// in front of every line a program logs (its name).
+const CONSOLE_READ: &str = "[console] [console:read] ";
+const CONSOLE_LINE: &str = "[console] [console] ";
 
 /// The commands typed into the shell, in order, each when the console next waits for a line:
 /// (the command; text the console must show in answer; text it mustn't). The answer is
@@ -502,7 +503,7 @@ const SHELL_COMMANDS: &[(&str, &[&str], &[&str])] = &[
         &["Took /Home/Shelltest/greeting.txt back from sandboxed."], &[]),
     ("grants sandboxed", &["/Home/Documents"], &["greeting.txt"]),
     ("stop sandboxed", &[], &[]),
-    ("volumes", &["Home", "Pictures"], &[]),
+    ("volumes", &["Home", "PICTURES", "FAT32"], &[]),
     ("frobnicate", &["frobnicate: no such command"], &[]),
     ("shutdown", &["It's now safe to turn off your computer."], &[]),
 ];
