@@ -22,7 +22,7 @@ use alloc::format;
 use alloc::string::String;
 use granite::interface::CallError;
 use granite::time;
-use pbr_interfaces::pbr_storage::StorageError;
+use pbr_interfaces::pbr_storage::{StorageError, VolumeState};
 
 /// What the runner waits for before typing (keep it the same as `xtask/src/qemu.rs`).
 const READY: &str = "Shell self-test: type commands";
@@ -90,5 +90,12 @@ pub fn run(sup: &Supervisor) -> Result<String, String> {
     // new one, which opens the volumes again.
     sup.retire(Kind::Storage)?;
     sup.start(Kind::Storage, "")?;
+    // The tests after this one expect the volumes ready, as they are after a start (on ARM
+    // under emulation, finding every disk again takes the new service well over 30 seconds).
+    let storage = storagetest::connect(sup)?;
+    within(120, "the new storage service's volumes", || {
+        let list = storage.admin.list().ok()?;
+        (!list.is_empty() && list.iter().all(|v| v.state != VolumeState::Starting)).then_some(())
+    })?;
     r
 }
