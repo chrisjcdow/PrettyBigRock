@@ -11,14 +11,14 @@ use granite::device::{DeviceMemory, Interrupts, IoPorts, bus_address};
 use granite::endpoint::Endpoint;
 use granite::memory::Memory;
 use granite::process::{self, Spawn, Spawned};
-use granite::sys::perm;
 use granite::sys::rights;
 use pbr_archive::Archive;
 use pbr_devices::machine::Screen;
 use pbr_devices::manifest::{Class, Manifest};
 use pbr_devices::pci::{Bar, BarKind, Function};
 use pbr_devices::record::{Kind, MAX_BARS, Message, Record, Screen as Screen2};
-use pbr_driver::{ConfigPage, Mmio, role};
+use pbr_driver::{ConfigPage, role};
+use pbr_interfaces::pbr_supervisor as supervisor;
 
 /// The BARs larger than this are not given to drivers (graphics apertures and the like are
 /// for drivers written for them).
@@ -119,13 +119,18 @@ fn givable(f: &Function) -> impl Iterator<Item = &Bar> {
 }
 
 /// Gets everything for a driver for PCI function `f`: slices its BARs and configuration
-/// space, allocates its interrupts and DMA memory, and writes its record.
+/// space, allocates its interrupts and DMA memory, and writes its record. `page` is the device
+/// manager's own mapping of the configuration space `config`. A copy of the DMA memory goes to
+/// `keeper` (the supervisor) to keep, so that it outlives this device manager if it dies
+/// (note 0018, section 4).
 pub fn plan(
     f: &Function,
     config: DeviceMemory,
+    page: ConfigPage,
     m: &Manifest,
     memory: &DeviceMemory,
     pool: Option<&Interrupts>,
+    keeper: Option<&supervisor::Client>,
 ) -> Result<Plan, PlanError> {
     let mut record = Record::new(Kind::Pci);
     record.vendor = f.vendor;
@@ -162,16 +167,23 @@ pub fn plan(
         record.dma_bus =
             bus_address(&mem, &config, 0).map_err(err("finding the DMA memory's address"))?;
         record.dma_size = m.dma;
+        if let Some(k) = keeper {
+            // Any rights will do to keep it alive; it has to be transferable to be sent.
+            let copy = mem
+                .0
+                .duplicate(rights::INSPECT | rights::TRANSFER)
+                .map_err(err("copying DMA memory"))?;
+            k.keep(Memory(copy)).map_err(|e| PlanError(format!("having DMA memory kept: {e}")))?;
+        }
         Some(mem)
     } else {
         None
     };
 
-    let page = config.map(0, 4096, perm::READ_WRITE).map_err(err("mapping configuration space"))?;
     let own = config;
     let config =
         DeviceMemory(own.0.duplicate(rights::ALL).map_err(err("copying configuration space"))?);
-    let part = PciPart { config, _own_config: own, page: ConfigPage(Mmio::new(page)) };
+    let part = PciPart { config, _own_config: own, page };
     let rec = write_record(&record)?;
     Ok(Plan {
         record: rec,
@@ -342,7 +354,8 @@ pub fn start(
         caps: &grants,
         log: true,
         args: &args,
-        tied: false,
+        // Tied (note 0013): if the device manager ends, its drivers end first.
+        tied: true,
         file_tree: &[],
     });
     spawned.map_err(|e| PlanError(format!("starting {name}: {e}")))

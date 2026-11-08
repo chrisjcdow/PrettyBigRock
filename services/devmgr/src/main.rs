@@ -7,7 +7,11 @@
 //!
 //! It is started by the root program, which gives it the start-up archive and the device access
 //! capabilities (note 0010, section 8). Its own endpoint (role 1000) is where clients call
-//! `pbr.devices`; drivers report to a second endpoint it makes, with `pbr.driver.host`.
+//! `pbr.devices`; drivers report to a second endpoint it makes, with `pbr.driver.host`. The root
+//! program supervises it (note 0018): it restarts the device manager if it ends, and keeps a copy
+//! of every driver's DMA memory, through `pbr.supervisor` at role 5, until the next device
+//! manager has switched the devices off. Its drivers are *tied* to it (note 0013), so they end
+//! with it.
 
 #![no_std]
 #![no_main]
@@ -35,10 +39,11 @@ use pbr_archive::Archive;
 use pbr_devices::machine::Machine;
 use pbr_devices::manifest::{Class, Legacy, Manifest, Target, choose};
 use pbr_devices::pci;
-use pbr_driver::{Service, serve};
+use pbr_driver::{ConfigPage, Mmio, Service, serve};
 use pbr_interfaces::pbr_devices::{self as devices, DeviceInfo, DeviceState, DevicesError};
 use pbr_interfaces::pbr_devices_debug::{self as devices_debug, DebugError};
 use pbr_interfaces::pbr_driver_host::{self as host, HostError};
+use pbr_interfaces::pbr_supervisor as supervisor;
 use pbr_platform::acpi;
 use pbr_supervise::History;
 
@@ -81,6 +86,10 @@ struct Registry {
 
 static REGISTRY: Lock<Registry> = Lock::new(Registry { devices: Vec::new() });
 
+/// How many PCI functions this instance switched off at start, and when it had finished
+/// (nanoseconds on the kernel's clock), for `pbr.devices.debug.quieted`.
+static QUIETED: Lock<(u32, u64)> = Lock::new((0, 0));
+
 fn main(mut start: granite::Start) -> i32 {
     match run(&mut start) {
         Ok(()) => 0,
@@ -104,6 +113,12 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let io_ports = start.take(role::IO_PORTS).map(IoPorts);
     let lines = start.take(role::INTERRUPTS).map(Interrupts);
     let public = Endpoint(take(start, PUBLIC, "an endpoint to serve")?);
+    // Its supervisor (the root program), which keeps copies of DMA memory for it.
+    let keeper = start.take(role::PARENT).map(|h| {
+        let mut c = supervisor::Client::new(Endpoint(h));
+        c.set_timeout_ms(10_000);
+        c
+    });
 
     let mapping =
         archive_mem.map(perm::READ).map_err(|e| alloc::format!("can't map the archive: {e}"))?;
@@ -133,7 +148,11 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let host_ep = Endpoint::create().map_err(|e| alloc::format!("{e}"))?;
     let mut next_id = 1u32;
 
-    // PCI Express.
+    // PCI Express. First every function a driver is chosen for is found and switched off,
+    // before any driver starts (note 0018, section 4): if an earlier device manager died, its
+    // devices might still be doing DMA into memory the supervisor is keeping for them. Only then
+    // is that memory released. (Functions no driver is chosen for were never given to anyone,
+    // and are left alone: one of them may be the display the kernel's own console is on.)
     let reader = phys::PhysReader::new(&memory);
     let mut regions = Vec::new();
     if machine.rsdp != 0
@@ -144,6 +163,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     if regions.is_empty() {
         granite::println!("devmgr: no PCI Express configuration space (no MCFG table).");
     }
+    let mut found = Vec::new();
     for region in regions.into_iter().filter(|r| r.segment == 0) {
         let mut ecam = ecam::Ecam::new(&memory, region);
         let scan = pci::scan(&mut ecam, region.start_bus, region.end_bus);
@@ -157,7 +177,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
                 p.kind
             );
         }
-        for f in &scan.functions {
+        for f in scan.functions {
             if f.class == 6 {
                 continue; // bridges are followed by the scan, and need no driver
             }
@@ -183,19 +203,45 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
                 granite::println!("devmgr: {label}: no driver.");
                 continue;
             };
-            let d = &drivers[i];
-            granite::println!("devmgr: {label}: {}.", d.name);
+            granite::println!("devmgr: {label}: {}.", drivers[i].name);
             let Some(config) = ecam.function(a) else {
                 granite::println!("devmgr: {label}: can't get its configuration space.");
                 continue;
             };
-            let id = next_id;
-            next_id += 1;
-            let plan =
-                drivers::plan(f, config, &d.manifest, &memory, pool.as_ref()).map_err(|e| e.0);
-            let label = alloc::format!("{:02x}:{:02x}.{}", a.bus, a.device, a.function);
-            add(d, i, label, plan, &host_ep, id, selftest);
+            // The device manager's own mapping of the function's configuration space, made once
+            // and kept with the device (`drivers::PciPart`).
+            let page = match config.map(0, 4096, perm::READ_WRITE) {
+                Ok(m) => ConfigPage(Mmio::new(m)),
+                Err(e) => {
+                    granite::println!("devmgr: {label}: can't map its configuration space: {e}");
+                    continue;
+                }
+            };
+            let mut page = page;
+            pci::quiet(&mut page);
+            found.push((f, i, config, page));
         }
+    }
+    *QUIETED.lock() = (found.len() as u32, granite::time::now());
+    if let Some(s) = &keeper {
+        match s.release_kept() {
+            Ok(()) => granite::println!(
+                "devmgr: {} devices switched off; what an earlier device manager left is released.",
+                found.len()
+            ),
+            Err(e) => granite::println!("devmgr: can't release what was kept: {e}"),
+        }
+    }
+    for (f, i, config, page) in found {
+        let d = &drivers[i];
+        let a = f.addr;
+        let id = next_id;
+        next_id += 1;
+        let plan =
+            drivers::plan(&f, config, page, &d.manifest, &memory, pool.as_ref(), keeper.as_ref())
+                .map_err(|e| e.0);
+        let label = alloc::format!("{:02x}:{:02x}.{}", a.bus, a.device, a.function);
+        add(d, i, label, plan, &host_ep, id, selftest);
     }
 
     // The devices that aren't on PCI (note 0011, section 4).
@@ -376,7 +422,7 @@ impl Service for Public {
         let debug = msg.label >> 16 == u32::from(devices_debug::VERSION)
             && matches!(
                 (msg.label & 0xFFFF) as u16,
-                devices_debug::stop::OP | devices_debug::forgive::OP
+                devices_debug::stop::OP | devices_debug::forgive::OP | devices_debug::quieted::OP
             );
         if self.selftest && debug {
             if let Some((_, reply)) = devices_debug::dispatch(self, msg, buffer, reply) {
@@ -433,6 +479,11 @@ impl devices::Server for Public {
 }
 
 impl devices_debug::Server for Public {
+    fn quieted(&mut self, reply: devices_debug::quieted::Reply) {
+        let (functions, at) = *QUIETED.lock();
+        answered(reply.ok(functions, at));
+    }
+
     fn stop(&mut self, id: u32, reply: devices_debug::stop::Reply) {
         let ok = {
             let g = REGISTRY.lock();

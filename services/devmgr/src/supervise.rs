@@ -19,8 +19,7 @@ use granite::endpoint::Endpoint;
 use granite::notification::Notification;
 use granite::process::State;
 use granite::time;
-use pbr_devices::msix;
-use pbr_devices::pci::{self, command};
+use pbr_devices::pci;
 use pbr_interfaces::pbr_devices::DeviceState;
 use pbr_supervise::Decision;
 
@@ -182,13 +181,7 @@ fn quiet(plan: &mut Plan) {
     // Legacy devices have no bus mastering to switch off, and the line is masked when the
     // driver's binding goes with its process.
     let Some(pci) = &mut plan.pci else { return };
-    let cfg = &mut pci.page;
-    // MSI-X off first, then the function's bus-mastering and decoding.
-    let (caps, _) = pci::capabilities(cfg);
-    if let Some(info) = msix::info(cfg, &caps) {
-        msix::disable(cfg, &info);
-    }
-    pci::update_command(cfg, 0, command::BUS_MASTER | command::MEMORY | command::IO);
+    pci::quiet(&mut pci.page);
 }
 
 /// Fills the memory with zeros.
