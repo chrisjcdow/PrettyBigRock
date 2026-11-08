@@ -63,6 +63,11 @@ struct VolumeInfo {
 /// Puts RockFS on an empty volume (administrators only).
 @6 fn format(volume: u32, label: string<64>) -> () error UsersError;
 
+/// Has the storage service save every volume and flush every disk, so that it is safe to turn
+/// the computer off (administrators only; the shell's `shutdown`, note 0018 section 6).
+/// Afterwards the volumes can't be used until the next start.
+@7 fn shutdown() -> () error UsersError;
+
 /// What can go wrong.
 flexible enum UsersError {
     /// Only administrators may.

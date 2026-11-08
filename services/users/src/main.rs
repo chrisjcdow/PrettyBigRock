@@ -871,6 +871,22 @@ impl users_if::Server for Calls<'_> {
             Err(e) => reply.err(e),
         });
     }
+
+    fn shutdown(&mut self, reply: users_if::shutdown::Reply) {
+        // Saving every volume can take a while on a slow disk: the storage service answers
+        // only once every filesystem server has finished.
+        let r = self.admin().and_then(|()| {
+            granite::println!(
+                "users: {} asked to shut down; saving every volume.",
+                self.s.sessions[self.session].user.name
+            );
+            self.s.storage.shutdown().map_err(storage_error)
+        });
+        answered(match r {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.err(e),
+        });
+    }
 }
 
 /// A volume, in `pbr.users`'s copy of `pbr.storage`'s types.
