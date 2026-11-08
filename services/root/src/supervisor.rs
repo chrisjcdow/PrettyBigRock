@@ -94,15 +94,21 @@ const DEVMGR_LOG_CONTROL: u32 = 1001;
 /// `ADMIN`): what the users service gets when it looks up `storage`.
 pub const STORAGE_ADMIN: u64 = 1;
 
+/// The badge on the clients' capabilities for services that don't tell their clients apart
+/// (the device manager and the console). It is never 0: a capability without a badge that can
+/// be copied lets its holder mint copies with any badge it likes (note 0006, section 5), which
+/// would let a client pass itself off as another the day such a service starts using badges.
+pub const ANY_CLIENT: u64 = 1;
+
 /// Who may look up what (note 0018, section 2): the service, and the badge the capability
-/// carries (0 for none). Nobody else may look up anything. The console's endpoint serves
+/// carries (never 0). Nobody else may look up anything. The console's endpoint serves
 /// `pbr.terminal`: the users service gives it to one session, whose shell uses it.
 fn rule(child: Kind, name: &str) -> Option<(Kind, u64)> {
     match (child, name) {
-        (Kind::Storage, "devices") => Some((Kind::Devmgr, 0)),
-        (Kind::Console, "devices") => Some((Kind::Devmgr, 0)),
+        (Kind::Storage, "devices") => Some((Kind::Devmgr, ANY_CLIENT)),
+        (Kind::Console, "devices") => Some((Kind::Devmgr, ANY_CLIENT)),
         (Kind::Users, "storage") => Some((Kind::Storage, STORAGE_ADMIN)),
-        (Kind::Users, "console") => Some((Kind::Console, 0)),
+        (Kind::Users, "console") => Some((Kind::Console, ANY_CLIENT)),
         _ => None,
     }
 }
@@ -540,14 +546,7 @@ impl supervisor::Server for Calls<'_> {
                 None => Err(SupervisorError::NotAllowed),
                 Some((target, badge)) => match g.child(target).and_then(|c| c.endpoint.as_ref()) {
                     None => Err(SupervisorError::NotReady),
-                    Some(ep) => {
-                        let made = if badge == 0 {
-                            ep.0.duplicate(CLIENT).map(Endpoint)
-                        } else {
-                            ep.mint(badge, CLIENT)
-                        };
-                        made.map_err(|_| SupervisorError::NotReady)
-                    }
+                    Some(ep) => ep.mint(badge, CLIENT).map_err(|_| SupervisorError::NotReady),
                 },
             }
         };

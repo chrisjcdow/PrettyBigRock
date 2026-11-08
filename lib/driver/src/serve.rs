@@ -52,11 +52,17 @@ pub fn serve(ep: &Endpoint, buffer_size: usize, service: &mut impl Service) -> !
     }
 }
 
+/// The badge on clients' capabilities for a driver's service. Drivers don't tell their clients
+/// apart, but it isn't 0: a copyable capability without a badge would let whoever holds it mint
+/// copies with any badge it likes (note 0006, section 5).
+pub const CLIENT_BADGE: u64 = 1;
+
 /// Tells the device manager (`parent`) that the driver is serving, and gives it an endpoint
-/// clients may send to: a copy of `service` that can be sent, copied and passed on, but not received from.
+/// clients may send to: a copy of `service` that can be sent, copied and passed on, but not
+/// received from, carrying [`CLIENT_BADGE`].
 pub fn host_ready(parent: Endpoint, service: &Endpoint) -> Result<(), CallError<HostError>> {
     let send = service
-        .mint(0, rights::SEND | rights::TRANSFER | rights::DUPLICATE)
+        .mint(CLIENT_BADGE, rights::SEND | rights::TRANSFER | rights::DUPLICATE)
         .map_err(CallError::Call)?;
     let mut client = host::Client::new(parent);
     client.set_deadline(time::after_ms(10_000));
