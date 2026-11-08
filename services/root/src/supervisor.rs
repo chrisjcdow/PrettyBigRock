@@ -81,6 +81,10 @@ impl Kind {
     }
 }
 
+/// The role the device manager is given the kernel log with `CONTROL` at
+/// (`services/devmgr` uses the same number).
+const DEVMGR_LOG_CONTROL: u32 = 1001;
+
 /// The badge of the storage service's `pbr.storage` for administrators (`services/storage`'s
 /// `ADMIN`): what the users service gets when it looks up `storage`.
 pub const STORAGE_ADMIN: u64 = 1;
@@ -397,6 +401,12 @@ impl Inner {
         if kind == Kind::Devmgr {
             for (r, h) in &self.devices {
                 caps.push((*r, h.raw(), rights::ALL, false));
+            }
+            // The right to take the screen from the kernel's text console goes to the device
+            // manager, for the display driver alone (note 0010, section 7). Every other
+            // program's log is given without it (`Spawn::log`).
+            if granite::log::handle() != 0 {
+                caps.push((DEVMGR_LOG_CONTROL, granite::log::handle(), rights::CONTROL, false));
             }
         }
         let c = &mut self.children[i];

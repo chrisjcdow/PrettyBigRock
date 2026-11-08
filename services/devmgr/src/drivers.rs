@@ -7,6 +7,7 @@
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use granite::Handle;
 use granite::device::{DeviceMemory, Interrupts, IoPorts, bus_address};
 use granite::endpoint::Endpoint;
 use granite::memory::Memory;
@@ -103,6 +104,10 @@ pub struct Plan {
     pub ports: Option<IoPorts>,
     /// A second range of I/O ports, for a device whose ports aren't together.
     pub ports2: Option<IoPorts>,
+    /// The kernel log with only the right `CONTROL`, for the firmware's framebuffer: whoever
+    /// drives the screen must be able to stop the kernel drawing its text on it
+    /// (`console_screen_release`, note 0010 section 7). Nothing else is given it.
+    pub log_control: Option<Handle>,
 }
 
 /// Why a plan couldn't be made.
@@ -194,6 +199,7 @@ pub fn plan(
         dma,
         ports: None,
         ports2: None,
+        log_control: None,
     })
 }
 
@@ -256,11 +262,17 @@ pub fn plan_legacy(
         dma: None,
         ports: Some(slice),
         ports2,
+        log_control: None,
     })
 }
 
-/// Makes the plan for the firmware's framebuffer `s`.
-pub fn plan_framebuffer(s: &Screen, memory: &DeviceMemory) -> Result<Plan, PlanError> {
+/// Makes the plan for the firmware's framebuffer `s`. `log_control` is the device manager's
+/// kernel log with `CONTROL`, if it was given one; the driver gets a copy with only that right.
+pub fn plan_framebuffer(
+    s: &Screen,
+    memory: &DeviceMemory,
+    log_control: Option<&Handle>,
+) -> Result<Plan, PlanError> {
     let format =
         s.format().ok_or_else(|| PlanError("the screen's format is unsupported".into()))?;
     let start = s.base & !4095;
@@ -272,6 +284,10 @@ pub fn plan_framebuffer(s: &Screen, memory: &DeviceMemory) -> Result<Plan, PlanE
     record.bars[0] = size;
     record.screen = Screen2 { width: s.width, height: s.height, stride: s.stride, format };
     let slice = memory.slice(start, size, rights::ALL).map_err(err("slicing the framebuffer"))?;
+    let log_control = match log_control {
+        Some(h) => Some(h.duplicate(rights::CONTROL).map_err(err("copying the kernel log"))?),
+        None => None,
+    };
     Ok(Plan {
         record: write_record(&record)?,
         kind: Kind::Framebuffer,
@@ -281,6 +297,7 @@ pub fn plan_framebuffer(s: &Screen, memory: &DeviceMemory) -> Result<Plan, PlanE
         dma: None,
         ports: None,
         ports2: None,
+        log_control,
     })
 }
 
@@ -342,6 +359,12 @@ pub fn start(
             rights::READ | rights::WRITE | rights::MAP | rights::INSPECT,
             false,
         ));
+    }
+    // Only a display driver may take the screen from the kernel.
+    if let Some(log) = &plan.log_control
+        && d.manifest.class == Class::Display
+    {
+        grants.push((role::LOG_CONTROL, log.raw(), rights::CONTROL, false));
     }
     // In self-test runs the driver also serves `pbr.driver.debug`.
     let args =

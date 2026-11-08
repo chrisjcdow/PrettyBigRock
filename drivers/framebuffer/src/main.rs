@@ -5,8 +5,12 @@
 //! `pbr.display` for the screen the firmware set up. It only describes the screen and hands out
 //! the memory; clients draw on it themselves, so there is nothing to copy.
 //!
-//! The kernel keeps drawing its text on the screen until someone with the right to do so takes
-//! it over (`console_screen_release`); this driver doesn't, because nothing draws yet.
+//! The kernel draws its own messages on the screen until the display stack takes it over
+//! (docs/design/0010-device-access.md, section 7). This driver does that when a client first
+//! asks for the framebuffer, since from then on the client draws: it calls
+//! `console_screen_release` with the kernel log the device manager gave it, which carries the
+//! right `CONTROL` and nothing else. Kernel messages carry on over the serial port, and a kernel
+//! panic is still drawn over whatever is on the screen.
 
 #![no_std]
 #![no_main]
@@ -63,7 +67,8 @@ fn run(mut dev: Device) -> Result<core::convert::Infallible, &'static str> {
     let info = DisplayInfo { width: s.width, height: s.height, stride: s.stride, format };
     let service = Endpoint::create().map_err(|_| "can't make an endpoint")?;
     granite::println!("framebuffer: {}x{}, {} bytes a row.", s.width, s.height, s.stride);
-    let mut screen = Screen { info, memory, args: dev.args };
+    let log_control = dev.log_control.take();
+    let mut screen = Screen { info, memory, args: dev.args, log_control };
     host_ready(host, &service).map_err(|_| "the device manager didn't take the endpoint")?;
     serve(&service, display::REQUEST_BUFFER, &mut screen)
 }
@@ -72,6 +77,8 @@ struct Screen {
     info: DisplayInfo,
     memory: DeviceMemory,
     args: alloc::string::String,
+    /// The kernel log with `CONTROL`, until the screen has been taken from the kernel.
+    log_control: Option<granite::Handle>,
 }
 
 fn answered(r: granite::Result<()>) {
@@ -88,6 +95,13 @@ impl display::Server for Screen {
     }
 
     fn framebuffer(&mut self, reply: display::framebuffer::Reply) {
+        // From now on a client draws: stop the kernel drawing over it. Once is enough (the
+        // kernel doesn't take the screen back), so the capability goes after use.
+        if let Some(log) = self.log_control.take()
+            && let Err(e) = granite::device::console_screen_release(&log)
+        {
+            granite::println!("framebuffer: can't take the screen from the kernel: {e}");
+        }
         // Clients may map, read, write and pass it on, but not copy it further.
         let copy = self
             .memory

@@ -51,6 +51,9 @@ granite::main!(main);
 
 /// The role the root program gives the device manager's public endpoint.
 const PUBLIC: u32 = role::OWN;
+/// The role the root program gives the device manager its kernel log with `CONTROL` at, to be
+/// passed on to the display driver only (note 0010, section 7).
+const LOG_CONTROL: u32 = 1001;
 /// The most devices listed to a client (what `pbr.devices.list` can carry).
 const MAX_LISTED: usize = 64;
 
@@ -113,6 +116,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let io_ports = start.take(role::IO_PORTS).map(IoPorts);
     let lines = start.take(role::INTERRUPTS).map(Interrupts);
     let public = Endpoint(take(start, PUBLIC, "an endpoint to serve")?);
+    let log_control = start.take(LOG_CONTROL);
     // Its supervisor (the root program), which keeps copies of DMA memory for it.
     let keeper = start.take(role::PARENT).map(|h| {
         let mut c = supervisor::Client::new(Endpoint(h));
@@ -287,7 +291,8 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
                 screen.height,
                 drivers[i].name
             );
-            let plan = drivers::plan_framebuffer(screen, &memory).map_err(|e| e.0);
+            let plan =
+                drivers::plan_framebuffer(screen, &memory, log_control.as_ref()).map_err(|e| e.0);
             add(&drivers[i], i, String::from("fb0"), plan, &host_ep, id, selftest);
         } else {
             granite::println!("devmgr: framebuffer: no driver.");

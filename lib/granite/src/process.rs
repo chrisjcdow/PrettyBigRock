@@ -221,7 +221,9 @@ pub struct Spawn<'a> {
     pub priority: u8,
     /// The capabilities it starts with, besides its own process and main thread.
     pub caps: &'a [Grant],
-    /// Give it a copy of this program's kernel log capability.
+    /// Give it a copy of this program's kernel log capability, without `CONTROL` (the right to
+    /// take the screen from the kernel, note 0010 section 7): that right is passed on only on
+    /// purpose, through `caps`, to the display stack.
     pub log: bool,
     /// Its arguments (at most 3 KiB).
     pub args: &'a str,
@@ -298,7 +300,8 @@ pub fn spawn(s: &Spawn<'_>) -> core::result::Result<Spawned, SpawnError> {
     let thread = Thread(Handle::from_raw(t as u32));
     entries.push((role::THREAD, process.give(thread.0.raw(), rights::ALL, false)?));
     if s.log && crate::log::handle() != 0 {
-        entries.push((role::LOG, process.give(crate::log::handle(), rights::ALL, false)?));
+        let mask = rights::ALL & !rights::CONTROL;
+        entries.push((role::LOG, process.give(crate::log::handle(), mask, false)?));
     }
     for &(r, h, mask, moving) in s.caps {
         entries.push((r, process.give(h, mask, moving)?));
