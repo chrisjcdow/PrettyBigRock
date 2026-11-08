@@ -335,3 +335,12 @@ record doesn't change.
   - The machine description gained the FADT's 8042 flag (the kernel reads it, x86-64 only), and
     the kernel reads the MADT's interrupt source overrides for ISA lines' polarity and trigger.
   - A restarted driver keeps its interrupt vectors (above, and note 0012).
+- 8 November 2026, M5 stage 8: **the screen hand-over as built.** Only the display driver
+  holds `CONTROL` on the kernel log. `Spawn::log` in `granite` now gives a child the log
+  without it (until then every service, driver and filesystem server got all rights, so any of
+  them could have taken the screen). The root program gives the device manager a copy with
+  only `CONTROL` at its role 1001; the device manager passes it to the firmware framebuffer's
+  driver alone, at role 1050 (and only to a driver whose manifest says `class display`). The
+  driver calls `console_screen_release` on its first `framebuffer()` call, since from then on a
+  client (the console) draws; it lets go of the capability afterwards. The kernel's text console
+  and the console service share one font, `lib/font`.

@@ -429,3 +429,7 @@ are later milestones (M7 to M11).
   - The interface compiler gained the `device_memory` handle kind (note 0008).
   - Drivers take one to two seconds from start to ready in a debug build on QEMU's emulation;
     nothing in M4 waits on that, but it's worth measuring in a release build before M6.
+- 8 November 2026, M5 stage 8: the framebuffer's plan carries the kernel log with only
+  `CONTROL`, which the device manager gives the driver at role 1050, so the driver can take the
+  screen from the kernel when a client first asks for it (note 0010, Changes). `lib/devices`'
+  `keys` gained `us`, the US layout, which the console uses to turn key codes into characters.
