@@ -289,6 +289,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-shell-app"
+version = "0.0.0"
+dependencies = [
+ "pbr-files",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-shell",
+]
+
+[[package]]
 name = "pbr-storage"
 version = "0.0.0"
 dependencies = [

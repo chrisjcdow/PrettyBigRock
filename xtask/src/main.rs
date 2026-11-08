@@ -85,6 +85,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-test-memfs", "memfs", "memfs"),
     ("pbr-test-fileprobe", "fileprobe", "fileprobe"),
     ("pbr-test-sandboxed", "sandboxed", "apps/sandboxed"),
+    ("pbr-shell-app", "shell", "apps/shell"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -98,6 +99,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     // Apps' manifests sit beside them too (note 0017, section 4).
     ("apps/sandboxed.app", "tests/programs/sandboxed/sandboxed.app"),
     ("apps/broken.app", "tests/programs/sandboxed/broken.app"),
+    ("apps/shell.app", "apps/shell/shell.app"),
 ];
 
 /// Crates built for the programs' targets, checked with Clippy there.
@@ -118,6 +120,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-rockfs-server",
     "pbr-users",
     "pbr-sandbox",
+    "pbr-shell-app",
     "pbr-test-echo",
     "pbr-test-fileprobe",
     "pbr-test-memfs",
