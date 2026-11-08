@@ -12,6 +12,14 @@ interface pbr.storage.debug version 1;
 /// The cache: how many pages it holds, and how many of them are waiting to be written.
 @101 fn cache() -> (pages: u32, dirty: u32) error DebugError;
 
+/// Stops volume `id`'s filesystem server, as if it had crashed (the supervision test, note
+/// 0018, section 7).
+@102 fn stop_server(id: u32) -> () error DebugError;
+
+/// Writes every dirty page in the cache to its disk, so that a test can crash this service
+/// without losing what filesystems have already saved.
+@103 fn flush() -> () error DebugError;
+
 /// What can go wrong.
 flexible enum DebugError {
     NoSuchVolume @1,
