@@ -286,7 +286,9 @@ pub fn plan_framebuffer(
     let slice = memory.slice(start, size, rights::ALL).map_err(err("slicing the framebuffer"))?;
     // Without it the driver still works; the kernel just keeps drawing on the screen too.
     let log_control = log_control.and_then(|h| {
-        h.duplicate(rights::CONTROL)
+        // (`DUPLICATE` too, so that `start` can give the driver a copy of it: the driver's
+        // copy has only `CONTROL`.)
+        h.duplicate(rights::CONTROL | rights::DUPLICATE)
             .map_err(|e| granite::println!("devmgr: copying the kernel log for the screen: {e}"))
             .ok()
     });
