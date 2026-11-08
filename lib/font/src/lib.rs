@@ -10,11 +10,11 @@
 //! to 7 are always 0). A set bit is a dot of the text colour.
 //!
 //! The kernel's early text console and the console service both draw with it, so they show
-//! the same letters. `#![no_std]` means this library uses only Rust's `core` library, not the
+//! the same letters. `no_std` means this library uses only Rust's `core` library, not the
 //! standard library (which needs an operating system underneath), so it builds for the kernel,
 //! for programs and for the host.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 /// Glyph width in pixels.
 pub const WIDTH: usize = 5;
@@ -127,17 +127,10 @@ pub fn glyph(c: char) -> &'static [u8; HEIGHT] {
     if (32..127).contains(&i) { &GLYPHS[i - 32] } else { &GLYPHS[(b'?' - 32) as usize] }
 }
 
-// The tests use the standard library (`std`), which `#![no_std]` above leaves out of the
-// library itself but which the host's test program may use.
-#[cfg(test)]
-extern crate std;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::Command;
-    use std::string::String;
-    use std::vec::Vec;
 
     #[test]
     fn anything_unprintable_is_a_question_mark() {
@@ -164,14 +157,14 @@ mod tests {
     #[test]
     fn every_glyph_matches_the_classic_font() {
         let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../classic/tools/mkassets.py");
-        let dir = std::env::temp_dir().join(std::format!("pbr-font-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("pbr-font-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("assets.c");
         // `-I` stops Python reading modules from the current folder.
         let run = match Command::new("python3").arg("-I").arg(script).arg(&out).output() {
             Ok(r) => r,
             Err(e) => {
-                std::eprintln!("skipped: python3 is not available ({e})");
+                eprintln!("skipped: python3 is not available ({e})");
                 let _ = std::fs::remove_dir_all(&dir);
                 return;
             }
