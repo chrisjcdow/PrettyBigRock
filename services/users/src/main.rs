@@ -149,6 +149,8 @@ struct Service {
     console_user: Option<String>,
     /// Signalled with a session's bit when its sandbox manager ends; bound to the endpoint.
     ended: Notification,
+    /// An administrator asked for `shutdown`.
+    shut_down: bool,
     selftest: bool,
 }
 
@@ -197,6 +199,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         console,
         console_user,
         ended,
+        shut_down: false,
         selftest,
     };
     // At start, a session for the first administrator (M5 has no login yet; note 0017,
@@ -612,6 +615,11 @@ impl Service {
     /// capabilities (note 0018, section 3): all of them if it was the storage service or the
     /// system volume, otherwise just the ones that held the volume.
     fn check(&mut self) {
+        // After `shutdown` the volumes are closed on purpose: nothing is found again or
+        // started again, so that nothing writes to them before the computer is turned off.
+        if self.shut_down {
+            return;
+        }
         let storage_gone = self.storage.list().is_err_and(|e| lost(&e));
         let system_gone = self.system.root.info().is_err_and(|e| lost(&e));
         if storage_gone || system_gone {
@@ -962,6 +970,7 @@ impl users_if::Server for Calls<'_> {
                 "users: {} asked to shut down; saving every volume.",
                 self.s.sessions[self.session].user.name
             );
+            self.s.shut_down = true;
             self.s.storage.shutdown().map_err(storage_error)
         });
         answered(match r {
