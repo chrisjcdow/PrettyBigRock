@@ -11,8 +11,9 @@ This repository holds two generations:
 - **PrettyBigRock 2** (everything else): a new design, meant to grow into an operating system
   you'd actually use, on real computers. It's a 64-bit microkernel written in Rust, for x86-64
   and ARM64 (including the Raspberry Pi 5), where every app and every driver runs in its own
-  sandbox. It's at the very start: the design is in [docs/DESIGN.md](docs/DESIGN.md), the plan
-  is in [docs/ROADMAP.md](docs/ROADMAP.md), and the detailed design notes are in
+  sandbox. It's early days: it has files, users and a text shell, but no desktop yet. The
+  design is in [docs/DESIGN.md](docs/DESIGN.md), the plan is in
+  [docs/ROADMAP.md](docs/ROADMAP.md), and the detailed design notes are in
   [docs/design/](docs/design/).
 
 ![PrettyBigRock desktop](screenshot.png)
@@ -31,7 +32,7 @@ records who did what in each session. Chris directs; Claude writes the code and 
 
 ![PrettyBigRock 2 starting all four cores and passing its self-test](docs/screenshot-pbr2.png)
 
-So far (milestone M4) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on
+So far (milestone M5) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on
 ARM64 machines with UEFI, all from the same disk image. The kernel then:
 - takes over memory management;
 - handles interrupts and exceptions;
@@ -50,15 +51,38 @@ only that device: virtio disk, keyboard and mouse, the framebuffer, PS/2 keyboar
 and a 16550 serial port. When a driver crashes, the device manager switches its device off,
 cleans up, and starts it again, while everything else keeps running.
 
+Then come **files**. The **storage service** finds the disks' partitions and volumes, keeps
+one block cache for them all, and starts a filesystem server for each volume: **RockFS**,
+PrettyBigRock's own filesystem (the Rust version reads and writes the disks 1.3 made), or
+**FAT32**. A program never sees a disk or a whole filesystem: it gets capabilities for just
+the folders and files it is given, which it sees as one tree of paths (`/Home/Documents`),
+and nothing outside them exists for it.
+
+The **users service** finds the system volume (or, without one, keeps an `owner`'s files in
+memory) and starts a **session** for each user, with their home folder and, for
+administrators, every volume. Each session's **sandbox manager** launches apps from their
+**manifests**: an app gets only the folders its manifest asks for, cut down by the user's
+rules, plus any file the user chose for it, and the sandbox manager can take any of it back
+while the app runs. The first app is the **text shell**, on the **console** (the screen and
+keyboard as a terminal): `ls`, `cd`, `cat`, `write`, `mkdir`, `mv`, `rm`, `run`, `grants`,
+`revoke`, `volumes`, `shutdown` and more (`help` lists them).
+
+Services are **supervised**: when the device manager, the storage service, a filesystem
+server, the console or a session ends, it is started again, with what depends on it.
+
 Programs are written in Rust against **granite**, PrettyBigRock's native library, and
 services describe what they offer in small interface files (`interfaces/*.pbi`), from which
 the code for both sides is generated.
 
-It reports what it found on the screen and the serial port. With `selftest` on its command
-line, it tests all of that too, which is what the automatic boot tests do: the kernel tests
-itself, then `root` runs test programs that check messages, isolation, faults, revocation,
-memory budgets and calls under load, and then the devices: every driver through its
-interface, and a disk driver crashed on purpose dozens of times, including under load.
+It reports what it found on the serial port, and on the screen until the console takes it
+over. With `selftest` on its command line, it tests
+all of that too, which is what the automatic boot tests do: the kernel tests itself, then
+`root` runs test programs that check messages, isolation, faults, revocation, memory budgets
+and calls under load; the devices, with a disk driver crashed on purpose dozens of times;
+storage, files, RockFS (on a disk 1.3 itself made, checked afterwards by 1.3's own code) and
+FAT32 (checked with `fsck.fat`); an app that must find exactly what it was granted; the
+storage service, a filesystem server and the device manager crashed and coming back; and
+the shell, with commands typed into it and the disk checked afterwards.
 
 Building needs [rustup](https://rustup.rs); the right Rust version installs itself the first
 time. Booting it needs QEMU, with its UEFI firmware (on Debian or Ubuntu: `qemu-system-x86
@@ -76,6 +100,11 @@ cargo xtask doctor               # how the toolchain was found
 On Windows, after building (or copying in a built image), double-click `run-prettybigrock.bat`,
 or add any of `bios`, `arm`, `selftest` and a number of cores after its name, for example
 `run-prettybigrock.bat bios selftest 8`.
+
+Either way the text shell appears on the screen once everything has started. `cargo xtask run`
+attaches the boot tests' disks too, one of them a system volume with two users, so the shell
+starts as `chris`, an administrator, with real files; `run-prettybigrock.bat` attaches no data
+disk, so the shell starts as `owner`, and its files are kept in memory until QEMU stops.
 
 The image is also a real boot disk: written to a USB stick, it should start a PC or an ARM64
 machine with UEFI (with Secure Boot turned off), or an older PC with a BIOS. Real hardware is
@@ -175,7 +204,7 @@ inside them use more permissive licences (DESIGN.md section 9.1, decision D16):
 
 | Licence | What |
 |---|---|
-| [MPL-2.0](LICENSES/MPL-2.0.txt) | `lib/granite` (the native library), `lib/elf`, `lib/archive`, `targets/` |
+| [MPL-2.0](LICENSES/MPL-2.0.txt) | `lib/granite` (the native library), `lib/elf`, `lib/archive`, `lib/filetree`, `lib/files`, `lib/font`, `targets/` |
 | [MIT](LICENSES/MIT.txt) | `interfaces/` (interface files), `lib/interfaces` and all code generated from interfaces |
 | [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt) | everything else: the kernel, loaders, services, tools and PrettyBigRock 1.x |
 
