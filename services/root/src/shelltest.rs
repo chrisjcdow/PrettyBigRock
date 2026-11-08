@@ -29,6 +29,8 @@ const READY: &str = "Shell self-test: type commands";
 /// How long the runner may take over all its commands. Typing is slow under emulation, and
 /// `shutdown` saves every volume.
 const TYPING_SECS: u64 = 400;
+/// How long the shell is given to show that the shutdown has finished.
+const SHOWN_MS: u64 = 10_000;
 
 /// Waits up to `secs` seconds for `f` to give something.
 fn within<T>(secs: u64, what: &str, mut f: impl FnMut() -> Option<T>) -> Result<T, String> {
@@ -65,6 +67,14 @@ pub fn run(sup: &Supervisor) -> Result<String, String> {
             matches!(storage.admin.open(volume), Err(CallError::Service(StorageError::ShutDown)))
                 .then_some(())
         })?;
+        // Then for it to finish (asking for a shutdown that is under way answers `NotReady`; one
+        // that has finished, `Ok`), and for the shell to show the user it has: its answer comes
+        // straight after, but nothing here can see the screen, so give it a few seconds before
+        // the session is ended.
+        within(60, "the storage service to finish shutting down", || {
+            storage.admin.shutdown().is_ok().then_some(())
+        })?;
+        time::sleep_ms(SHOWN_MS);
         drop(storage);
         // The shell carries on afterwards, waiting for the next command.
         within(30, "the shell still running after shutdown", || {
