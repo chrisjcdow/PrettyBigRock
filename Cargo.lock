@@ -300,6 +300,13 @@ name = "pbr-supervise"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-terminal"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+]
+
+[[package]]
 name = "pbr-test-echo"
 version = "0.0.0"
 dependencies = [

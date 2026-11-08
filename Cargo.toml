@@ -40,6 +40,7 @@ members = [
     "lib/ranges",
     "lib/rockfs",
     "lib/supervise",
+    "lib/terminal",
     "lib/virtio",
     "services/devmgr",
     "services/fat",
