@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-console"
+description = "The console service: a text terminal on the screen, served as pbr.terminal (note 0018)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "console"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-terminal = { path = "../../lib/terminal" }
+
+[lints]
+workspace = true

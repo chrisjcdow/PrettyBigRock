@@ -44,6 +44,15 @@ name = "pbr-captree"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-console"
+version = "0.0.0"
+dependencies = [
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-terminal",
+]
+
+[[package]]
 name = "pbr-crc"
 version = "0.0.0"
 

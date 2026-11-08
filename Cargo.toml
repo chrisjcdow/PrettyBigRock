@@ -42,6 +42,7 @@ members = [
     "lib/supervise",
     "lib/terminal",
     "lib/virtio",
+    "services/console",
     "services/devmgr",
     "services/fat",
     "services/root",
