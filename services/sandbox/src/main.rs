@@ -26,8 +26,16 @@
 //!    everything the app opens through that copy is derived from it in turn, so revoking the
 //!    kept capability (note 0013) takes back the grant and everything opened through it.
 //!
-//! It serves `pbr.sandbox` to the session's trusted programs (the shell, from stage 8), told
-//! apart by badges: a badge is a number a service stamps on each capability it hands out
+//! **The shell** (note 0018, section 6). The session that owns the console's terminal (the
+//! first administrator's) gets it from the users service. Then this program starts the shell,
+//! `apps/shell`, launched like any other app (its manifest asks for `trusted` and `terminal`),
+//! and starts it again when it ends, with the restart policy every supervisor uses
+//! (`lib/supervise`). If the terminal itself has gone (the console ended), it doesn't: the users
+//! service will start this session again with the new console's terminal. The terminal is given
+//! only to apps granted `terminal` (note 0017, section 5).
+//!
+//! It serves `pbr.sandbox` to the session's trusted programs (the shell), told apart by
+//! badges: a badge is a number a service stamps on each capability it hands out
 //! (note 0008), so it knows who is calling. [`SESSION`] is the one the users service mints for
 //! the session itself; each trusted app gets [`APP_BASE`] + its number.
 
@@ -42,7 +50,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use granite::endpoint::{Endpoint, Event};
 use granite::handle::Handle;
-use granite::interface::OutCap;
+use granite::interface::{CallError, OutCap};
 use granite::memory::Memory;
 use granite::notification::Notification;
 use granite::process::{self, Process, Spawn, SpawnError, State, role};
@@ -55,19 +63,33 @@ use pbr_interfaces::pbr_file as file;
 use pbr_interfaces::pbr_sandbox::{
     self as sandbox, AppInfo, FileRights, Grant, GrantReason, SandboxError,
 };
+use pbr_interfaces::pbr_terminal as terminal;
 use pbr_manifest::app::App;
 use pbr_manifest::rules::Rules;
 use pbr_manifest::{Reason, decide, is_name};
+use pbr_supervise::{Decision, History};
 
 granite::main!(main);
 
 /// The start-up role of the session's `pbr.users` capability (its own endpoint is
 /// `role::OWN`). `services/users` uses the same numbers.
 const USERS: u32 = 1001;
+/// The start-up role of the console's terminal, if this session owns it.
+const TERMINAL: u32 = 1002;
 
-/// The roles a trusted app finds its `pbr.sandbox` and `pbr.users` capabilities at.
+/// The roles a trusted app finds its `pbr.sandbox` and `pbr.users` capabilities at, and an app
+/// granted `terminal` its `pbr.terminal`.
 const APP_SANDBOX: u32 = 1000;
 const APP_USERS: u32 = 1001;
+const APP_TERMINAL: u32 = 1002;
+
+/// The app started on the terminal.
+const SHELL: &str = "shell";
+/// The "caller" of the launches this program makes itself (the shell's). Badge 0 is never on a
+/// capability anyone is given, so no client can use these launches.
+const ITSELF: u64 = 0;
+/// How long to wait for the console when checking that the terminal still works.
+const TERMINAL_CHECK_MS: u64 = 5_000;
 
 /// The badge of the capability the users service mints for the session (`services/users`
 /// uses the same number).
@@ -112,6 +134,8 @@ struct Launch {
     budget: u64,
     args: String,
     trusted: bool,
+    /// Whether it is granted the terminal.
+    terminal: bool,
     /// Everything it will hold, in order.
     grants: Vec<Held>,
 }
@@ -127,6 +151,8 @@ struct Running {
     /// Its main thread: kept so the thread capability lives as long as the record.
     _thread: Thread,
     grants: Vec<Held>,
+    /// Whether this is the shell this program keeps running on the terminal.
+    shell: bool,
 }
 
 struct Sandbox {
@@ -136,6 +162,11 @@ struct Sandbox {
     endpoint: Endpoint,
     /// The session's `pbr.users`, for trusted apps.
     users: Option<Endpoint>,
+    /// The console's terminal, if this session owns it.
+    terminal: Option<terminal::Client>,
+    /// The shell's crash history, and when it is due to be started again (milliseconds).
+    shell_history: History,
+    shell_due: Option<u64>,
     /// The start-up archive, mapped for good.
     archive: Archive<'static>,
     /// The session's tree.
@@ -163,6 +194,11 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let user = String::from(start.args().split_whitespace().next().unwrap_or("?"));
     let endpoint = Endpoint(start.take(role::OWN).ok_or("started without an endpoint to serve")?);
     let users = start.take(USERS).map(Endpoint);
+    let terminal = start.take(TERMINAL).map(|h| {
+        let mut c = terminal::Client::new(Endpoint(h));
+        c.set_timeout_ms(TERMINAL_CHECK_MS);
+        c
+    });
     let archive = start.take(role::ARCHIVE).ok_or("started without the start-up archive")?;
     let mapping =
         Memory(archive).map(perm::READ).map_err(|e| format!("can't map the archive: {e}"))?;
@@ -179,6 +215,9 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         user,
         endpoint,
         users,
+        terminal,
+        shell_history: History::new(),
+        shell_due: None,
         archive,
         files,
         ended,
@@ -192,6 +231,9 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         s.user,
         s.files.entries().len()
     );
+    if s.terminal.is_some() {
+        s.shell_due = Some(now_ms());
+    }
     serve(&mut s);
     Ok(())
 }
@@ -207,7 +249,10 @@ fn serve(s: &mut Sandbox) {
     };
     let mut buffer = vec![0u8; 8192];
     loop {
-        match ep.receive(&mut buffer, time::FOREVER) {
+        s.start_shell_if_due();
+        let wake =
+            s.shell_due.map_or(time::FOREVER, |t| time::after_ms(t.saturating_sub(now_ms())));
+        match ep.receive(&mut buffer, wake) {
             Ok(Event::Call(msg, reply)) => {
                 let unknown = if s.may_call(msg.badge) {
                     sandbox::dispatch(s, msg, &buffer, reply)
@@ -219,13 +264,17 @@ fn serve(s: &mut Sandbox) {
                 }
             }
             Ok(Event::Signal(bits)) => s.ended(bits),
-            Ok(Event::Gone(_)) => {}
+            Ok(Event::Gone(_)) | Err(granite::Error::TimedOut) => {}
             Err(e) => {
                 granite::println!("sandbox ({}): receive failed: {e}", s.user);
                 time::sleep_ms(10);
             }
         }
     }
+}
+
+fn now_ms() -> u64 {
+    time::now() / 1_000_000
 }
 
 /// Reports a failed answer (a caller that has gone is no fault of ours).
@@ -361,6 +410,7 @@ impl Sandbox {
             budget: app.budget,
             args,
             trusted: d.trusted,
+            terminal: d.terminal,
             grants,
         });
         Ok(id)
@@ -472,8 +522,8 @@ impl Sandbox {
 
         // 5. The process, tied to this one (`spawn` also starts it). Besides its tree it gets
         // the kernel log, without the right to take over the screen; a trusted app also gets
-        // this session's `pbr.sandbox` (with its own badge) and `pbr.users`. (The terminal,
-        // for apps granted it, comes with the console in stage 8.)
+        // this session's `pbr.sandbox` (with its own badge) and `pbr.users`; an app granted the
+        // terminal gets it.
         let app_id = self.next_app;
         let mut keep: Vec<Handle> = Vec::new();
         let mut caps: Vec<process::Grant> = Vec::new();
@@ -490,6 +540,12 @@ impl Sandbox {
             if let Some(u) = &self.users {
                 caps.push((APP_USERS, u.0.raw(), CLIENT, false));
             }
+        }
+        // The terminal, if it is granted and this session has it.
+        if launch.terminal
+            && let Some(t) = &self.terminal
+        {
+            caps.push((APP_TERMINAL, t.endpoint().0.raw(), CLIENT, false));
         }
         let spawned = process::spawn(&Spawn {
             name: &launch.name,
@@ -543,6 +599,7 @@ impl Sandbox {
             process: spawned.process,
             _thread: spawned.thread,
             grants,
+            shell: caller == ITSELF,
         });
         Ok((app_id, Process(theirs)))
     }
@@ -573,13 +630,61 @@ impl Sandbox {
         let app = self.apps.remove(at);
         let _ = app.process.stop(0);
         granite::println!("sandbox ({}): stopped {}.", self.user, app.name);
+        if app.shell {
+            self.shell_ended();
+        }
         Ok(())
+    }
+
+    /// The shell has ended: it is started again, with the restart policy, while the terminal
+    /// still works.
+    fn shell_ended(&mut self) {
+        match self.shell_history.crashed(now_ms()) {
+            Decision::Restart { delay_ms } => self.shell_due = Some(now_ms() + delay_ms),
+            Decision::GiveUp => {
+                self.shell_due = None;
+                granite::println!(
+                    "sandbox ({}): the shell ended too often; it is left stopped.",
+                    self.user
+                );
+            }
+        }
+    }
+
+    /// Starts the shell on the terminal, if that is due.
+    fn start_shell_if_due(&mut self) {
+        if self.shell_due.is_none_or(|t| t > now_ms()) {
+            return;
+        }
+        self.shell_due = None;
+        let Some(t) = &self.terminal else { return };
+        // A terminal that has gone stays gone: the users service starts this session again
+        // with the new console's.
+        if let Err(e) = t.size()
+            && matches!(
+                e,
+                CallError::Call(
+                    granite::Error::PeerGone | granite::Error::Revoked | granite::Error::BadHandle
+                )
+            )
+        {
+            granite::println!("sandbox ({}): the terminal has gone.", self.user);
+            self.terminal = None;
+            return;
+        }
+        self.shell_history.started(now_ms());
+        let started = self.prepare(ITSELF, SHELL, "").and_then(|id| self.start(ITSELF, id));
+        if let Err(e) = started {
+            granite::println!("sandbox ({}): can't start the shell: {e:?}", self.user);
+            self.shell_ended();
+        }
     }
 
     /// Some apps have ended: their records go (their capabilities went with their processes;
     /// the ones kept here are closed as the records are dropped).
     fn ended(&mut self, bits: u64) {
         let user = &self.user;
+        let mut shell_ended = false;
         self.apps.retain(|a| {
             if bits & (1 << a.bit) == 0 {
                 return true;
@@ -590,10 +695,14 @@ impl Sandbox {
                 Ok(State::Running | State::Ending) => true,
                 state => {
                     granite::println!("sandbox ({user}): {} ended: {state:?}.", a.name);
+                    shell_ended |= a.shell;
                     false
                 }
             }
         });
+        if shell_ended {
+            self.shell_ended();
+        }
     }
 }
 

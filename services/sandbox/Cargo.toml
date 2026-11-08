@@ -22,6 +22,7 @@ pbr-filetree = { path = "../../lib/filetree" }
 pbr-granite = { path = "../../lib/granite" }
 pbr-interfaces = { path = "../../lib/interfaces" }
 pbr-manifest = { path = "../../lib/manifest" }
+pbr-supervise = { path = "../../lib/supervise" }
 
 [lints]
 workspace = true
