@@ -280,6 +280,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-shell"
+version = "0.0.0"
+dependencies = [
+ "pbr-filetree",
+ "pbr-granite",
+ "pbr-interfaces",
+]
+
+[[package]]
 name = "pbr-storage"
 version = "0.0.0"
 dependencies = [
