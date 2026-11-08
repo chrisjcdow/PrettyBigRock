@@ -9,6 +9,8 @@ rem     a number    how many processor cores (1 to 64; ARM64 can have at most 8 
 rem For example:
 rem     run-prettybigrock.bat bios selftest 8
 rem It uses build\release (or build\debug), made by "cargo xtask build".
+rem On ARM64 the keyboard is a virtio one (PrettyBigRock has no USB yet), so the text shell
+rem can be typed into.
 rem PrettyBigRock 1.x has its own launcher in the classic folder.
 setlocal EnableDelayedExpansion
 set "QDIR=C:\Program Files\qemu"
@@ -65,7 +67,7 @@ goto done
 goto done
 
 :arm
-"%QDIR%\qemu-system-aarch64.exe" -name "PrettyBigRock 2 (ARM64 UEFI)" -machine virt -cpu cortex-a72 -m 512 -smp !CORES! -bios "%QDIR%\share\edk2-aarch64-code.fd" -device ramfb -device qemu-xhci -device usb-kbd -drive "if=none,id=disk,file=%IMG%,format=raw,snapshot=on" -device virtio-blk-pci,drive=disk -device virtio-rng-pci
+"%QDIR%\qemu-system-aarch64.exe" -name "PrettyBigRock 2 (ARM64 UEFI)" -machine virt -cpu cortex-a72 -m 512 -smp !CORES! -bios "%QDIR%\share\edk2-aarch64-code.fd" -device ramfb,id=gpu -device qemu-xhci -device usb-kbd -device virtio-keyboard-pci,display=gpu -drive "if=none,id=disk,file=%IMG%,format=raw,snapshot=on" -device virtio-blk-pci,drive=disk -device virtio-rng-pci
 goto done
 
 :done
