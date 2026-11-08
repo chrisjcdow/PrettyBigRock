@@ -23,8 +23,15 @@
 //! - [`SESSION_BASE`] + a session's number: `pbr.users`, for that session;
 //! - [`DEBUG`]: `pbr.users.debug`, only in self-test runs, for the root program.
 //!
-//! Sessions are tied to this service (note 0013): if it ends, they end. Starting a session
-//! again when its sandbox manager ends is supervision, which comes in stage 7.
+//! Sessions are tied to this service (note 0013): if it ends, they end. A session whose sandbox
+//! manager ends is started again (note 0018, section 3).
+//!
+//! **The terminal** (note 0018, sections 5 and 6). The console serves one terminal, on the
+//! screen; this service finds it through the supervisor (`lookup("console")`) and gives it to
+//! one session, the first administrator's (the one started at start-up), whose sandbox manager
+//! starts the shell on it. If the console goes (it ended, and was restarted), the terminal stops
+//! working: that session is started again with the new console's terminal. If there is no
+//! console yet, this service keeps asking for one, and starts the session again once there is.
 
 #![no_std]
 #![no_main]
@@ -47,6 +54,7 @@ use pbr_archive::Archive;
 use pbr_interfaces::pbr_file::{self as file, FileError, FileRights, NodeKind};
 use pbr_interfaces::pbr_storage::{self as storage, StorageError, VolumeState};
 use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
+use pbr_interfaces::pbr_terminal as terminal;
 use pbr_interfaces::pbr_users::{self as users_if, UserKind, UsersError};
 use pbr_interfaces::pbr_users_debug::{self as debug_if, DebugError};
 use pbr_manifest::users::{self as users_txt, Kind, User};
@@ -64,6 +72,9 @@ const SESSION_BASE: u64 = 0x100;
 /// at this role, and the badge of the `pbr.sandbox` capability minted for the session.
 const SANDBOX_USERS: u32 = 1001;
 const SANDBOX_SESSION: u64 = 1;
+/// The role the session that owns the terminal gets its `pbr.terminal` at (`services/sandbox`
+/// uses the same number).
+const SANDBOX_TERMINAL: u32 = 1002;
 /// A session's budget: the sandbox manager and every app it starts are paid from it.
 const SESSION_BUDGET: u64 = 16 << 20;
 /// Sandbox managers run at the priority of services.
@@ -132,6 +143,10 @@ struct Service {
     users: Vec<User>,
     sessions: Vec<Session>,
     next_session: u32,
+    /// The console's terminal, while there is one that answers.
+    console: Option<terminal::Client>,
+    /// Whose session gets the terminal: the first administrator's.
+    console_user: Option<String>,
     /// Signalled with a session's bit when its sandbox manager ends; bound to the endpoint.
     ended: Notification,
     selftest: bool,
@@ -165,6 +180,8 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
 
     granite::println!("users: looking for the system volume.");
     let (system, users) = find_system(&storage, ignore_system)?;
+    let console = find_console(&parent);
+    let console_user = users.iter().find(|u| u.kind == Kind::Admin).map(|u| u.name.clone());
     let mut s = Service {
         endpoint,
         parent,
@@ -177,6 +194,8 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         users,
         sessions: Vec::new(),
         next_session: 1,
+        console,
+        console_user,
         ended,
         selftest,
     };
@@ -311,6 +330,23 @@ fn find_storage(parent: &supervisor::Client) -> Result<storage::Client, String> 
                 time::sleep_ms(50)
             }
             Err(e) => return Err(format!("finding the storage service: {e}")),
+        }
+    }
+}
+
+/// The console's terminal, if the console is running: asked once, without waiting, since
+/// nothing here depends on it (`Service::check` asks again later).
+fn find_console(parent: &supervisor::Client) -> Option<terminal::Client> {
+    match parent.lookup("console") {
+        Ok(h) => {
+            let mut c = terminal::Client::new(Endpoint(h));
+            c.set_timeout_ms(CHECK_TIMEOUT_MS);
+            Some(c)
+        }
+        Err(CallError::Service(SupervisorError::NotReady)) => None,
+        Err(e) => {
+            granite::println!("users: finding the console: {e}");
+            None
         }
     }
 }
@@ -465,6 +501,15 @@ impl Service {
         if granite::log::handle() != 0 {
             caps.push((role::LOG, granite::log::handle(), rights::ALL & !rights::CONTROL, false));
         }
+        // The terminal, for the session that owns it. Its sandbox manager starts the shell on
+        // it, and gives it to nothing but apps granted `terminal` (note 0017, section 5).
+        let terminal = match &self.console {
+            Some(c) if self.console_user.as_deref() == Some(user.name.as_str()) => {
+                caps.push((SANDBOX_TERMINAL, c.endpoint().0.raw(), CLIENT, false));
+                true
+            }
+            _ => false,
+        };
         let file_tree: Vec<(&str, u32, bool)> =
             tree.iter().map(|(p, h, folder)| (p.as_str(), h.raw(), *folder)).collect();
         let sandbox = process::spawn(&Spawn {
@@ -485,10 +530,11 @@ impl Service {
         }
         self.next_session += 1;
         granite::println!(
-            "users: {} ({}) is logged in, with {} entries.",
+            "users: {} ({}) is logged in, with {} entries{}.",
             user.name,
             if user.kind == Kind::Admin { "administrator" } else { "standard" },
-            tree.len()
+            tree.len(),
+            if terminal { " and the terminal" } else { "" }
         );
         history.started(now_ms());
         let held = tree
@@ -583,10 +629,43 @@ impl Service {
                 "users: a volume {}'s session held has gone; starting it again.",
                 s.user.name
             );
-            let _ = s.sandbox.process.stop(0);
-            if let Err(e) = self.start_session(&s.user, s.history) {
-                granite::println!("users: can't start {}'s session again: {e}", s.user.name);
+            self.restart_session(s);
+        }
+        self.check_console();
+    }
+
+    /// Checks the console's terminal: if the console has gone, or has come (again), the session
+    /// that owns the terminal is started again with what there is now.
+    fn check_console(&mut self) {
+        let changed = match &self.console {
+            Some(c) if c.size().is_err_and(|e| lost(&e)) => {
+                granite::println!("users: the console has gone.");
+                self.console = find_console(&self.parent);
+                true
             }
+            Some(_) => false,
+            None => {
+                self.console = find_console(&self.parent);
+                self.console.is_some()
+            }
+        };
+        let Some(owner) = self.console_user.clone() else { return };
+        if !changed {
+            return;
+        }
+        // (If the owner isn't logged in now, they get the terminal when they next are.)
+        if let Some(i) = self.sessions.iter().position(|s| s.user.name == owner) {
+            let s = self.sessions.remove(i);
+            granite::println!("users: starting {owner}'s session again, for the terminal.");
+            self.restart_session(s);
+        }
+    }
+
+    /// Stops a session's sandbox manager and starts the session afresh, keeping its history.
+    fn restart_session(&mut self, s: Session) {
+        let _ = s.sandbox.process.stop(0);
+        if let Err(e) = self.start_session(&s.user, s.history) {
+            granite::println!("users: can't start {}'s session again: {e}", s.user.name);
         }
     }
 
@@ -615,6 +694,9 @@ impl Service {
             match found {
                 Ok((system, users)) => {
                     self.system = system;
+                    // The terminal belongs to the first administrator in the users read now.
+                    self.console_user =
+                        users.iter().find(|u| u.kind == Kind::Admin).map(|u| u.name.clone());
                     self.users = users;
                     break;
                 }
