@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-terminal"
+description = "A text terminal without the hardware: a grid of characters, a line editor and the keyboard's decoding (note 0018)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pbr-devices = { path = "../devices" }
+pbr-font = { path = "../font" }
+
+[lints]
+workspace = true

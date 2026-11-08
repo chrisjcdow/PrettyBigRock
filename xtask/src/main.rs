@@ -71,6 +71,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-root", "root", "root"),
     ("pbr-devmgr", "devmgr", "devmgr"),
     ("pbr-storage", "storage", "storage"),
+    ("pbr-console", "console", "console"),
     ("pbr-rockfs-server", "rockfs", "rockfs"),
     ("pbr-fat-server", "fat", "fat"),
     ("pbr-users", "users", "users"),
@@ -117,6 +118,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-interfaces",
     "pbr-root",
     "pbr-storage",
+    "pbr-console",
     "pbr-rockfs-server",
     "pbr-users",
     "pbr-sandbox",
@@ -141,6 +143,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-elf",
     "pbr-fat",
     "pbr-filetree",
+    "pbr-font",
     "pbr-fs",
     "pbr-fsserve",
     "pbr-granite",
@@ -148,6 +151,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-interfaces",
     "pbr-manifest",
     "pbr-supervise",
+    "pbr-terminal",
     "pbr-partition",
     "pbr-platform",
     "pbr-ranges",
@@ -938,6 +942,7 @@ fn licence_for(rel: &Path) -> &'static str {
         || under("lib/archive/")
         || under("lib/filetree/")
         || under("lib/files/")
+        || under("lib/font/")
         || under("targets/")
     {
         "MPL-2.0"
@@ -1008,6 +1013,7 @@ mod tests {
     fn licences_by_folder() {
         assert_eq!(licence_for(Path::new("lib/granite/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/elf/Cargo.toml")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("lib/font/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("interfaces/echo.pbi")), "MIT");
         assert_eq!(licence_for(Path::new("lib/interfaces/build.rs")), "MIT");
         assert_eq!(licence_for(Path::new("kernel/src/main.rs")), "GPL-3.0-or-later");

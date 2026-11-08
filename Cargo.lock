@@ -44,6 +44,15 @@ name = "pbr-captree"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-console"
+version = "0.0.0"
+dependencies = [
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-terminal",
+]
+
+[[package]]
 name = "pbr-crc"
 version = "0.0.0"
 
@@ -161,6 +170,10 @@ dependencies = [
 
 [[package]]
 name = "pbr-filetree"
+version = "0.0.0"
+
+[[package]]
+name = "pbr-font"
 version = "0.0.0"
 
 [[package]]
@@ -314,6 +327,14 @@ dependencies = [
 [[package]]
 name = "pbr-supervise"
 version = "0.0.0"
+
+[[package]]
+name = "pbr-terminal"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-font",
+]
 
 [[package]]
 name = "pbr-test-echo"
