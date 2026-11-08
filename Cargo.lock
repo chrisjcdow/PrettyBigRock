@@ -304,6 +304,7 @@ name = "pbr-terminal"
 version = "0.0.0"
 dependencies = [
  "pbr-devices",
+ "pbr-font",
 ]
 
 [[package]]

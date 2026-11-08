@@ -13,6 +13,7 @@
 //! - [`input`]: turning a keyboard's 16-byte events into [`Key`]s, with Shift.
 //! - [`mirror`]: the log records the console makes in self-test runs, so that the test runner
 //!   can see what is on a screen it cannot see.
+//! - [`render`]: how big the letters are on a screen, and the pixels of each row of text.
 //! - [`terminal`]: all of the above together, as the console service uses it.
 //!
 //! `#![no_std]` means this library uses only Rust's `core` and `alloc` libraries (the standard
@@ -27,6 +28,7 @@ pub mod editor;
 pub mod grid;
 pub mod input;
 pub mod mirror;
+pub mod render;
 pub mod terminal;
 pub mod view;
 
