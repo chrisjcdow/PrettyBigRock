@@ -12,8 +12,8 @@
 //! socket, one each time the console shows a prompt. The console is told it is a self-test, so
 //! it writes everything it shows to the kernel log as well, which is how the runner reads the
 //! answers. The last command is `shutdown`, which has the storage service save every volume:
-//! this half waits for that, and the runner checks the disk afterwards
-//! (`tools/check_shell_after.py`).
+//! this half waits for that, then starts a new storage service for the tests that follow. The
+//! runner checks the disk afterwards (`tools/check_shell_after.py`).
 
 use crate::sandboxtest::{self, session};
 use crate::storagetest;
@@ -62,6 +62,7 @@ pub fn run(sup: &Supervisor) -> Result<String, String> {
             matches!(storage.admin.list(), Err(CallError::Service(StorageError::ShutDown)))
                 .then_some(())
         })?;
+        drop(storage);
         // The shell carries on afterwards, waiting for the next command.
         within(30, "the shell still running after shutdown", || {
             let s = session(&u, "chris").ok()?;
@@ -72,5 +73,9 @@ pub fn run(sup: &Supervisor) -> Result<String, String> {
     });
     sup.retire(Kind::Users)?;
     sup.retire(Kind::Console)?;
+    // A storage service that has shut down stays that way, so the tests after this one get a
+    // new one, which opens the volumes again.
+    sup.retire(Kind::Storage)?;
+    sup.start(Kind::Storage, "")?;
     r
 }

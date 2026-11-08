@@ -149,6 +149,13 @@ fn all(
     }
     step("supervision", supervision.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("services crashed and restarted");
+    // The shell's last command shuts the storage service down; the test starts it again after.
+    let shell = crate::shelltest::run(&sup);
+    if let Ok(summary) = &shell {
+        granite::println!("Shell self-test passed: {summary}");
+    }
+    step("the shell", shell.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("the console and the shell");
     // The services were restarted: connect to the new ones.
     let storage = crate::storagetest::connect(&sup)?;
     let classic = crate::classictest::run(&storage.admin);
@@ -160,13 +167,6 @@ fn all(
     let calls = load(f, &echo_ep);
     step("load", calls.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("calls on 4 threads to a service with 4 threads");
-    // Last, since its final command shuts the storage service down.
-    let shell = crate::shelltest::run(&sup);
-    if let Ok(summary) = &shell {
-        granite::println!("Shell self-test passed: {summary}");
-    }
-    step("the shell", shell.as_ref().map(|_| ()).map_err(Clone::clone))?;
-    done.push("the console and the shell");
 
     drop(storage);
     sup.retire(Kind::Storage).map_err(|e| format!("stopping storage: {e}"))?;
