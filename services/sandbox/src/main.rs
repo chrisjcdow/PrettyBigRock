@@ -336,7 +336,14 @@ impl Sandbox {
             return Err(SandboxError::NoSuchApp);
         }
         if self.launches.len() >= MAX_LAUNCHES {
-            return Err(SandboxError::TooMany);
+            // There is no way to cancel a launch, so one a caller gave up on (a `choose` that
+            // failed, say) would otherwise wait for ever. When they're all taken, the caller's
+            // own oldest goes; nobody else's.
+            let oldest = self.launches.iter().position(|l| l.caller == caller);
+            match oldest {
+                Some(i) => drop(self.launches.remove(i)),
+                None => return Err(SandboxError::TooMany),
+            }
         }
         // 1. The manifest. (A manifest without its program can still be found to be broken.)
         let program = self.archive.find(&format!("apps/{name}"));
@@ -699,6 +706,15 @@ impl Sandbox {
                     false
                 }
             }
+        });
+        // Launches prepared by trusted apps that have ended can never be started.
+        let apps = &self.apps;
+        self.launches.retain(|l| {
+            l.caller == ITSELF
+                || l.caller == SESSION
+                || l.caller
+                    .checked_sub(APP_BASE)
+                    .is_some_and(|id| apps.iter().any(|a| u64::from(a.id) == id))
         });
         if shell_ended {
             self.shell_ended();

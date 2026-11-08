@@ -32,7 +32,8 @@ struct Grant { path: string<1024>, rights: FileRights, reason: GrantReason }
 struct AppInfo { id: u32, app: string<64>, trusted: bool, running: bool }
 
 /// Starts preparing a launch of `apps/APP`, with `args` after its manifest's own arguments.
-/// Reads the manifest and decides what the app gets.
+/// Reads the manifest and decides what the app gets. A few launches can wait at once; when
+/// they are all taken, the caller's own oldest one is dropped to make room.
 @1 fn prepare(app: string<64>, args: string<3072>) -> (launch: u32) error SandboxError;
 
 /// Adds a file or folder the user chose, at `path` in the app's tree. If something the app
