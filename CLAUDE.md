@@ -105,6 +105,7 @@ The workspace can't reach `static.rust-lang.org`, so:
   need them say so and are skipped without them, but a stage isn't finished until they've
   run).
 
-The workspace has only 2 CPUs: a full `qemu-test` takes about 12 minutes. When a boot fails,
+The workspace has only 2 CPUs: since M5 a full `cargo xtask ci` takes about 55 minutes (each
+boot test 8 to 11), so run it in the background with a long timeout. When a boot fails,
 the runner saves every core's registers and stack in `build/qemu/serial-*.registers.txt`;
 resolve addresses with `llvm-addr2line -f -C -e build/<arch>/debug/kernel.elf ADDR`.
