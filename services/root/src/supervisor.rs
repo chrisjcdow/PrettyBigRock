@@ -356,14 +356,34 @@ impl Supervisor {
         };
         let Some(s) = process else { return Ok(()) };
         let n = Notification::create().map_err(|e| format!("{e}"))?;
+        let started = time::now();
         let _ = s.process.watch(&n, 1);
         let _ = s.process.stop(0);
         let _ = n.wait(time::after_ms(30_000));
-        match s.process.info().map(|i| i.state) {
-            Ok(State::Running | State::Ending) => {
-                Err(format!("{} didn't stop in 30 seconds", kind.program()))
+        let ms = time::now().saturating_sub(started) / 1_000_000;
+        // A process ends in two steps (note 0013, section 3): its threads stop and what it held
+        // is closed (it is "ending"), then, once everything tied to it has ended too, it has
+        // ended. Which step it is stuck at says where to look.
+        match s.process.info() {
+            Ok(i) if i.state == State::Running => Err(format!(
+                "{} didn't stop in 30 seconds: still running, with {} threads",
+                kind.program(),
+                i.threads
+            )),
+            Ok(i) if i.state == State::Ending && i.threads > 0 => Err(format!(
+                "{} didn't stop in 30 seconds: ending, but {} of its threads haven't stopped",
+                kind.program(),
+                i.threads
+            )),
+            Ok(i) if i.state == State::Ending => Err(format!(
+                "{} didn't stop in 30 seconds: its threads have stopped, but it hasn't been \
+                 closed down, or something tied to it hasn't ended",
+                kind.program()
+            )),
+            _ => {
+                granite::println!("supervisor: {} stopped for good in {ms} ms.", kind.program());
+                Ok(())
             }
-            _ => Ok(()),
         }
     }
 
