@@ -146,6 +146,12 @@ client a badged capability.
 **Done when:** PrettyBigRock 2 does everything 1.3 does, with every app sandboxed. This is the
 first 2.0 alpha.
 
+**Design:** notes 0019 (kernel interface 1.3), 0020 (screens and virtio-gpu), 0021 (input and
+keyboard layouts), 0022 (the display server), 0023 (drawing, windows and sandstone), 0024 (the
+session's desktop), 0025 (the file picker, clipboard and permissions viewer) and 0026 (the apps,
+the tests and the stages), drafted 9 November 2026 from Chris's answers to the M6 plan, for
+walking through with him.
+
 ## M7: Real hardware I, Roxy
 - AHCI; USB 2 (EHCI) with keyboard, mouse and storage; Roxy's onboard Ethernet chip.
 - An ACPI interpreter, enough to power off and to find devices.

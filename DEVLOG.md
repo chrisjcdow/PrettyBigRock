@@ -539,3 +539,25 @@ disks made by 1.3, including writing and reading back.
   "complete" went nowhere and users waited for ever. The link is now strong until the child's
   end is complete (note 0013, Changes). GitHub's CI and Stress now also install `dosfstools` and
   `mtools`, which they lacked, so the FAT32 checks run there too.
+
+## Session 14: 9 November 2026, milestone M6 (the desktop, 2.0 alpha): the design
+
+- Chris asked for M6 to start, as M5 did, with the design: clone main (`9345496`), make the
+  `m6` branch, read the M5 material, and propose the notes M6 needs, the questions he must
+  decide (with recommendations), which of M5's open questions M6 should settle, and the stages
+  with their tests and what "done when" means in practice. The plan is in the Project
+  (`claude/m6-plan.md`).
+- Chris agreed with every recommendation (Q1 to Q16): our own display protocol shaped so
+  Wayland can be translated to it later (DESIGN.md Q8); title bars drawn by the display server;
+  window buffers allocated by the display server; a system-wide display server with a
+  per-session desktop app; the desktop by default, `text` for the console, falling back to it;
+  `lib/draw` and `lib/window` beside `granite`, `lib/sandstone` the toolkit; bitmap fonts at 1×
+  and 2×; 1.3's look; US, UK and US-International layouts; each app's own folder; power off and
+  restart in M6 (PSCI on ARM64, a stopgap `\_S5` scan on x86-64 until M7); virtio-gpu with two
+  screens on x86-64 UEFI and ARM64 EL2, the firmware's screen on the other two; a second,
+  desktop boot per configuration; `2.0.0-alpha.1`; the clipboard in the display server; only
+  Terminal and Files trusted.
+- Opus drafted notes 0019 to 0026 from those answers. One detail differs from the plan's Q10 as
+  written: an app's own folder is at `/Home/Apps/<app>`, the path the user sees, rather than
+  `/App`, to keep note 0014's rule that the same paths mean the same thing (note 0024, section
+  4). Next: walking through the notes with Chris; then stage 0.

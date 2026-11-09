@@ -30,6 +30,14 @@ written to be read cold.
 | [0016](0016-filesystems.md) | Filesystems: RockFS in Rust, FAT32, and checking them against 1.3 | Accepted |
 | [0017](0017-users-sandbox-manager-and-manifests.md) | Users, the sandbox manager and app manifests | Accepted |
 | [0018](0018-supervision-shell-and-m5-tests.md) | Supervising services, the console and text shell, and how M5 is tested | Accepted |
+| [0019](0019-kernel-1.3.md) | Kernel interface 1.3: turning the machine off, and noticing a service has gone | Draft |
+| [0020](0020-screens-and-virtio-gpu.md) | Screens: `pbr.display` version 2, the framebuffer driver and virtio-gpu | Draft |
+| [0021](0021-input-and-keyboard-layouts.md) | Input: the input service and keyboard layouts | Draft |
+| [0022](0022-display-server.md) | The display server and compositor | Draft |
+| [0023](0023-draw-window-and-sandstone.md) | Drawing, windows and sandstone: the libraries apps are built with | Draft |
+| [0024](0024-the-session-desktop.md) | The session's desktop: windows for sessions, app folders, settings, the desktop app and power | Draft |
+| [0025](0025-picker-clipboard-permissions.md) | The file picker, the clipboard and the permissions viewer | Draft |
+| [0026](0026-apps-m6-tests-and-stages.md) | The 1.x apps rewritten, how M6 is tested, and the order of building | Draft |
 
 ## Writing a note
 
