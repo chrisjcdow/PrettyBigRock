@@ -1,6 +1,6 @@
 # 0020: Screens: `pbr.display` version 2, the framebuffer driver and virtio-gpu
 
-Status: Draft · 9 November 2026 · Related: DESIGN.md sections 8 and 11; notes 0010, 0011, 0012,
+Status: Accepted · 9 November 2026 · Related: DESIGN.md sections 8 and 11; notes 0010, 0011, 0012,
 0018, 0021, 0022; milestone M6
 
 ## The problem
@@ -244,4 +244,5 @@ buffers' memory stays safe until the device is stopped (note 0018, section 4).
 - Brightness for laptop screens (M11).
 
 ## Changes
-- 9 November 2026: first draft, for discussion with Chris.
+- 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
+  (he left the walk-through for later and asked for stage 0 to start).

@@ -1,6 +1,6 @@
 # 0022: The display server and compositor
 
-Status: Draft · 9 November 2026 · Related: DESIGN.md principles 1 and 5, sections 7.1, 7.3 and 8
+Status: Accepted · 9 November 2026 · Related: DESIGN.md principles 1 and 5, sections 7.1, 7.3 and 8
 ("Display server and compositor"), Q8; notes 0006, 0013, 0017, 0019, 0020, 0021, 0023, 0024,
 0025; milestone M6
 
@@ -460,4 +460,5 @@ descriptors (the front end turns them into capabilities).
 - Accessibility: a screen reader needs a way to read windows' contents that the sandbox allows.
 
 ## Changes
-- 9 November 2026: first draft, for discussion with Chris.
+- 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
+  (he left the walk-through for later and asked for stage 0 to start).

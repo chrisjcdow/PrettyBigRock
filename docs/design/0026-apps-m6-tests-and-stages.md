@@ -1,6 +1,6 @@
 # 0026: The 1.x apps rewritten, how M6 is tested, and the order of building
 
-Status: Draft · 9 November 2026 · Related: DESIGN.md D11, D17, sections 7 and 15; ROADMAP.md M6;
+Status: Accepted · 9 November 2026 · Related: DESIGN.md D11, D17, sections 7 and 15; ROADMAP.md M6;
 notes 0014, 0016, 0017, 0018, 0019 to 0025; milestone M6
 
 ## The problem
@@ -243,4 +243,5 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
-- 9 November 2026: first draft, for discussion with Chris.
+- 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
+  (he left the walk-through for later and asked for stage 0 to start).

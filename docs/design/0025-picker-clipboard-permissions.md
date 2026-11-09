@@ -1,6 +1,6 @@
 # 0025: The file picker, the clipboard and the permissions viewer
 
-Status: Draft · 9 November 2026 · Related: DESIGN.md principle 5, sections 7.1 and 7.3; notes
+Status: Accepted · 9 November 2026 · Related: DESIGN.md principle 5, sections 7.1 and 7.3; notes
 0014, 0017, 0022, 0023, 0024, 0026; milestone M6
 
 ## The problem
@@ -183,4 +183,5 @@ The rules are in note 0022, section 5; what they mean in the apps:
 - Previews of pictures in the picker.
 
 ## Changes
-- 9 November 2026: first draft, for discussion with Chris.
+- 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
+  (he left the walk-through for later and asked for stage 0 to start).

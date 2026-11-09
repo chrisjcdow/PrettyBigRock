@@ -1,6 +1,6 @@
 # 0019: Kernel interface 1.3: turning the machine off, and noticing a service has gone
 
-Status: Draft · 9 November 2026 · Related: DESIGN.md sections 6.1 and 8; notes 0006, 0007,
+Status: Accepted · 9 November 2026 · Related: DESIGN.md sections 6.1 and 8; notes 0006, 0007,
 0008, 0013, 0018, 0022, 0024; milestone M6
 
 ## The problem
@@ -141,4 +141,5 @@ Also: object type 12 (Machine) and its right `POWER` (bit 8); the root program's
   only by the power going.
 
 ## Changes
-- 9 November 2026: first draft, for discussion with Chris.
+- 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
+  (he left the walk-through for later and asked for stage 0 to start).

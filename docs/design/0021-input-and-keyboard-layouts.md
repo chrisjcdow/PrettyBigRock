@@ -1,6 +1,6 @@
 # 0021: Input: the input service and keyboard layouts
 
-Status: Draft · 9 November 2026 · Related: DESIGN.md section 8 ("Input"); notes 0011, 0018,
+Status: Accepted · 9 November 2026 · Related: DESIGN.md section 8 ("Input"); notes 0011, 0018,
 0020, 0022, 0024; milestone M6
 
 ## The problem
@@ -230,4 +230,5 @@ is tested: the display server learns which screen a tablet belongs to from its s
 - Keyboard lights (Caps Lock, Num Lock).
 
 ## Changes
-- 9 November 2026: first draft, for discussion with Chris.
+- 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
+  (he left the walk-through for later and asked for stage 0 to start).

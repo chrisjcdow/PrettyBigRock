@@ -1,6 +1,6 @@
 # 0024: The session's desktop: windows for sessions, app folders, settings, the desktop app and power
 
-Status: Draft · 9 November 2026 · Related: DESIGN.md D11, sections 7.1 and 8; notes 0017, 0018,
+Status: Accepted · 9 November 2026 · Related: DESIGN.md D11, sections 7.1 and 8; notes 0017, 0018,
 0019, 0021, 0022, 0023, 0025, 0026; milestone M6
 
 ## The problem
@@ -295,4 +295,5 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
-- 9 November 2026: first draft, for discussion with Chris.
+- 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
+  (he left the walk-through for later and asked for stage 0 to start).
