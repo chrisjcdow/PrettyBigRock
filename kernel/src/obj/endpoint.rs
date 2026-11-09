@@ -167,6 +167,22 @@ fn phase_of(t: &Thread) -> &SpinLock<Phase> {
     &t.user.as_ref().expect("a program thread").ipc
 }
 
+/// Where a program thread is in a call or receive, for reports. Not for interrupt handlers:
+/// it takes the thread's phase lock.
+pub fn phase_name(t: &Thread) -> &'static str {
+    let Some(u) = t.user.as_ref() else { return "a kernel thread" };
+    match &*u.ipc.lock() {
+        Phase::Idle => "not in a call",
+        Phase::Calling => "calling, not yet received",
+        Phase::Delivering => "calling, being delivered",
+        Phase::AwaitingReply(_) => "calling, awaiting the reply",
+        Phase::Replied(_) => "calling, replied to",
+        Phase::Receiving => "receiving",
+        Phase::Taken => "receiving, a call being copied in",
+        Phase::Received(_) => "receiving, received",
+    }
+}
+
 fn set_phase(t: &Thread, p: Phase) {
     *phase_of(t).lock() = p;
 }

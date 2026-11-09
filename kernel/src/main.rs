@@ -218,6 +218,8 @@ extern "C" fn continue_start_up() -> ! {
                 Ok(summary) => kprintln!("Self-test passed: {summary}"),
                 Err(e) => kprintln!("Self-test FAILED: {e}"),
             }
+            // After the kernel's own self-test, whose heap check would count its list.
+            obj::process::watch_slow_ends();
         }
         start_root(selftest);
     });

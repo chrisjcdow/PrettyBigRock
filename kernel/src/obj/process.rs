@@ -232,6 +232,9 @@ impl Process {
             }
             *st = State::Ending(status);
         }
+        if WATCH_ENDS.load(Ordering::Relaxed) {
+            ENDING.lock().push((Arc::downgrade(self), crate::time::now_ns()));
+        }
         // Its tied children end with it.
         let children: Vec<Arc<Process>> =
             self.tied.lock().children.iter().filter_map(Weak::upgrade).collect();
@@ -388,6 +391,84 @@ pub fn start_reaper() {
             }
         }
     });
+}
+
+/// Self-test boots only: report a process whose end takes longer than this.
+const SLOW_END_NS: u64 = 20_000_000_000;
+static WATCH_ENDS: AtomicBool = AtomicBool::new(false);
+/// Processes that have begun ending, and when (self-test boots only).
+static ENDING: SpinLock<Vec<(Weak<Process>, u64)>> = SpinLock::new(Vec::new());
+
+/// Self-test boots only: starts a kernel thread that reports any process still not completely
+/// ended 20 seconds after it began ending: its threads (where each is), whether it has been
+/// closed down, and the same for everything tied to it, then every thread in the system. A
+/// process should end in milliseconds; when one doesn't, this says where it is stuck.
+pub fn watch_slow_ends() {
+    WATCH_ENDS.store(true, Ordering::Relaxed);
+    sched::spawn("end-watch", sched::NORMAL + 1, || {
+        loop {
+            sched::sleep_ns(1_000_000_000);
+            let now = crate::time::now_ns();
+            let mut slow = Vec::new();
+            ENDING.lock().retain(|(w, since)| {
+                let Some(p) = w.upgrade() else { return false };
+                if matches!(*p.state.lock(), State::Ended(_)) {
+                    return false;
+                }
+                if now.saturating_sub(*since) < SLOW_END_NS {
+                    return true;
+                }
+                slow.push(p);
+                false // reported once
+            });
+            // (One may have ended since; then there's nothing to say about it.)
+            slow.retain(|p| !matches!(*p.state.lock(), State::Ended(_)));
+            if slow.is_empty() {
+                continue;
+            }
+            let queued = REAP.lock().len();
+            kprintln!(
+                "Slow end: not ended {} s after ending began (reaper queue {queued}):",
+                SLOW_END_NS / 1_000_000_000
+            );
+            for p in &slow {
+                report_end(p, 1);
+            }
+            sched::dump();
+        }
+    });
+}
+
+/// Prints where `p`'s end has got to, and its tied children's, `depth` levels indented.
+fn report_end(p: &Arc<Process>, depth: usize) {
+    let state = match *p.state.lock() {
+        State::Running => "running",
+        State::Ending(_) => "ending",
+        State::Ended(_) => "ended",
+    };
+    let (torn, done, children) = {
+        let t = p.tied.lock();
+        let c: Vec<Arc<Process>> = t.children.iter().filter_map(Weak::upgrade).collect();
+        (t.torn_down, t.completed, c)
+    };
+    let threads: Vec<Arc<Thread>> = p.threads.lock().clone();
+    let pad = depth * 2;
+    kprintln!(
+        "{:pad$}process {} \"{}\": {state}, closed down {torn}, complete {done}, {} threads, {} tied",
+        "",
+        p.id,
+        p.name,
+        threads.len(),
+        children.len()
+    );
+    for t in &threads {
+        kprintln!("{:pad$}  thread {}: {}", "", t.id, sched::describe(t));
+    }
+    if depth < 6 {
+        for c in &children {
+            report_end(c, depth + 1);
+        }
+    }
 }
 
 fn reap(p: Arc<Process>) {

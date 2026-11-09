@@ -371,6 +371,26 @@ pub fn dump() {
     }
 }
 
+/// One thread's scheduling state, for reports (from a kernel thread, not an interrupt).
+pub fn describe(t: &Thread) -> alloc::string::String {
+    let state = match t.state.load(Ordering::SeqCst) {
+        READY => "ready",
+        RUNNING => "running",
+        BLOCKED => "blocked",
+        EXITED => "exited",
+        _ => "?",
+    };
+    alloc::format!(
+        "\"{}\" {state}, stop {}, on_cpu {}, queued {}, last core {}, {}",
+        t.name,
+        t.stop.load(Ordering::SeqCst),
+        t.on_cpu.load(Ordering::SeqCst),
+        t.queued.load(Ordering::SeqCst),
+        t.last_cpu.load(Ordering::Relaxed),
+        crate::obj::endpoint::phase_name(t)
+    )
+}
+
 /// Called (through the architecture's start-up code) when a new thread first runs.
 pub extern "C" fn thread_entry(thread: u64) -> ! {
     arrive();
