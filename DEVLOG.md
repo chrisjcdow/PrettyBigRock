@@ -577,6 +577,11 @@ disks made by 1.3, including writing and reading back.
   the virtio mouse, since M4's driver test uses the first virtio pointer; for now
   `virtio-input` takes a tablet for a mouse and ignores its positions (stage 2). `-no-reboot`
   was already there. `cargo xtask run` gained `--two-screens`.
+  - Two things the first CI run found: M4's driver test expected exactly two virtio input
+    devices (it now tells QEMU's tablets apart by name and expects them on top, at most two;
+    stage 2 gives tablets a kind of their own); and on ARM64 EL1 a tablet tied to the same
+    screen as the virtio mouse took the mouse's button events (QEMU sends a screen's buttons to
+    the last device tied to it), so there the tablet isn't tied to a screen.
 - **Driver start-up in a release build** (M5's leftover): one normal boot each, 4 cores, the
   time from a driver's start to its `ready`, as the device manager logs it:
 
@@ -591,3 +596,7 @@ disks made by 1.3, including writing and reading back.
 - **Drawing optimised in test builds**: `lib/font` and `lib/terminal` get `opt-level = 2` in the
   dev profile (debug assertions stay on); `lib/draw`, the display server and the display drivers
   join as they are written.
+- `cargo xtask ci` passed on all four configurations (the last runner change, which only
+  touches ARM64 EL1, with both ARM64 boots, check and the host tests run again). The whole run
+  took **23 minutes** here, not M5's 55: this time the machine was less busy, and the console's
+  drawing is now optimised. CLAUDE.md says "about 25 to 55 minutes".
