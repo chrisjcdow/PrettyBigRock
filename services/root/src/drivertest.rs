@@ -144,11 +144,26 @@ fn scan(d: &Devmgr, m: &Machine) -> Result<Vec<DeviceInfo>, String> {
         list.iter().filter(|x| x.kind == class && x.name.starts_with(prefix)).count()
     };
     let x86 = cfg!(target_arch = "x86_64");
+    // From M6 some configurations also have QEMU's tablets (note 0026, section 6), which are
+    // virtio input devices too. The self-test image is the same for every configuration, so
+    // how many there are is told from their names; they come on top of the keyboard and mouse.
+    let mut tablets = 0;
+    for x in list.iter().filter(|x| x.kind == DeviceClass::Input && x.name.starts_with("virtio")) {
+        let ep = d.client.open(x.id).map_err(|e| format!("opening {}: {e}", x.name))?;
+        let info = input::Client::new(Endpoint(ep)).info();
+        let info = info.map_err(|e| format!("{}: info: {e}", x.name))?;
+        if info.name.contains("Tablet") {
+            tablets += 1;
+        }
+    }
+    if tablets > 2 {
+        return Err(format!("{tablets} tablets, expected at most 2; the list is {list:?}"));
+    }
     let want = [
         // The test disk and the storage tests' three (M5), and on ARM64 the boot disk too (on
         // x86-64 that is an AHCI disk).
         ("virtio disks", count(DeviceClass::Block, "virtio-blk"), if x86 { 5 } else { 6 }),
-        ("virtio input devices", count(DeviceClass::Input, "virtio-input"), 2),
+        ("virtio input devices", count(DeviceClass::Input, "virtio-input"), 2 + tablets),
         ("PS/2 controllers", count(DeviceClass::Input, "ps2"), usize::from(x86 && m.ps2)),
         ("serial ports", count(DeviceClass::Serial, "serial16550"), usize::from(x86)),
         ("screens", count(DeviceClass::Display, "framebuffer"), usize::from(m.screen.is_some())),
