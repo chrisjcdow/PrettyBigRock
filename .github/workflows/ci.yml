@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install QEMU and its UEFI firmware, for the boot tests
+      - name: Install QEMU and its UEFI firmware, and the FAT32 tools the tests check with
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64
+          sudo apt-get install -y qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64 dosfstools mtools
       - name: Install the pinned Rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install && rustup show
       - name: Check, test, build, and boot every configuration
