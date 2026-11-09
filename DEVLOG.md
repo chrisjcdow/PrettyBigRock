@@ -524,3 +524,18 @@ disks made by 1.3, including writing and reading back.
   clean afterwards by `rockfs.py` and 1.3's own code). `cargo xtask ci` passed on all four
   configurations with the review's fixes. **M5 is done**; the Stress workflow's results come
   from Chris.
+
+## Session 13, continued: 9 November 2026, a hang the Stress workflow found
+
+- GitHub's CI on `a7e8f09` and `db890a0` failed now and then, and the Stress workflow on
+  `d1a274e` failed 9 of its 33 boots, on every configuration, always in the same place: after
+  the shell test, the users service didn't finish ending. Here (2 CPUs) about 15 boots never
+  failed; GitHub's runners have 4. The supervisor's report (`d1a274e`) showed users' own
+  threads had stopped; a new kernel report in self-test boots (`89acee3`) showed users closed
+  down, with no thread or tied process of it left anywhere, yet never complete.
+- Cause, in kernel 1.2's tied processes: a tied child's link to its creator was weak. Closed
+  down in the order users, a sandbox manager, then an app, the sandbox manager was freed while
+  waiting for the app (nothing held it once users had been closed down), so the app's
+  "complete" went nowhere and users waited for ever. The link is now strong until the child's
+  end is complete (note 0013, Changes). GitHub's CI and Stress now also install `dosfstools` and
+  `mtools`, which they lacked, so the FAT32 checks run there too.

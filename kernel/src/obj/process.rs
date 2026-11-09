@@ -116,8 +116,13 @@ pub struct Process {
     started: AtomicBool,
     thread_count: AtomicU64,
     tied: SpinLock<Tied>,
-    /// The process that created it, if it is tied to it.
-    creator: SpinLock<Option<Weak<Process>>>,
+    /// The process that created it, if it is tied to it, until its own end is complete. A
+    /// strong reference: a creator whose end is waiting for this one must still be there to be
+    /// told when it completes. Its own capabilities to the child are closed when it is torn
+    /// down, and nothing else need hold it then (found in M5's stress runs: with a weak
+    /// reference here the creator could be freed while it waited, and the news that its last
+    /// tied child had ended went nowhere, so its end never completed).
+    creator: SpinLock<Option<Arc<Process>>>,
     _charge: Charge,
 }
 
@@ -219,7 +224,7 @@ impl Process {
             return Err(Error::BadState);
         }
         self.tied.lock().children.push(Arc::downgrade(child));
-        *child.creator.lock() = Some(Arc::downgrade(self));
+        *child.creator.lock() = Some(self.clone());
         Ok(())
     }
 
@@ -517,7 +522,9 @@ fn try_complete(p: &Arc<Process>) {
         }
     }
     p.signal_watchers();
-    let creator = p.creator.lock().as_ref().and_then(Weak::upgrade);
+    // Its creator may now be complete too. The reference goes with it: from here on nothing
+    // needs this process to keep its creator.
+    let creator = p.creator.lock().take();
     if let Some(c) = creator {
         try_complete(&c);
     }

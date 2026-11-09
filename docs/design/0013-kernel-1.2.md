@@ -205,3 +205,12 @@ wall-clock field. No new error codes or rights.
   wall clock**: file times on RockFS and FAT32. The stage 9 review found nothing to change in
   the kernel; one rule for services followed from section 1's "badge 0 is refused" (note 0008,
   Changes: clients are never given unbadged copyable capabilities).
+- 9 November 2026, after M5's stage 9 (found by the Stress workflow): **a tied child keeps its
+  creator until its own end is complete.** The link from child to creator was weak (it didn't
+  keep the creator alive). With 4 cores, GitHub's runners now and then closed down a process,
+  then its tied child, before that child's own tied child had finished; nothing else held the
+  middle process by then, so it was freed, and when the last one finished, the news had
+  nowhere to go: the first process's end never completed (the users service, after the shell
+  test, in about one boot in four). The link is now a strong reference, dropped when the
+  child's end is complete. A kernel thread in self-test boots now reports any process whose end
+  hasn't completed 20 seconds after it began, which is how this was found.
