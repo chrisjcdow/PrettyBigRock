@@ -561,3 +561,33 @@ disks made by 1.3, including writing and reading back.
   written: an app's own folder is at `/Home/Apps/<app>`, the path the user sees, rather than
   `/App`, to keep note 0014's rule that the same paths mean the same thing (note 0024, section
   4). Next: walking through the notes with Chris; then stage 0.
+- Chris accepted notes 0019 to 0026 the same evening without walking through them ("I'm sure
+  your recommendations are all fine") and asked for stage 0. DESIGN.md's Q8 is marked settled
+  (note 0022, section 12).
+
+### Stage 0 (Opus)
+- **QEMU set-ups** (note 0026, section 6): x86-64 UEFI and ARM64 EL2 now also have a virtio-gpu
+  with two screens (`max_outputs=2`) and a virtio tablet tied to each screen (`display=gpu2,
+  head=0|1`); ARM64 EL1 has a tablet on its `ramfb` screen; x86-64 BIOS keeps PS/2. The
+  firmware's screen (standard VGA, `ramfb`) stays in every configuration until the display
+  drivers of stage 2: tried by hand first, OVMF and the ARM firmware still hand the loader that
+  screen (the kernel and the console draw on it as before), QEMU's `screendump` with `device`
+  and `head` takes a picture of each virtio-gpu screen (showing the firmware's text, untouched),
+  and the device manager lists the virtio-gpu as having no driver. The tablets are given after
+  the virtio mouse, since M4's driver test uses the first virtio pointer; for now
+  `virtio-input` takes a tablet for a mouse and ignores its positions (stage 2). `-no-reboot`
+  was already there. `cargo xtask run` gained `--two-screens`.
+- **Driver start-up in a release build** (M5's leftover): one normal boot each, 4 cores, the
+  time from a driver's start to its `ready`, as the device manager logs it:
+
+  | | debug | release |
+  |--|-------|---------|
+  | x86-64 UEFI (`virtio-input` ×2, `ps2`, `framebuffer`) | 1189 to 1370 ms | 12 to 41 ms |
+  | ARM64 UEFI (`virtio-blk`, `virtio-input` ×2, `framebuffer`) | 79 to 863 ms | 12 to 28 ms |
+
+  So the second or so that drivers take in test boots is unoptimised code under emulation, not
+  something a real start would see; nothing to fix. (The console's first look for devices,
+  which times out in debug boots, won't in release ones.)
+- **Drawing optimised in test builds**: `lib/font` and `lib/terminal` get `opt-level = 2` in the
+  dev profile (debug assertions stay on); `lib/draw`, the display server and the display drivers
+  join as they are written.

@@ -577,6 +577,7 @@ collection with its own list of licences, and the OS never depends on it.
 ## 16. Open questions
 
 Settled on 29 October 2026: Q1 (became D16), Q2 (D17), Q3 (D18) and Q4 (D19, section 1.1).
+Q8 was settled on 9 November 2026 (below).
 
 - **Q5. Cryptography.** TLS and disk encryption need cryptography. Writing our own is
   possible but risky to get wrong. The plan is to write it carefully against published test
@@ -597,8 +598,10 @@ Settled on 29 October 2026: Q1 (became D16), Q2 (D17), Q3 (D18) and Q4 (D19, sec
   Note that a Linux guest would be borrowed software running *on* PrettyBigRock, like any
   ported app, not part of the OS.
 - **Q8. A Wayland-compatible front end for the display server.** It would make porting
-  Linux GUI apps far easier, but it means following a protocol we didn't design. It's
-  decided when the display server is designed (milestone M6).
+  Linux GUI apps far easier, but it means following a protocol we didn't design. **Settled on
+  9 November 2026** ([note 0022](design/0022-display-server.md), section 12): the display
+  server speaks only our own protocol, `pbr.window`, shaped so that Wayland translates to it;
+  a Wayland front end comes later (M12) as a separate translating service.
 
 ---
 
@@ -615,3 +618,4 @@ Settled on 29 October 2026: Q1 (became D16), Q2 (D17), Q3 (D18) and Q4 (D19, sec
 - 31 October 2026: draft 3, with the M3 decisions (notes 0006 to 0009): processes hold the
   capability tables; endpoints with badges instead of channels, plus replies; message sizes;
   and D16 changed from a linking exception to MPL-2.0 and MIT.
+- 9 November 2026: Q8 settled by note 0022 (our own protocol; a Wayland front end later).
