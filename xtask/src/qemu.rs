@@ -43,7 +43,7 @@ pub struct Config {
 pub enum Screens {
     /// Only the firmware's screen, with no tablet: the PS/2 mouse is the pointer to test.
     Firmware,
-    /// The firmware's screen, with a tablet tied to it.
+    /// The firmware's screen, and a tablet (not tied to it; see [`command`]).
     FirmwareWithTablet,
     /// The firmware's screen, and a virtio-gpu with two screens, a tablet on each.
     TwoVirtioGpu,
@@ -366,7 +366,10 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     match cfg.screens {
         Screens::Firmware => {}
         Screens::FirmwareWithTablet => {
-            cmd.args(["-device", "virtio-tablet-pci,id=tablet0,display=gpu,head=0"]);
+            // Not tied to the screen: the virtio mouse is, and QEMU sends a screen's buttons to
+            // the last device tied to it, which would take them from the mouse M4's test uses.
+            // An untied tablet gets only what is sent to no particular screen.
+            cmd.args(["-device", "virtio-tablet-pci,id=tablet0"]);
         }
         Screens::TwoVirtioGpu => {
             cmd.args(["-device", "virtio-gpu-pci,id=gpu2,max_outputs=2"]);
