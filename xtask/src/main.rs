@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! cargo xtask build [--release]               build everything, and the boot disk image
-//! cargo xtask run [--arch NAME] [--bios] [--el2] [--release]
+//! cargo xtask run [--arch NAME] [--bios] [--el2] [--two-screens] [--release]
 //!                                             start PrettyBigRock in QEMU, in a window
 //! cargo xtask qemu-test [--release]           boot every configuration and check the kernel starts
 //! cargo xtask check                           formatting and lints, everywhere
@@ -211,6 +211,11 @@ fn run(args: &[String]) -> Result {
                 cores,
                 cpu: None,
                 expect: &[],
+                screens: if opts.two_screens {
+                    qemu::Screens::TwoVirtioGpu
+                } else {
+                    qemu::Screens::FirmwareWithTablet
+                },
             };
             qemu::run(&cfg, &img, &work_dir(&root)?)
         }
@@ -246,7 +251,8 @@ const HELP: &str = "
 PrettyBigRock build tool
 
   cargo xtask build [--release]          build everything, and the boot disk image
-  cargo xtask run [--arch NAME] [--bios] [--el2] [--selftest] [--cores N] [--release]
+  cargo xtask run [--arch NAME] [--bios] [--el2] [--selftest] [--two-screens] [--cores N]
+                  [--release]
                                          start PrettyBigRock in QEMU, in a window
   cargo xtask qemu-test [--release]      boot every configuration; check the kernel starts
                                          (PBR_QEMU_ONLY=<text> picks configurations by name)
@@ -268,6 +274,8 @@ struct Options {
     bios: bool,
     el2: bool,
     selftest: bool,
+    /// `run` with a virtio-gpu of two screens beside the firmware's (`--two-screens`).
+    two_screens: bool,
     cores: Option<u32>,
 }
 
@@ -281,6 +289,7 @@ impl Options {
                 "--bios" => opts.bios = true,
                 "--el2" => opts.el2 = true,
                 "--selftest" => opts.selftest = true,
+                "--two-screens" => opts.two_screens = true,
                 "--cores" => {
                     let n = it.next().ok_or("--cores needs a number")?;
                     let n: u32 = n.parse().map_err(|_| format!("`{n}` isn't a number of cores"))?;

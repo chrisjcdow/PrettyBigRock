@@ -31,6 +31,22 @@ pub struct Config {
     pub cpu: Option<&'static str>,
     /// Lines the kernel's report must contain.
     pub expect: &'static [&'static str],
+    /// Which screens and pointers it has for the desktop (note 0026, section 6).
+    pub screens: Screens,
+}
+
+/// The screens a configuration has. Every configuration keeps the firmware's screen (QEMU's
+/// standard VGA, or `ramfb` on ARM64), which the kernel and the M5 console draw on until the
+/// display drivers of M6 stage 2 exist; `TwoVirtioGpu` adds a virtio-gpu with two screens and
+/// a tablet (an absolute pointer) tied to each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Screens {
+    /// Only the firmware's screen, with no tablet: the PS/2 mouse is the pointer to test.
+    Firmware,
+    /// The firmware's screen, with a tablet tied to it.
+    FirmwareWithTablet,
+    /// The firmware's screen, and a virtio-gpu with two screens, a tablet on each.
+    TwoVirtioGpu,
 }
 
 /// Every configuration the boot tests run.
@@ -63,6 +79,7 @@ pub const TESTS: &[Config] = &[
             "a PS/2 keyboard and mouse",
             "exited with status 0.",
         ],
+        screens: Screens::TwoVirtioGpu,
     },
     Config {
         name: "x86-64, BIOS",
@@ -92,6 +109,7 @@ pub const TESTS: &[Config] = &[
             "a PS/2 keyboard and mouse",
             "exited with status 0.",
         ],
+        screens: Screens::Firmware,
     },
     Config {
         name: "ARM64, UEFI",
@@ -119,6 +137,7 @@ pub const TESTS: &[Config] = &[
             "a full ring",
             "exited with status 0.",
         ],
+        screens: Screens::FirmwareWithTablet,
     },
     Config {
         name: "ARM64, UEFI, starting at EL2",
@@ -145,6 +164,7 @@ pub const TESTS: &[Config] = &[
             "a full ring",
             "exited with status 0.",
         ],
+        screens: Screens::TwoVirtioGpu,
     },
 ];
 
@@ -340,6 +360,20 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     cmd.args(["-device", "virtio-blk-pci,drive=classic"]);
     cmd.args(["-device", "virtio-keyboard-pci,id=vkbd,display=gpu"]);
     cmd.args(["-device", "virtio-mouse-pci,id=vmouse,display=gpu"]);
+    // M6's screens and tablets (note 0026, section 6), after the mouse: devices are found in
+    // the order they are given, and M4's driver test uses the first virtio pointer it finds.
+    // QEMU ties a tablet to one screen (`display` and `head`), as a touch screen is.
+    match cfg.screens {
+        Screens::Firmware => {}
+        Screens::FirmwareWithTablet => {
+            cmd.args(["-device", "virtio-tablet-pci,id=tablet0,display=gpu,head=0"]);
+        }
+        Screens::TwoVirtioGpu => {
+            cmd.args(["-device", "virtio-gpu-pci,id=gpu2,max_outputs=2"]);
+            cmd.args(["-device", "virtio-tablet-pci,id=tablet0,display=gpu2,head=0"]);
+            cmd.args(["-device", "virtio-tablet-pci,id=tablet1,display=gpu2,head=1"]);
+        }
+    }
     cmd.arg("-no-reboot");
     Ok(cmd)
 }
