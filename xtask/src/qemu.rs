@@ -11,6 +11,10 @@ use std::time::{Duration, Instant};
 
 /// The line the kernel prints when its start-up report is done (kernel/src/main.rs).
 const REPORT_DONE: &str = "Start-up report complete.";
+/// The root program's line when every program self-test has passed.
+const SELFTEST_PASSED: &str = "Program self-test passed";
+/// The kernel's line when `machine_power` is about to restart the machine.
+const RESTARTING: &str = "Restarting";
 
 /// One way of booting.
 #[derive(Clone, Copy, Debug)]
@@ -77,7 +81,8 @@ pub const TESTS: &[Config] = &[
             "a full ring",
             "COM2 (output and loopback)",
             "a PS/2 keyboard and mouse",
-            "exited with status 0.",
+            "receiver watches and the machine capability",
+            "Restarting",
         ],
         screens: Screens::TwoVirtioGpu,
     },
@@ -107,7 +112,8 @@ pub const TESTS: &[Config] = &[
             "a full ring",
             "COM2 (output and loopback)",
             "a PS/2 keyboard and mouse",
-            "exited with status 0.",
+            "receiver watches and the machine capability",
+            "Restarting",
         ],
         screens: Screens::Firmware,
     },
@@ -135,7 +141,8 @@ pub const TESTS: &[Config] = &[
             "the framebuffer",
             "a virtio keyboard and mouse",
             "a full ring",
-            "exited with status 0.",
+            "receiver watches and the machine capability",
+            "Restarting",
         ],
         screens: Screens::FirmwareWithTablet,
     },
@@ -162,7 +169,8 @@ pub const TESTS: &[Config] = &[
             "the framebuffer",
             "a virtio keyboard and mouse",
             "a full ring",
-            "exited with status 0.",
+            "receiver watches and the machine capability",
+            "Restarting",
         ],
         screens: Screens::TwoVirtioGpu,
     },
@@ -455,6 +463,24 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
         if text.contains(REPORT_DONE) {
             break Ok(text);
         }
+        // A self-test that passes ends by restarting the machine (note 0019, section 5), and
+        // QEMU, told `-no-reboot`, stops instead. That is the test's last check: QEMU must
+        // have stopped because the guest reset it, after the kernel said it was restarting.
+        if said_restarting(&text) {
+            let exited = (0..50).any(|_| {
+                std::thread::sleep(Duration::from_millis(100));
+                matches!(child.try_wait(), Ok(Some(_)))
+            });
+            if !exited {
+                let regs = qmp.registers(cfg.cores);
+                let _ = fs::write(log.with_extension("registers.txt"), &regs);
+                break Err(format!(
+                    "the kernel said it was restarting, but the machine didn't restart.\n--- \
+                     serial output ---\n{text}\n--- registers ---\n{regs}"
+                ));
+            }
+            break reset_by_guest(&mut qmp, text);
+        }
         // A kernel exception or panic: give it a moment to finish its report, then ask QEMU
         // what every core is doing, since the report may never finish.
         if text.contains("\nException on core") || text.contains("The kernel stopped because") {
@@ -467,6 +493,11 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
             ));
         }
         if let Ok(Some(st)) = child.try_wait() {
+            // It may have stopped between the log being read and now: read it once more.
+            let text = fs::read_to_string(&log).unwrap_or_default();
+            if said_restarting(&text) {
+                break reset_by_guest(&mut qmp, text);
+            }
             break Err(format!(
                 "QEMU stopped ({st}) before the kernel finished.\n--- serial output ---\n{text}"
             ));
@@ -627,17 +658,37 @@ const STAGES: [Stage; 4] = [
 ];
 
 /// A connection to QEMU's control socket, made when first needed.
+/// Whether the serial log shows a passed program self-test followed by the kernel's line
+/// that it is restarting the machine.
+fn said_restarting(text: &str) -> bool {
+    text.find(SELFTEST_PASSED).is_some_and(|at| text[at..].lines().any(|l| l.trim() == RESTARTING))
+}
+
+/// QEMU has stopped after the kernel said it was restarting: `Ok(text)` if QEMU says the
+/// guest reset the machine, which is what a restart is.
+fn reset_by_guest(qmp: &mut Qmp, text: String) -> Result<String, String> {
+    match qmp.shutdown_reason().as_deref() {
+        Some("guest-reset") => Ok(text),
+        other => Err(format!(
+            "QEMU stopped after the restart was asked for, but for the reason {other:?}, not a \
+             reset by the guest.\n--- serial output ---\n{text}"
+        )),
+    }
+}
+
 struct Qmp {
     path: PathBuf,
     conn: Option<(
         std::os::unix::net::UnixStream,
         std::io::BufReader<std::os::unix::net::UnixStream>,
     )>,
+    /// The events QEMU has sent so far (it sends them between answers), one JSON line each.
+    events: Vec<String>,
 }
 
 impl Qmp {
     fn new(path: PathBuf) -> Qmp {
-        Qmp { path, conn: None }
+        Qmp { path, conn: None, events: Vec::new() }
     }
 
     fn connect(&mut self) -> Result<(), String> {
@@ -677,7 +728,30 @@ impl Qmp {
             if line.contains("\"return\"") {
                 return Ok(line);
             }
+            if line.contains("\"event\"") {
+                self.events.push(line);
+            }
         }
+    }
+
+    /// Why QEMU shut down, once it has: the `reason` of its `SHUTDOWN` event, which is
+    /// `guest-reset` when the guest restarted the machine (and QEMU was told `-no-reboot`) and
+    /// `guest-shutdown` when it turned it off. Reads whatever QEMU sent before it went.
+    fn shutdown_reason(&mut self) -> Option<String> {
+        use std::io::BufRead;
+        if let Some((_, r)) = self.conn.as_mut() {
+            let mut line = String::new();
+            // Until the socket closes (QEMU has exited) or nothing comes for the time-out.
+            while r.read_line(&mut line).is_ok_and(|n| n > 0) {
+                if line.contains("\"event\"") {
+                    self.events.push(std::mem::take(&mut line));
+                }
+                line.clear();
+            }
+        }
+        let event = self.events.iter().find(|e| e.contains("\"SHUTDOWN\""))?;
+        let after = event.split("\"reason\"").nth(1)?;
+        Some(after.split('"').nth(1)?.to_string())
     }
 
     /// What every core was doing, for a run that failed: QEMU's own view of each virtual

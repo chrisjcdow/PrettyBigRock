@@ -43,9 +43,10 @@ pub fn run(f: &Files<'_>, echo: &Endpoint) -> Outcome {
 }
 
 fn version() -> Outcome {
+    // Later minor versions only add to 1.2 (note 0007, section 7); `kernel13` checks for 1.3.
     match sys::version() {
-        (1, 2) => Ok(()),
-        (a, b) => Err(format!("the kernel says it is interface version {a}.{b}, not 1.2")),
+        (1, minor) if minor >= 2 => Ok(()),
+        (a, b) => Err(format!("the kernel says it is interface version {a}.{b}, not 1.2 or later")),
     }
 }
 

@@ -10,6 +10,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use granite::endpoint::Endpoint;
+use granite::machine::{Machine, Power};
 use granite::memory::Memory;
 use granite::message::Outgoing;
 use granite::notification::Notification;
@@ -42,7 +43,18 @@ pub fn run(archive: &Archive<'static>, archive_mem: u32, start: &mut granite::St
     match all(archive, archive_mem, &f, start) {
         Ok(summary) => {
             granite::println!("Program self-test passed: {summary}");
-            0
+            // The last test is the one nothing can follow: restarting the machine through
+            // the machine capability (docs/design/0019-kernel-1.3.md, section 5). Everything
+            // on the disks was saved when the storage service was stopped. The test runner
+            // has told QEMU to stop instead of restarting, and checks that it stopped for
+            // that reason; coming back from `power` at all means the restart didn't happen.
+            let Some(h) = start.take(granite::process::role::POWER) else {
+                granite::println!("Program self-test FAILED: restarting: no machine capability");
+                return 1;
+            };
+            let e = Machine(h).power(Power::Restart);
+            granite::println!("Program self-test FAILED: restarting: {e}");
+            1
         }
         Err(e) => {
             granite::println!("Program self-test FAILED: {e}");
@@ -87,6 +99,11 @@ fn all(
     done.push("budgets");
     step("kernel interface 1.2", crate::kernel12::run(f, &echo_ep))?;
     done.push("watched badges, derived replies, tied processes and the wall clock");
+    step(
+        "kernel interface 1.3",
+        crate::kernel13::run(f, &echo_ep, start.peek(granite::process::role::POWER)),
+    )?;
+    done.push("receiver watches and the machine capability");
     let files = crate::filestest::run(archive);
     if let Ok(summary) = &files {
         granite::println!("Files self-test passed: {summary}");

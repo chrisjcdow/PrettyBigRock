@@ -19,6 +19,7 @@ mod drivertest;
 mod fattest;
 mod filestest;
 mod kernel12;
+mod kernel13;
 mod sandboxtest;
 mod selftest;
 mod shelltest;
