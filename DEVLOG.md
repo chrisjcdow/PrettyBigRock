@@ -600,3 +600,33 @@ disks made by 1.3, including writing and reading back.
   touches ARM64 EL1, with both ARM64 boots, check and the host tests run again). The whole run
   took **23 minutes** here, not M5's 55: this time the machine was less busy, and the console's
   drawing is now optimised. CLAUDE.md says "about 25 to 55 minutes".
+
+### Stage 1: kernel interface 1.3 (10 November 2026)
+- Built by the session's model (Claude Fable 5.2, which Chris switched to), as CLAUDE.md asks
+  for kernel work to be done by the main model itself, not a subagent.
+- **Receiver watches** (`endpoint_watch_receiver`, call 59): each endpoint keeps a list of
+  (capability node, notification, bits, charge), emptied and signalled when its last receiving
+  capability goes. The hook that already runs when a capability leaves a table removes that
+  capability's watch, which covers closing, revoking, moving and a process ending in one place.
+- **The machine capability** (object type 12, right `POWER`, root's role 13) and
+  `machine_power` (call 100): `kernel/src/power.rs` decides refusals, stops the other cores
+  (counting them as they stop, 100 ms at most), then the architecture does it: PSCI on ARM64;
+  on x86-64 the FADT's reset register (new in `lib/platform`, host-tested), port `0xCF9`, the
+  keyboard controller, a triple fault. Turning a PC off answers `NOT_SUPPORTED` (the power
+  service's job, stage 6).
+- `granite`: `Endpoint::watch_receiver`, `machine::{Machine, Power}`, version 1.3.
+- **Tests** (`services/root/src/kernel13.rs`, in the program self-test on all four
+  configurations): the watch firing when the last receiver is closed, revoked, or its process
+  ends, and at once on an endpoint with none; not firing early; its charge taken and given back;
+  replacing; three clients; removed with its capability (closed, revoked, moved through the echo
+  service and back); a waiting call failing with `PeerGone` as it fires; through a notification
+  bound to an endpoint. The machine capability: its type and rights, and every refusal.
+- **The self-test now ends by restarting the machine.** After `Program self-test passed` the
+  root program calls `machine_power`; QEMU (`-no-reboot`) exits, and the runner accepts the boot
+  only if the kernel logged `Restarting` and QEMU's `SHUTDOWN` event says `guest-reset`. So the
+  kernel's old last line, the root program "exited with status 0", is no longer expected.
+- Two mistakes in the new tests, found by running them (a leftover capability that could still
+  receive; a revoke through a capability without the revoke right). QEMU itself crashed
+  (SIGSEGV) once on x86-64 UEFI, just after the device manager started, as in session 11; the
+  rerun passed. Worth watching now that those configurations have more devices.
+- `cargo xtask ci` passed on all four configurations (36 minutes).
