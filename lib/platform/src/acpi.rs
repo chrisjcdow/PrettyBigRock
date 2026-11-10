@@ -240,6 +240,45 @@ pub fn fadt_iapc_flags(mem: &impl PhysMemory, fadt: u64) -> Option<u16> {
     mem.read_u16(fadt + 109)
 }
 
+/// The FADT's reset register (ACPI 2.0 and later): writing `value` to it restarts the machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResetRegister {
+    /// True if `address` is an I/O port; false if it is a physical memory address.
+    pub io_port: bool,
+    /// Where the one-byte register is.
+    pub address: u64,
+    /// The byte to write.
+    pub value: u8,
+}
+
+/// The reset register, from the FADT: `None` if the table is too short to have one, its flags
+/// don't say it is supported (bit 10 of the fixed feature flags), or it is of a kind this
+/// doesn't know (the specification allows memory, I/O ports and PCI configuration space; PCI
+/// configuration space isn't supported here), or isn't one byte wide.
+pub fn fadt_reset(mem: &impl PhysMemory, fadt: u64) -> Option<ResetRegister> {
+    let len = mem.read_u32(fadt + 4)?;
+    if len < 129 {
+        return None;
+    }
+    if mem.read_u32(fadt + 112)? & (1 << 10) == 0 {
+        return None;
+    }
+    // A "generic address": the address space, the register's width and offset in bits, its
+    // access size, then the 64-bit address.
+    let space = mem.read_u8(fadt + 116)?;
+    let (width, offset) = (mem.read_u8(fadt + 117)?, mem.read_u8(fadt + 118)?);
+    let address = mem.read_u64(fadt + 120)?;
+    if width != 8 || offset != 0 || address == 0 {
+        return None;
+    }
+    let io_port = match space {
+        0 => false,
+        1 if address <= 0xFFFF => true,
+        _ => return None,
+    };
+    Some(ResetRegister { io_port, address, value: mem.read_u8(fadt + 128)? })
+}
+
 /// One entry of the MCFG table: a region of PCI Express configuration space.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EcamRegion {
@@ -443,6 +482,45 @@ pub(crate) mod tests {
         let mut n = 0;
         assert!(mcfg(&mem, 0x6000, |_| n += 1).is_some());
         assert!(n <= 32);
+    }
+
+    #[test]
+    fn reads_the_fadt_reset_register() {
+        // A FADT body starts 36 bytes into the table, so table offset N is body[N - 36].
+        let fadt = |flags: u32, space: u8, width: u8, address: u64, value: u8| {
+            let mut body = vec![0u8; 129 - 36];
+            body[112 - 36..116 - 36].copy_from_slice(&flags.to_le_bytes());
+            body[116 - 36] = space;
+            body[117 - 36] = width;
+            body[120 - 36..128 - 36].copy_from_slice(&address.to_le_bytes());
+            body[128 - 36] = value;
+            table(b"FACP", &body)
+        };
+        let mut mem = FakeMem::default();
+        // QEMU's: I/O port 0xCF9, value 0x0F.
+        mem.put(0x7000, &fadt(1 << 10, 1, 8, 0xCF9, 0x0F));
+        assert_eq!(
+            fadt_reset(&mem, 0x7000),
+            Some(ResetRegister { io_port: true, address: 0xCF9, value: 0x0F })
+        );
+        mem.put(0x7000, &fadt(1 << 10, 0, 8, 0xFED0_0000, 1));
+        assert_eq!(
+            fadt_reset(&mem, 0x7000),
+            Some(ResetRegister { io_port: false, address: 0xFED0_0000, value: 1 })
+        );
+        // Not supported by its flags; PCI configuration space; a 16-bit register; a port
+        // number that isn't one; no address; a table too short to have the register.
+        for bad in [
+            fadt(0, 1, 8, 0xCF9, 6),
+            fadt(1 << 10, 2, 8, 0xCF9, 6),
+            fadt(1 << 10, 1, 16, 0xCF9, 6),
+            fadt(1 << 10, 1, 8, 0x1_0000, 6),
+            fadt(1 << 10, 1, 8, 0, 6),
+            table(b"FACP", &[0u8; 80]),
+        ] {
+            mem.put(0x7000, &bad);
+            assert_eq!(fadt_reset(&mem, 0x7000), None);
+        }
     }
 
     #[test]
