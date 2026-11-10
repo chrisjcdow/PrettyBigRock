@@ -252,7 +252,9 @@ never reused, even if its call is retired.
   and 99 (note 0010, section 9, has the table), and the cache mode in `memory_map`'s
   permission word. M5 ships **1.2** (note 0013): call 58 (`endpoint_mint_watched`), receive
   kind 3, derived capabilities in replies, the `TIED` flag in `process_create`, and the wall
-  clock in the system data page (offset 24).
+  clock in the system data page (offset 24). M6 ships **1.3** (note 0019): calls 59
+  (`endpoint_watch_receiver`) and 100 (`machine_power`), the machine object and the root
+  program's start-up role 13. `machine_power` is the first call to answer `NOT_SUPPORTED`.
 - **The system page's header carries the same version** as the `version` call. The kernel
   writes it from the one constant that defines the version. (Until M5 the header still said
   1.0 under a 1.1 kernel; nothing read it.)
@@ -340,3 +342,4 @@ The cost is a few instructions on each exception taken in the kernel.
 - 2 November 2026, M4: interface version 1.1 (section 7; the calls are in note 0010).
 - 2 November 2026, M5: interface version 1.2 (section 7; note 0013), and the system page's
   header version written from the kernel's constant.
+- 10 November 2026, M6: interface version 1.3 (section 7; note 0019).

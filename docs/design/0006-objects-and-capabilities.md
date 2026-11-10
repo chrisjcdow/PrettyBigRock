@@ -37,6 +37,7 @@ system call interface and never reused:
 | 9 | Device memory | A range of physical addresses that aren't RAM (note 0010) | M4 |
 | 10 | I/O ports | A range of x86 I/O ports (note 0010) | M4 |
 | 11 | Virtual CPU | For virtual machines (DESIGN.md Q7) | later |
+| 12 | Machine | The machine itself: its `POWER` right (bit 8) is the only way to turn the machine off or restart it (note 0019) | M6 |
 
 An object lives as long as anything refers to it: a capability, a mapping, a blocked thread,
 or the kernel itself. Objects are reference-counted inside the kernel.
@@ -269,3 +270,4 @@ Every process has a **budget** in bytes, and a count of how much of it is used.
   M5's supervision taught, note 0018); and a rule M5 follows (note 0008, Changes): a client is
   never given an *unbadged* endpoint capability it can copy, since a copy of one can be minted
   with any badge (section 5).
+- 10 November 2026, M6: object type 12, the machine, with its right `POWER` (note 0019).

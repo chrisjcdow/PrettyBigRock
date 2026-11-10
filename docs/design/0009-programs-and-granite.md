@@ -140,6 +140,7 @@ Roles:
 | 6 | Its message page's memory object |
 | 7 to 11 | The root program only, from M4: device memory, interrupts, the message-signalled interrupt pool, I/O ports and the machine description (note 0010, section 8) |
 | 12 | From M5: the program's file tree, a read-only memory object describing its entries (note 0014, section 8) |
+| 13 | From M6, the root program only: the machine capability, for turning off and restarting (note 0019) |
 | 100 to 355 | From M5: the capabilities for the file tree's entries 0 to 255 (note 0014, section 8) |
 | 1000 and up | Specific to the program, agreed with its launcher |
 
@@ -329,3 +330,5 @@ Actions.
   starts the device manager, the storage service, the console and the users service, and
   supervises them, serving `pbr.supervisor` at their role 5 (note 0018); in self-test runs it
   adds M5's tests after M4's.
+- 10 November 2026, M6: start-up role 13, the machine capability (note 0019); `granite::machine`
+  and `Endpoint::watch_receiver`.

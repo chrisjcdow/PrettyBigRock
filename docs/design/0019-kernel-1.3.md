@@ -1,6 +1,6 @@
 # 0019: Kernel interface 1.3: turning the machine off, and noticing a service has gone
 
-Status: Accepted · 9 November 2026 · Related: DESIGN.md sections 6.1 and 8; notes 0006, 0007,
+Status: Accepted · 9 November 2026 · Built 10 November 2026 · Related: DESIGN.md sections 6.1 and 8; notes 0006, 0007,
 0008, 0013, 0018, 0022, 0024; milestone M6
 
 ## The problem
@@ -85,10 +85,11 @@ programs built for 1.0 to 1.2 run unchanged.
 
 ### 3. In `granite`
 
-- `granite::machine::power(&Machine, Power::Off | Power::Restart) -> Result<Never, Error>`,
-  with `Machine` a handle type of its own, given only by `start::machine()` (role 13).
-- `Endpoint::watch_receiver(&Notification, bits) -> Result<(), Error>`.
-- `handle::Type::Machine` for `handle_info`.
+- `granite::machine::Machine`, a handle type of its own, made from the capability at start-up
+  role 13 (`process::role::POWER`), with `power(Power::Off | Power::Restart) -> Error`: since
+  it never returns on success, all it can return is why it didn't happen.
+- `Endpoint::watch_receiver(&Notification, bits) -> Result<()>`.
+- `sys::kind::MACHINE` and `sys::rights::POWER` for `handle_info`.
 
 ### 4. Numbers
 
@@ -110,11 +111,12 @@ Also: object type 12 (Machine) and its right `POWER` (bit 8); the root program's
   doesn't fire while one copy of the receiving capability is left; is removed with the client's
   capability (closed, revoked, moved), and its charge returned; replacing a watch; many clients
   watching one endpoint.
-- **Turning off and restarting really happening** can't be checked from inside: the desktop
-  boot (note 0026) ends by turning off, and one boot per configuration restarts, with QEMU told
-  `-no-reboot` so that it exits instead of restarting. The runner tells the two apart by QEMU's
-  `SHUTDOWN` event, whose reason is `guest-shutdown` for turning off and `guest-reset` for a
-  restart.
+- **Restarting really happening** can't be checked from inside, so it is the self-test's
+  last act, on all four configurations: after `Program self-test passed` the root program
+  restarts the machine, and QEMU, told `-no-reboot`, exits instead of restarting. The runner
+  accepts the boot only if the kernel logged `Restarting` and QEMU's `SHUTDOWN` event gives the
+  reason `guest-reset`. **Turning off** (`guest-shutdown`) is checked the same way when the
+  power service exists (note 0024), at the end of the desktop boot (note 0026).
 
 ## Alternatives considered
 
@@ -141,5 +143,19 @@ Also: object type 12 (Machine) and its right `POWER` (bit 8); the root program's
   only by the power going.
 
 ## Changes
+- 10 November 2026, built (M6 stage 1). What building settled:
+  - the kernel tells whether the other cores have stopped by counting them as they take the
+    stop interrupt, and waits for that count or 100 ms, whichever comes first;
+  - two threads asking at once: the first to get as far as stopping the machine does it, the
+    other stops its own core;
+  - the FADT's reset register is used when it is one byte in memory or I/O port space; one in
+    PCI configuration space (which the specification allows) is skipped, and the next method
+    tried;
+  - a watch is recorded while the derivation tree is locked, so a capability can't be closed,
+    revoked or moved between being looked up and its watch being recorded;
+  - `granite`'s names (section 3), and the role being called `POWER` there (`MACHINE` was
+    already the machine description's, role 11);
+  - restarting is tested at the end of every self-test boot (section 5), not in a boot of its
+    own.
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).
