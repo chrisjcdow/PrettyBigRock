@@ -97,6 +97,19 @@ impl Endpoint {
         sys::call(num::ENDPOINT_WATCH, [self.0.raw().into(), n.0.raw().into(), bits, 0, 0, 0])
             .map(|_| ())
     }
+
+    /// The client's side of the same question (docs/design/0019-kernel-1.3.md, section 2):
+    /// asks for `bits` on `n` once nobody can receive on this endpoint any more, which is how
+    /// a client learns that the service it calls has gone without having to call it. If
+    /// nobody can already, the bits are signalled at once. It happens once.
+    ///
+    /// The watch belongs to this capability: closing it, or sending it away, removes the
+    /// watch, and copies don't have one. Asking again through the same capability replaces it.
+    /// Needs the send right.
+    pub fn watch_receiver(&self, n: &Notification, bits: u64) -> Result<()> {
+        let a = [self.0.raw().into(), n.0.raw().into(), bits, 0, 0, 0];
+        sys::call(num::ENDPOINT_WATCH_RECEIVER, a).map(|_| ())
+    }
 }
 
 fn event(p: *mut u8, kind: u64, value: u64) -> Event {

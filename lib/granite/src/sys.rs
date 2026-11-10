@@ -140,6 +140,8 @@ pub mod kind {
     pub const DEVICE_MEMORY: u32 = 9;
     /// A range of I/O ports.
     pub const IO_PORTS: u32 = 10;
+    /// The machine itself (docs/design/0019-kernel-1.3.md, section 1).
+    pub const MACHINE: u32 = 12;
 }
 
 /// Rights (note 0006, section 4).
@@ -186,6 +188,8 @@ pub mod rights {
     pub const ACKNOWLEDGE: u32 = 1 << 9;
     /// The kernel log: take over the screen.
     pub const CONTROL: u32 = 1 << 8;
+    /// The machine: turn it off or restart it.
+    pub const POWER: u32 = 1 << 8;
     /// Every right.
     pub const ALL: u32 = 0x07FF;
 }
@@ -243,6 +247,7 @@ pub mod num {
     pub const ENDPOINT_BIND: u64 = 56;
     pub const ENDPOINT_WATCH: u64 = 57;
     pub const ENDPOINT_MINT_WATCHED: u64 = 58;
+    pub const ENDPOINT_WATCH_RECEIVER: u64 = 59;
     pub const NOTIFICATION_CREATE: u64 = 60;
     pub const NOTIFICATION_SIGNAL: u64 = 61;
     pub const NOTIFICATION_WAIT: u64 = 62;
@@ -262,11 +267,12 @@ pub mod num {
     pub const IOPORT_OUT: u64 = 92;
     pub const IOPORT_INFO: u64 = 93;
     pub const INTERRUPT_TRIGGER: u64 = 99;
+    pub const MACHINE_POWER: u64 = 100;
 }
 
 /// The interface version this `granite` is built for, recorded in every program's
 /// PrettyBigRock note.
-pub const VERSION: (u16, u16) = (1, 2);
+pub const VERSION: (u16, u16) = (1, 3);
 
 static CALL: AtomicU64 = AtomicU64::new(0);
 static CLOCK: AtomicU64 = AtomicU64::new(0);

@@ -37,6 +37,7 @@ mod heap;
 pub mod interface;
 pub mod lock;
 pub mod log;
+pub mod machine;
 pub mod memory;
 pub mod message;
 pub mod notification;

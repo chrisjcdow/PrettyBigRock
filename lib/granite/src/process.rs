@@ -53,6 +53,9 @@ pub mod role {
     /// (docs/design/0014-files-and-file-trees.md, section 8). Entry `i`'s capability has role
     /// `FILE_TREE_FIRST + i`.
     pub const FILE_TREE: u32 = 12;
+    /// The machine capability, for turning the machine off and restarting it (the root program
+    /// only; docs/design/0019-kernel-1.3.md, section 1).
+    pub const POWER: u32 = 13;
     /// The role of the file tree's first entry's capability.
     pub const FILE_TREE_FIRST: u32 = 100;
     /// The first role a launcher and its program agree between themselves.
