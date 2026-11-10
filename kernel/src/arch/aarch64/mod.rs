@@ -7,11 +7,13 @@ mod context;
 mod exceptions;
 mod gic;
 pub mod irqchip;
+mod power;
 mod smp;
 mod timer;
 mod user;
 
 pub use context::{init_thread_stack, switch_context, switch_stack};
+pub use power::{power_now, power_prepare};
 pub use smp::start_other_cores;
 pub use user::{
     ELF_MACHINE, SHARES_TOP_LEVEL, UserRegs, activate_space, enter_user, flush_user_pages,

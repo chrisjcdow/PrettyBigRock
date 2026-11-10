@@ -236,7 +236,10 @@ extern "C" fn dispatch(f: &mut Frame) {
             apic::eoi();
             percpu::this().sched.need_resched.store(true, Ordering::Relaxed);
         }
-        IPI_STOP => super::halt_forever(),
+        IPI_STOP => {
+            crate::power::core_stopped();
+            super::halt_forever()
+        }
         IPI_SHOOTDOWN => {
             apic::eoi();
             super::user::shootdown_interrupt();

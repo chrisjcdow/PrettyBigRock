@@ -29,6 +29,9 @@ mod role {
     pub const MSI_POOL: u32 = 9;
     pub const IO_PORTS: u32 = 10;
     pub const MACHINE: u32 = 11;
+    // 12 is a program's file tree (note 0014), which the kernel doesn't make.
+    /// The machine capability, for turning off and restarting (note 0019, section 1).
+    pub const POWER: u32 = 13;
 }
 
 /// The machine description page (note 0011, section 2).
@@ -134,6 +137,7 @@ pub fn start(archive: Vec<u8>, args: &str) -> Result<Arc<Process>, String> {
         (role::ARCHIVE, give(Object::Memory(arc), rights::COMMON | rights::READ | rights::MAP)),
         (role::MACHINE, give(Object::Memory(desc), rights::COMMON | rights::READ | rights::MAP)),
     ];
+    entries.push((role::POWER, give(Object::Machine, Object::Machine.all_rights())));
     let dm = Object::DeviceMemory(device::DeviceMemory::everything());
     entries.push((role::DEVICE_MEMORY, give(dm.clone(), dm.all_rights())));
     if let Some(i) = device::Interrupts::everything() {

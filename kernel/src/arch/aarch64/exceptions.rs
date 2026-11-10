@@ -236,6 +236,7 @@ fn irq() {
             gic::end(iar);
             percpu::this().sched.need_resched.store(true, Ordering::Relaxed);
         } else if id == gic::SGI_STOP {
+            crate::power::core_stopped();
             super::halt_forever();
         } else if id >= 32 {
             super::irqchip::interrupt(iar, id);

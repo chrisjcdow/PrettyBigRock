@@ -53,8 +53,7 @@ pub enum Error {
     AlreadyExists = 13,
     /// The object isn't in a state that allows this.
     BadState = 14,
-    /// The call can't be done here. (Part of the interface; nothing returns it yet.)
-    #[allow(dead_code)]
+    /// The call can't be done here.
     NotSupported = 15,
 }
 
@@ -80,6 +79,9 @@ pub mod kind {
     pub const DEVICE_MEMORY: u32 = 9;
     /// A range of I/O ports.
     pub const IO_PORTS: u32 = 10;
+    // 11 is reserved for a virtual CPU (note 0006).
+    /// The machine itself (docs/design/0019-kernel-1.3.md, section 1).
+    pub const MACHINE: u32 = 12;
 }
 
 /// Rights (note 0006, section 4). Bits 0 to 7 mean the same for every type; 8 to 15 depend
@@ -127,6 +129,8 @@ pub mod rights {
     pub const ACKNOWLEDGE: u32 = 1 << 9;
     /// The kernel log: take over the screen.
     pub const CONTROL: u32 = 1 << 8;
+    /// The machine: turn it off or restart it.
+    pub const POWER: u32 = 1 << 8;
 
     /// The rights every type shares.
     pub const COMMON: u32 = DUPLICATE | TRANSFER | REVOKE | INSPECT;
@@ -174,6 +178,9 @@ pub enum Object {
     DeviceMemory(Arc<device::DeviceMemory>),
     /// A range of I/O ports.
     IoPorts(Arc<device::IoPorts>),
+    /// The machine itself: there is one, and holding its capability with `POWER` is the only
+    /// way to turn the machine off or restart it (note 0019, section 1).
+    Machine,
 }
 
 impl Object {
@@ -190,6 +197,7 @@ impl Object {
             Object::Interrupts(_) => kind::INTERRUPTS,
             Object::DeviceMemory(_) => kind::DEVICE_MEMORY,
             Object::IoPorts(_) => kind::IO_PORTS,
+            Object::Machine => kind::MACHINE,
         }
     }
 
@@ -207,6 +215,7 @@ impl Object {
             Object::Interrupts(_) => COMMON | BIND | ACKNOWLEDGE,
             Object::DeviceMemory(_) => COMMON | READ | WRITE | MAP | DMA,
             Object::IoPorts(_) => COMMON | READ | WRITE,
+            Object::Machine => COMMON | POWER,
         }
     }
 }

@@ -27,6 +27,7 @@ mod irq;
 mod mem;
 mod obj;
 mod percpu;
+mod power;
 mod rng;
 mod root;
 mod sched;

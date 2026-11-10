@@ -9,12 +9,14 @@ mod context;
 mod cpu;
 mod interrupts;
 pub mod irqchip;
+mod power;
 mod serial;
 mod smp;
 mod user;
 
 pub use context::{init_thread_stack, switch_context, switch_stack};
 pub use cpu::CpuArch;
+pub use power::{power_now, power_prepare};
 pub use serial::Port16550;
 pub use smp::start_other_cores;
 pub use user::{

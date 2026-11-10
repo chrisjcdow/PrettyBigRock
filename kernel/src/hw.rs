@@ -46,6 +46,9 @@ pub struct Machine {
     pub msi_frame: Option<(u64, u16, u16)>,
     /// x86: the firmware says a legacy PS/2 (8042) controller exists.
     pub ps2: bool,
+    /// x86: the register that restarts the machine when written, if the firmware gives one
+    /// (docs/design/0019-kernel-1.3.md, section 1).
+    pub reset: Option<acpi::ResetRegister>,
 }
 
 /// Reads the ACPI tables. `boot_hw_id` is the boot core's hardware ID, put first in the list.
@@ -95,6 +98,9 @@ pub fn discover(rsdp: u64, boot_hw_id: u64) -> Machine {
         m.psci = acpi::fadt_psci(&mem, t).and_then(|(psci, hvc)| psci.then_some(hvc));
         m.ps2 = cfg!(target_arch = "x86_64")
             && acpi::fadt_iapc_flags(&mem, t).is_some_and(|f| f & 2 != 0);
+        if cfg!(target_arch = "x86_64") {
+            m.reset = acpi::fadt_reset(&mem, t);
+        }
     }
     // The boot core goes first, so core numbers match start-up order.
     if let Some(i) = m.cores.iter().position(|c| c.hw_id == boot_hw_id) {

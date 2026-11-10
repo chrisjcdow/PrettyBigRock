@@ -21,6 +21,7 @@
 //! - start-up: `init_boot_core`, `start_other_cores`;
 //! - threads: `init_thread_stack`, `switch_context`, `switch_stack`;
 //! - inter-core interrupts: `Ipi`, `send_ipi`;
+//! - power: `power_prepare`, `power_now` (see `crate::power`);
 //! - the self-test's hooks: `breakpoint`, `breakpoints`.
 
 #[cfg(target_arch = "x86_64")]
