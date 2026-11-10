@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! The system calls of interface version 1.1 (docs/design/0007-system-calls.md, section 6, and
-//! docs/design/0010-device-access.md, section 9).
+//! The system calls (docs/design/0007-system-calls.md, section 6; docs/design/0010-device-access.md,
+//! section 9; and what interface versions 1.2 and 1.3 added, notes 0013 and 0019).
 //!
 //! The architecture layer passes the call number and six arguments, and returns the status
 //! (0, or an error code) and two results. Every argument is checked; a call that fails changes
@@ -21,8 +21,8 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 
-/// The interface version (note 0007, section 7; 1.2 is note 0013).
-pub const VERSION: (u64, u64) = (1, 2);
+/// The interface version (note 0007, section 7; 1.2 is note 0013, 1.3 note 0019).
+pub const VERSION: (u64, u64) = (1, 3);
 
 type R = Result<(u64, u64), Error>;
 
@@ -378,6 +378,10 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
             let mask = u32::try_from(a[2]).map_err(|_| Error::InvalidArgument)?;
             caps::mint_watched(p, handle_arg(a[0])?, mask, a[1]).map(|h| (u64::from(h), 0))
         }
+        59 => {
+            let n = notification(p, a[1], rights::SIGNAL)?;
+            caps::watch_receiver(p, handle_arg(a[0])?, n, a[2]).map(|()| (0, 0))
+        }
 
         // Notifications.
         60 => {
@@ -498,6 +502,18 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
         99 => {
             let i = interrupts(p, a[0], rights::ACKNOWLEDGE)?;
             crate::irq::trigger(i.number(a[1])?).map(|()| (0, 0))
+        }
+
+        // The machine (note 0019, section 1).
+        100 => {
+            let e = get(p, a[0])?;
+            if !matches!(e.object, Object::Machine) {
+                return Err(Error::WrongType);
+            }
+            require(e.rights, rights::POWER)?;
+            // `power` only comes back with an error. `Infallible` is a type with no values, so
+            // the empty `match` tells the compiler the success case can't happen.
+            match crate::power::power(a[1])? {}
         }
 
         _ => Err(Error::InvalidCall),
