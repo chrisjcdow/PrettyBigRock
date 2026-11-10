@@ -23,6 +23,11 @@
 //! - **derived replies.** A reply may ask for a capability derived from the one the caller
 //!   called through ([`DERIVED`]): a child of it in the derivation tree, so that revoking the
 //!   caller's capability revokes what it was used to reach.
+//!
+//! Interface version 1.3 (docs/design/0019-kernel-1.3.md, section 2) adds **receiver watches**:
+//! a client asks to be signalled when nobody can receive on the endpoint any more (its service
+//! has gone), so it needn't find out by calling. A watch belongs to the capability it was set
+//! through ([`ReceiverWatch`]), and goes with it.
 
 use super::budget::Charge;
 use super::caps;
@@ -139,6 +144,19 @@ impl Watch {
     }
 }
 
+/// One capability's wish to be told when the endpoint's last receiver goes (note 0019,
+/// section 2).
+struct ReceiverWatch {
+    /// The capability it was set through, by its node in the derivation tree: a capability's
+    /// node is its identity, whichever table and handle it is at.
+    node: NodeId,
+    notification: Arc<Notification>,
+    bits: u64,
+    /// What the record costs the process that set it; given back when the record goes
+    /// (dropping a [`Charge`] returns it to its budget).
+    _charge: Charge,
+}
+
 struct Inner {
     callers: VecDeque<Caller>,
     receivers: VecDeque<Arc<Thread>>,
@@ -148,6 +166,8 @@ struct Inner {
     watch: Option<(Arc<Notification>, u64)>,
     /// Watched badges whose last capability has gone, waiting to be received.
     gone: VecDeque<Arc<Watch>>,
+    /// Who wants to know when `receiver_caps` reaches zero. Emptied when it does.
+    receiver_watches: Vec<ReceiverWatch>,
 }
 
 /// A service's receiving point for messages.
@@ -224,6 +244,7 @@ impl Endpoint {
                 receiver_caps: 0,
                 watch: None,
                 gone: VecDeque::new(),
+                receiver_watches: Vec::new(),
             }),
             _charge: charge,
         })
@@ -245,6 +266,7 @@ impl Endpoint {
         let mut signal = None;
         let mut gone = Vec::new();
         let mut notices = VecDeque::new();
+        let mut watches = Vec::new();
         let waiting: Vec<Arc<Thread>>;
         {
             let mut i = self.inner.lock();
@@ -257,9 +279,11 @@ impl Endpoint {
             if r & rights::RECEIVE != 0 {
                 i.receiver_caps -= 1;
                 if i.receiver_caps == 0 {
-                    // Nobody can ever receive: every waiting caller fails, and queued gone
-                    // notices are dropped (their charges given back, below).
+                    // Nobody can ever receive: every waiting caller fails, queued gone
+                    // notices are dropped (their charges given back, below), and everyone
+                    // watching for this is told (below, once the lock is released).
                     notices = core::mem::take(&mut i.gone);
+                    watches = core::mem::take(&mut i.receiver_watches);
                     gone = i.callers.drain(..).collect();
                     for c in &gone {
                         set_phase(&c.thread, Phase::Replied(Err(Error::PeerGone)));
@@ -287,6 +311,51 @@ impl Endpoint {
         for w in notices {
             drop(w.charge.lock().take());
         }
+        for w in &watches {
+            w.notification.signal(w.bits);
+        }
+    }
+
+    /// `endpoint_watch_receiver` (note 0019, section 2): signals `bits` on `n` once no
+    /// capability that can receive here is left; at once if there is already none. The watch
+    /// belongs to the capability whose tree node is `node`, replacing any it had; `charge` is
+    /// what the record costs, kept until it fires or is removed.
+    pub fn watch_receiver(&self, node: NodeId, n: Arc<Notification>, bits: u64, charge: Charge) {
+        // What is replaced or not needed is dropped after the lock is released: dropping a
+        // notification's last reference, or returning a charge, takes other locks.
+        let mut old = None;
+        let fire = {
+            let mut i = self.inner.lock();
+            if let Some(at) = i.receiver_watches.iter().position(|w| w.node == node) {
+                old = Some(i.receiver_watches.swap_remove(at));
+            }
+            if i.receiver_caps == 0 {
+                Some((n, charge))
+            } else {
+                i.receiver_watches.push(ReceiverWatch {
+                    node,
+                    notification: n,
+                    bits,
+                    _charge: charge,
+                });
+                None
+            }
+        };
+        drop(old);
+        if let Some((n, _charge)) = fire {
+            n.signal(bits);
+        }
+    }
+
+    /// Removes the receiver watch set through the capability whose node is `node`, if it has
+    /// one: that capability has been closed, revoked or moved.
+    pub fn unwatch_receiver(&self, node: NodeId) {
+        let old = {
+            let mut i = self.inner.lock();
+            let at = i.receiver_watches.iter().position(|w| w.node == node);
+            at.map(|at| i.receiver_watches.swap_remove(at))
+        };
+        drop(old);
     }
 
     /// The last capability carrying a watched badge has gone: queue the notice for a receiver.

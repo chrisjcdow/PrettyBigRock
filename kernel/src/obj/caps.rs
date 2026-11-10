@@ -75,7 +75,13 @@ pub fn removed(e: &Entry, owner: &Arc<Process>) {
         w.cap_removed();
     }
     match &e.object {
-        Object::Endpoint(ep) => ep.cap_removed(e.rights),
+        Object::Endpoint(ep) => {
+            // A receiver watch belongs to its capability and goes with it (note 0019, section
+            // 2). First, so that a capability that is itself the last receiver doesn't signal
+            // its own watch on the way out.
+            ep.unwatch_receiver(e.node);
+            ep.cap_removed(e.rights);
+        }
         Object::Notification(n) => n.wake_waiters(),
         Object::Process(p) => p.cap_removed(owner),
         _ => {}
@@ -175,6 +181,28 @@ pub fn mint_watched(p: &Arc<Process>, h: u32, mask: u32, badge: u64) -> Result<u
     }
     let watch = Watch::new(ep, badge, p.budget.charge(super::charge::NOTIFICATION)?);
     insert_entry(&mut tree, p, e.object, e.rights & mask, badge, Some(watch), Some(e.node))
+}
+
+/// `endpoint_watch_receiver` (docs/design/0019-kernel-1.3.md, section 2): asks for `bits` on
+/// `n` once nobody can receive on the endpoint `h` names. Needs `SEND`: it is a client's
+/// question about the service it calls. The watch belongs to this capability (not to copies
+/// of it) and is charged to `p`.
+pub fn watch_receiver(
+    p: &Arc<Process>,
+    h: u32,
+    n: Arc<super::notification::Notification>,
+    bits: u64,
+) -> Result<(), Error> {
+    // The tree's lock is held so the capability can't be closed, revoked or moved between
+    // looking it up and recording the watch: `removed`, which takes the watch away again, runs
+    // only after whoever removes the capability has held this lock.
+    let _tree = TREE.lock();
+    let e = lookup(p, h)?;
+    let Object::Endpoint(ep) = &e.object else { return Err(Error::WrongType) };
+    require(e.rights, rights::SEND)?;
+    let charge = p.budget.charge(super::charge::NOTIFICATION)?;
+    ep.watch_receiver(e.node, n, bits, charge);
+    Ok(())
 }
 
 /// Closes `h`: its copies are given to its parent, so they keep working.
