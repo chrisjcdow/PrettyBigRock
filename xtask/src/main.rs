@@ -26,6 +26,7 @@ use std::time::Duration;
 mod classicdisk;
 mod elf;
 mod image;
+mod pictures;
 mod qemu;
 mod symbols;
 mod testdisks;

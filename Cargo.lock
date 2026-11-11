@@ -417,6 +417,7 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "pbr-archive",
+ "pbr-devices",
  "pbr-elf",
  "pbr-interface-compiler",
  "pbr-partition",
