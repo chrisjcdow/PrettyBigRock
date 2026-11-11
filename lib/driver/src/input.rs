@@ -99,6 +99,17 @@ impl Input {
         }
     }
 
+    /// An absolute pointer (a tablet or touch screen) is at (`x`, `y`), each from 0 to 65535
+    /// across its whole surface. Both go in one event, x in the low 16 bits of the value and y
+    /// in the high 16 (see `EVENT_POSITION` in `pbr.input`), so a client never sees one
+    /// coordinate from a new report and the other from an old one.
+    pub fn position(&mut self, x: u16, y: u16) {
+        let value = u32::from(x) | (u32::from(y) << 16);
+        // The value field is signed, so a y of 32768 or more reads as negative there; the bits
+        // are the same, and clients read them as unsigned.
+        self.post(input::EVENT_POSITION as u16, 0, value as i32);
+    }
+
     /// A mouse button (`input::BUTTON_*`) went down or up.
     pub fn button(&mut self, code: u32, pressed: bool) {
         let value = if pressed { input::VALUE_PRESSED } else { input::VALUE_RELEASED };

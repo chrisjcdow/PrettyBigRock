@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! A software virtio block device for the host tests: it has the registers of the modern PCI
+//! A software virtio block device (or, if given an [`InputDev`], input device) for the host
+//! tests: it has the registers of the modern PCI
 //! transport and processes the queue the driver set up, reading and writing the driver's DMA
 //! memory the way hardware would. It can be told to lie.
 
@@ -40,7 +41,79 @@ pub enum Lie {
     Stranger,
 }
 
+/// What a virtio input device says about itself when the driver asks through its
+/// configuration (virtio 1.x specification, section 5.8.5). The tests build keyboards, mice and
+/// tablets from it, honest and lying.
+#[derive(Clone, Debug, Default)]
+pub struct InputDev {
+    pub name: String,
+    /// The bitmaps of the event codes the device has, for `EV_KEY`, `EV_REL` and `EV_ABS`.
+    pub key_bits: Vec<u8>,
+    pub rel_bits: Vec<u8>,
+    pub abs_bits: Vec<u8>,
+    /// The raw answer for each of the two absolute axes' `ABS_INFO` (empty means no answer).
+    pub abs_info: [Vec<u8>; 2],
+}
+
+/// What a tablet's `ABS_INFO` answer looks like: min, max, fuzz, flat, res.
+pub fn abs_info(min: i32, max: i32) -> Vec<u8> {
+    [min, max, 0, 0, 0].iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+impl InputDev {
+    /// A keyboard: has the letter A (key code 30).
+    pub fn keyboard() -> Self {
+        let mut key_bits = vec![0u8; 16];
+        key_bits[30 / 8] |= 1 << (30 % 8);
+        InputDev { name: "QEMU Virtio Keyboard".into(), key_bits, ..Default::default() }
+    }
+
+    /// A mouse: buttons, and relative X, Y and the wheel.
+    pub fn mouse() -> Self {
+        let mut key_bits = vec![0u8; 35];
+        key_bits[0x110 / 8] |= 0b111; // BTN_LEFT, BTN_RIGHT, BTN_MIDDLE
+        InputDev {
+            name: "QEMU Virtio Mouse".into(),
+            key_bits,
+            rel_bits: vec![0b11, 0b1], // REL_X, REL_Y, REL_WHEEL
+            ..Default::default()
+        }
+    }
+
+    /// A tablet, as QEMU's is: like the mouse (buttons and a wheel) but with absolute X and Y
+    /// axes with these ranges instead of relative ones.
+    pub fn tablet(x: (i32, i32), y: (i32, i32)) -> Self {
+        InputDev {
+            name: "QEMU Virtio Tablet".into(),
+            rel_bits: vec![0, 0b1],
+            abs_bits: vec![0b11],
+            abs_info: [abs_info(x.0, x.1), abs_info(y.0, y.1)],
+            ..InputDev::mouse()
+        }
+    }
+
+    /// The configuration space the driver sees after selecting `select` and `subsel`: the two
+    /// selector bytes, the size of the answer, padding, and then the answer.
+    fn config(&self, select: u8, subsel: u8) -> Vec<u8> {
+        let answer: &[u8] = match (select, subsel) {
+            (0x01, _) => self.name.as_bytes(),
+            (0x11, 1) => &self.key_bits,
+            (0x11, 2) => &self.rel_bits,
+            (0x11, 3) => &self.abs_bits,
+            (0x12, 0 | 1) => &self.abs_info[usize::from(subsel)],
+            _ => &[],
+        };
+        let mut out = vec![select, subsel, answer.len().min(128) as u8, 0, 0, 0, 0, 0];
+        out.extend_from_slice(&answer[..answer.len().min(128)]);
+        out.resize(136, 0);
+        out
+    }
+}
+
 pub struct Dev {
+    /// If this is an input device, what it says it is. (Then the queue holds empty buffers for
+    /// events, which the model never fills, so it leaves them alone.)
+    pub input: Option<InputDev>,
     pub status: u8,
     pub dev_select: u32,
     pub drv_select: u32,
@@ -103,6 +176,7 @@ pub fn make(sectors: u64, dma_size: usize) -> (Rc<RefCell<Dev>>, Bar, Shared) {
         *b = (i as u32).wrapping_mul(2654435761).to_le_bytes()[2];
     }
     let dev = Rc::new(RefCell::new(Dev {
+        input: None,
         status: 0,
         dev_select: 0,
         drv_select: 0,
@@ -173,6 +247,14 @@ impl Bar {
         }
         if o == ISR_AT {
             return 1;
+        }
+        if let Some(input) = &d.input
+            && (DEVICE_AT..DEVICE_AT + 136).contains(&o)
+        {
+            // The driver wrote the selector bytes into the plain memory; answer for them.
+            let m = self.plain.borrow();
+            let bytes = input.config(m[DEVICE_AT], m[DEVICE_AT + 1]);
+            return (0..width).fold(0, |v, i| v | (u64::from(bytes[o - DEVICE_AT + i]) << (8 * i)));
         }
         if (DEVICE_AT..DEVICE_AT + 16).contains(&o) {
             let cfg = d.capacity.to_le_bytes();
@@ -281,7 +363,7 @@ impl Dev {
 
     /// Handles everything the driver has made available.
     pub fn process(&mut self) {
-        if self.q_enable == 0 || self.status & 4 == 0 {
+        if self.q_enable == 0 || self.status & 4 == 0 || self.input.is_some() {
             return;
         }
         let dma = self.dma.clone();
@@ -398,12 +480,21 @@ pub fn virtio_cap(
 
 /// The standard layout the model BAR has, found through capabilities.
 pub fn standard_caps() -> (Cfg, Vec<Capability>) {
+    caps_with_device_length(16)
+}
+
+/// The layout of an input device, whose configuration is longer (136 bytes).
+pub fn input_caps() -> (Cfg, Vec<Capability>) {
+    caps_with_device_length(136)
+}
+
+fn caps_with_device_length(device: u32) -> (Cfg, Vec<Capability>) {
     let mut c = Cfg([0; 1024]);
     let caps = vec![
         virtio_cap(&mut c, 0x40, 1, 4, COMMON_AT as u32, 56, None),
         virtio_cap(&mut c, 0x54, 2, 4, NOTIFY_AT as u32, 8, Some(4)),
         virtio_cap(&mut c, 0x6C, 3, 4, ISR_AT as u32, 4, None),
-        virtio_cap(&mut c, 0x7C, 4, 4, DEVICE_AT as u32, 16, None),
+        virtio_cap(&mut c, 0x7C, 4, 4, DEVICE_AT as u32, device, None),
     ];
     (c, caps)
 }

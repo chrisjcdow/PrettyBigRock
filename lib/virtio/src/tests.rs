@@ -2,7 +2,8 @@
 // Copyright (C) 2026 Christopher Cameron-Dow
 
 use crate::blk::{self, Block, Done, Error, Request};
-use crate::model::{self, Bar, DMA_BUS, Dev, Lie, Shared};
+use crate::input::{self as vinput, Kind, Tablet, check_range, scale};
+use crate::model::{self, Bar, DMA_BUS, Dev, InputDev, Lie, Shared};
 use crate::queue::{self, Buffer, Queue};
 use crate::transport::{self, Window, find_layout};
 use core::cell::RefCell;
@@ -366,4 +367,167 @@ fn the_queue_checks_what_it_is_asked() {
     assert!(q.pop(&mem).unwrap().is_some());
     assert_eq!(q.pop(&mem), Err(queue::Error::NotInFlight));
     let _ = c;
+}
+
+// ---- Input devices ----
+
+type Pad = vinput::Input<Bar, Shared>;
+
+/// Starts the driver against a model input device that says it is `personality`.
+fn start_pad(personality: InputDev) -> Result<Pad, vinput::Error> {
+    let (dev, bar, dma) = model::make(0, vinput::DMA_NEEDED);
+    dev.borrow_mut().input = Some(personality);
+    let (mut cfg, caps) = model::input_caps();
+    let layout = find_layout(&mut cfg, &caps, &BAR_SIZES).map_err(vinput::Error::Transport)?;
+    Pad::start(layout, [None, None, None, None, Some(bar), None], dma, DMA_BUS, Some(0))
+}
+
+const AXIS_RANGE: (i32, i32) = (0, 32767);
+
+#[test]
+fn a_keyboard_and_a_mouse_are_what_they_were() {
+    let kb = start_pad(InputDev::keyboard()).expect("starts");
+    assert_eq!(kb.kind(), Kind::Keyboard);
+    assert_eq!((kb.name(), kb.abs_ranges()), ("QEMU Virtio Keyboard", None));
+    let mouse = start_pad(InputDev::mouse()).expect("starts");
+    assert_eq!((mouse.kind(), mouse.abs_ranges()), (Kind::Mouse, None));
+    // Something with neither keys, movement nor axes is still refused.
+    let nothing = InputDev { name: "nothing".into(), ..Default::default() };
+    assert_eq!(start_pad(nothing).err(), Some(vinput::Error::Unsupported));
+    // Only one of the two absolute axes is not a tablet: these are left as what they are.
+    let one_axis = InputDev { abs_bits: vec![0b01], ..InputDev::mouse() };
+    assert_eq!(start_pad(one_axis).map(|p| p.kind()).ok(), Some(Kind::Mouse));
+    let only_y = InputDev { abs_bits: vec![0b10], ..InputDev::keyboard() };
+    assert_eq!(start_pad(only_y).map(|p| p.kind()).ok(), Some(Kind::Keyboard));
+}
+
+#[test]
+fn a_tablet_is_recognised_with_its_ranges() {
+    // QEMU's tablet has buttons and a wheel too, and is still a tablet.
+    let t = start_pad(InputDev::tablet(AXIS_RANGE, (-100, 4000))).expect("starts");
+    assert_eq!(t.kind(), Kind::Tablet);
+    assert_eq!(t.name(), "QEMU Virtio Tablet");
+    assert_eq!(t.abs_ranges(), Some([(0, 32767), (-100, 4000)]));
+    // A tablet that is also a keyboard (it has the letter A) is still a tablet.
+    let mut both = InputDev::tablet(AXIS_RANGE, AXIS_RANGE);
+    both.key_bits = InputDev::keyboard().key_bits;
+    assert_eq!(start_pad(both).map(|p| p.kind()).ok(), Some(Kind::Tablet));
+    // The widest possible ranges are fine.
+    let wide = InputDev::tablet((i32::MIN, i32::MAX), (i32::MIN, i32::MIN + 1));
+    assert_eq!(
+        start_pad(wide).map(|p| p.abs_ranges()).ok(),
+        Some(Some([(i32::MIN, i32::MAX), (i32::MIN, i32::MIN + 1)]))
+    );
+}
+
+#[test]
+fn a_tablet_that_lies_about_its_ranges_is_refused() {
+    let refused = |t: InputDev| assert_eq!(start_pad(t).err(), Some(vinput::Error::BadRange));
+    // Empty, backwards (as signed numbers: 0xFFFF_FFFF is -1), on either axis.
+    refused(InputDev::tablet((5, 5), AXIS_RANGE));
+    refused(InputDev::tablet(AXIS_RANGE, (9, 3)));
+    refused(InputDev::tablet((0, -1), AXIS_RANGE));
+    refused(InputDev::tablet((i32::MAX, i32::MIN), AXIS_RANGE));
+    // An answer too short to hold a range, or no answer, for either axis.
+    for axis in 0..2 {
+        for len in [0, 1, 7] {
+            let mut t = InputDev::tablet(AXIS_RANGE, AXIS_RANGE);
+            t.abs_info[axis].truncate(len);
+            refused(t);
+        }
+    }
+    // Exactly 8 bytes is enough: the rest is not used.
+    let mut t = InputDev::tablet(AXIS_RANGE, AXIS_RANGE);
+    t.abs_info.iter_mut().for_each(|a| a.truncate(8));
+    assert_eq!(start_pad(t).map(|p| p.kind()).ok(), Some(Kind::Tablet));
+    // A configuration too short to hold the answer at all is a transport error, not a panic.
+    let (dev, bar, dma) = model::make(0, vinput::DMA_NEEDED);
+    dev.borrow_mut().input = Some(InputDev::tablet(AXIS_RANGE, AXIS_RANGE));
+    let (mut cfg, caps) = model::standard_caps(); // 16 bytes
+    let layout = find_layout(&mut cfg, &caps, &BAR_SIZES).unwrap();
+    let r = Pad::start(layout, [None, None, None, None, Some(bar), None], dma, DMA_BUS, Some(0));
+    assert_eq!(r.err(), Some(vinput::Error::Transport(transport::Error::OutOfRange)));
+}
+
+#[test]
+fn the_range_check_is_exact() {
+    assert_eq!(check_range(20, 0, 100), Some((0, 100)));
+    assert_eq!(check_range(8, 0, 100), Some((0, 100)));
+    assert_eq!(check_range(7, 0, 100), None);
+    assert_eq!(check_range(0, 0, 100), None);
+    assert_eq!(check_range(20, 100, 100), None);
+    assert_eq!(check_range(20, 100, 99), None);
+    assert_eq!(check_range(20, 0, u32::MAX), None, "the largest is -1, below 0");
+    assert_eq!(check_range(20, u32::MAX, 0), Some((-1, 0)));
+    assert_eq!(check_range(u8::MAX, i32::MIN as u32, i32::MAX as u32), Some((i32::MIN, i32::MAX)));
+}
+
+#[test]
+fn scaling_covers_the_whole_axis() {
+    // The ends, and outside them.
+    assert_eq!(scale(0, 0, 32767), 0);
+    assert_eq!(scale(32767, 0, 32767), 65535);
+    assert_eq!(scale(-5, 0, 32767), 0);
+    assert_eq!(scale(40000, 0, 32767), 65535);
+    assert_eq!(scale(i32::MIN, 0, 32767), 0);
+    assert_eq!(scale(i32::MAX, 0, 32767), 65535);
+    // The middle, and rounding down.
+    assert_eq!(scale(50, 0, 100), 32767); // 32767.5
+    assert_eq!(scale(1, 0, 100), 655); // 655.35
+    assert_eq!(scale(99, 0, 100), 64879); // 64879.65
+    assert_eq!(scale(1, 0, 65535), 1);
+    assert_eq!(scale(65534, 0, 65535), 65534);
+    // A range that does not start at 0.
+    assert_eq!(scale(-100, -100, 100), 0);
+    assert_eq!(scale(0, -100, 100), 32767);
+    assert_eq!(scale(100, -100, 100), 65535);
+    // A range with two values.
+    assert_eq!((scale(0, 0, 1), scale(1, 0, 1)), (0, 65535));
+    // The most extreme ranges: no overflow.
+    assert_eq!(scale(i32::MIN, i32::MIN, i32::MAX), 0);
+    assert_eq!(scale(i32::MAX, i32::MIN, i32::MAX), 65535);
+    assert_eq!(scale(-1, i32::MIN, i32::MAX), 32767);
+    assert_eq!(scale(0, i32::MIN, i32::MAX), 32767);
+    assert_eq!(scale(i32::MAX - 1, i32::MIN, i32::MAX), 65534);
+    assert_eq!(scale(i32::MIN + 1, i32::MIN, i32::MAX), 0);
+    assert_eq!(scale(0, i32::MIN, 0), 65535);
+    assert_eq!(scale(-1, i32::MIN, 0), 65534);
+    // An impossible range gives 0 instead of dividing by zero.
+    assert_eq!(scale(5, 5, 5), 0);
+    assert_eq!(scale(5, 9, 3), 0);
+    // It never goes backwards as the value rises.
+    let mut last = 0;
+    for v in (-1000..=1000).step_by(7) {
+        let now = scale(v, -900, 700);
+        assert!(now >= last, "{v}");
+        last = now;
+    }
+}
+
+#[test]
+fn a_tablet_gives_one_position_per_report() {
+    let mut t = Tablet::new([(0, 100), (0, 200)]);
+    assert_eq!(t.take(), None, "nothing yet");
+    // Only one axis seen: no position, rather than a made-up other coordinate.
+    t.abs(0, 100);
+    assert_eq!(t.take(), None);
+    t.abs(1, 100);
+    assert_eq!(t.take(), Some((65535, 32767)));
+    assert_eq!(t.take(), None, "already given");
+    // One axis moved: the other keeps its latest value.
+    t.abs(0, 0);
+    assert_eq!(t.take(), Some((0, 32767)));
+    // Other axes (pressure, say) are ignored.
+    t.abs(2, 5);
+    t.abs(0x18, 5);
+    assert_eq!(t.take(), None);
+    // Several changes in one report give only the last.
+    t.abs(0, 10);
+    t.abs(0, 20);
+    t.abs(1, 200);
+    assert_eq!(t.take(), Some((13107, 65535)));
+    // Values outside the range are held at its ends.
+    t.abs(0, -50);
+    t.abs(1, 9999);
+    assert_eq!(t.take(), Some((0, 65535)));
 }

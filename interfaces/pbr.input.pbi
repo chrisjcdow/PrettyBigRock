@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-/// Keyboards and mice (docs/design/0011-device-manager-and-drivers.md, section 8). Served by
+/// Keyboards, mice and tablets (docs/design/0011-device-manager-and-drivers.md, section 8;
+/// tablets: note 0021, section 7). Served by
 /// input drivers.
 ///
 /// Events reach the client through a shared ring made with `granite::ring`, each entry 16 bytes,
@@ -16,6 +17,8 @@ enum InputKind {
     Mouse @2,
     /// Sends both: the PS/2 controller is one device with a keyboard and a mouse on it.
     KeyboardAndMouse @3,
+    /// An absolute pointer: it says where it is, not how far it moved. A touch screen is one.
+    Tablet @4,
 }
 
 /// Size of one event in the ring.
@@ -27,6 +30,12 @@ const EVENT_KEY: u32 = 1;
 const EVENT_MOVE: u32 = 2;
 const EVENT_BUTTON: u32 = 3;
 const EVENT_SCROLL: u32 = 4;
+/// An absolute pointer's position (a `Tablet`'s). `code` is 0. Each event is only 16 bytes, so
+/// `value` carries both coordinates: x in its low 16 bits and y in its high 16 bits, each from
+/// 0 to 65535 across the device's whole surface (read `value` as unsigned: x is `value & 0xFFFF`
+/// and y is `(value >> 16) & 0xFFFF`). A driver posts one event per report, so x and y always
+/// belong together.
+const EVENT_POSITION: u32 = 5;
 
 /// Values of key and button events (scroll and move events carry a signed amount).
 const VALUE_RELEASED: u32 = 0;

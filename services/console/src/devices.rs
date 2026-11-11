@@ -489,13 +489,13 @@ impl Devices {
     }
 
     /// Opens input device `d`, and if it is a keyboard (or one that is a mouse as well), starts
-    /// a thread to read it. A mouse is put on the list to leave alone: nothing is wrong, the
-    /// console has no use for it.
+    /// a thread to read it. A mouse or a tablet is put on the list to leave alone: nothing is
+    /// wrong, the console has no use for a pointer.
     fn open_keyboard(&mut self, d: &DeviceInfo) -> Result<(), Trouble> {
         let mut client = input::Client::new(self.endpoint(d.id)?);
         client.set_timeout_ms(CALL_MS);
         let info = client.info().map_err(|e| trouble("asking what it is", e))?;
-        if matches!(info.kind, InputKind::Mouse) {
+        if matches!(info.kind, InputKind::Mouse | InputKind::Tablet) {
             self.ignored.push(d.id);
             return Ok(());
         }
