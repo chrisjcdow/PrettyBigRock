@@ -230,5 +230,12 @@ is tested: the display server learns which screen a tablet belongs to from its s
 - Keyboard lights (Caps Lock, Num Lock).
 
 ## Changes
+- 11 November 2026, built ahead of the rest (M6 stage 2): section 7, tablets in the virtio
+  driver. In `pbr.input`'s 16-byte events (the drivers' rings) a position can't have the
+  second field section 2's table gives the input service's events, so `EVENT_POSITION`
+  carries both there: x in the low 16 bits of `value`, y in the high 16. The driver posts one
+  position for each report from the device, and posts it before a button or wheel event of
+  the same report, so a click arrives after the place it happened at. A tablet whose axis
+  range is empty or backwards isn't started.
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).

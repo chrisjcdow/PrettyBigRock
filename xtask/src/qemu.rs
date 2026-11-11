@@ -431,6 +431,8 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     let mut qmp = Qmp::new(qmp_path);
     let mut injected = [false; STAGES.len()];
     let mut typed = 0;
+    // How many tablets have been pointed with.
+    let mut tablets = 0u32;
     // The pictures already looked at for the display self-test: (picture, device).
     let mut looked: Vec<(u32, String)> = Vec::new();
     let result = loop {
@@ -462,6 +464,20 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
                     ));
                 }
             }
+        }
+        // The tablets: the guest asks for each in turn (they are numbered in the order they
+        // are on the command line), and gets a position of its own and a click.
+        if tablets < 2 && text.contains(&format!("Device self-test: inject tablet {tablets}")) {
+            eprintln!("  (pointing with tablet {tablets})");
+            // A tablet tied to a screen is reached through that screen; one that isn't gets
+            // whatever is sent to no screen in particular.
+            let screen = matches!(cfg.screens, Screens::TwoVirtioGpu).then_some(tablets);
+            if let Err(e) = qmp.point(screen, tablets) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("sending input to QEMU: {e}\n--- serial output ---\n{text}"));
+            }
+            tablets += 1;
         }
         // The display self-test: the guest says which picture every screen of a display
         // shows; look at each, and press a key to say so (note 0020, section 7).
@@ -673,6 +689,11 @@ const STAGES: [Stage; 4] = [
     Stage { marker: "Device self-test: inject once", virtio: true, what: What::Flood(1) },
     Stage { marker: "Device self-test: inject ps2", virtio: false, what: What::Typing },
 ];
+
+/// Where the first tablet is pointed, in QEMU's units (0 to 32767 each way); the second gets
+/// twice this. `services/root/src/drivertest.rs` expects the same numbers.
+const TABLET_X: u32 = 4000;
+const TABLET_Y: u32 = 3000;
 
 /// The memory every test machine has, in MiB. It was 512 until M6: the services' budgets (a
 /// fixed share of memory each, note 0006, section 9) then grew by a display driver's buffers
@@ -938,6 +959,32 @@ impl Qmp {
                 self.send(true, &[key("shift", false)])?;
                 pause();
             }
+        }
+        Ok(())
+    }
+
+    /// Points with tablet `n` and clicks: at ([`TABLET_X`], [`TABLET_Y`]) times `n + 1`, of
+    /// the 32767 QEMU's tablets measure each way, so that every tablet gets a place of its
+    /// own and one tablet's events can't be taken for another's. `screen` is the screen of
+    /// the second display device the tablet is tied to, if it is tied to one.
+    fn point(&mut self, screen: Option<u32>, n: u32) -> Result<(), String> {
+        self.connect()?;
+        let target = match screen {
+            Some(head) => format!(r#""device":"gpu2","head":{head},"#),
+            None => String::new(),
+        };
+        let abs = |axis: &str, v: u32| {
+            format!(r#"{{"type":"abs","data":{{"axis":"{axis}","value":{v}}}}}"#)
+        };
+        let button =
+            |down: bool| format!(r#"{{"type":"btn","data":{{"button":"left","down":{down}}}}}"#);
+        let (x, y) = (TABLET_X * (n + 1), TABLET_Y * (n + 1));
+        for events in [vec![abs("x", x), abs("y", y)], vec![button(true)], vec![button(false)]] {
+            self.command(&format!(
+                r#"{{"execute":"input-send-event","arguments":{{{target}"events":[{}]}}}}"#,
+                events.join(",")
+            ))?;
+            std::thread::sleep(Duration::from_millis(100));
         }
         Ok(())
     }

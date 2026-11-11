@@ -112,6 +112,23 @@ pub fn run(d: &Devmgr, inputs: &Inputs) -> Result<String, String> {
         done.push("the screens");
     }
 
+    // The tablets (note 0021, section 7), in the order the device manager found them, which
+    // is the order of the screens they are tied to where they are tied to one. The runner
+    // points with each at a place of its own, so a tablet that got another's events, or a
+    // position scaled wrongly, is caught.
+    let tablets: Vec<usize> =
+        (0..pads.len()).filter(|i| pads[*i].kind == InputKind::Tablet).collect();
+    for (n, pad) in tablets.iter().enumerate() {
+        granite::println!("Device self-test: inject tablet {n}");
+        tablet_events(&mut pads[*pad], n as u32)?;
+    }
+    for pad in &tablets {
+        pads[*pad].quiet("a tablet nobody pointed with")?;
+    }
+    if !tablets.is_empty() {
+        done.push("tablets");
+    }
+
     granite::println!("Device self-test: inject flood");
     let sent = pads[mouse].flood()?;
     granite::println!("Device self-test: inject once");
@@ -150,13 +167,14 @@ fn scan(d: &Devmgr, m: &Machine) -> Result<Vec<DeviceInfo>, String> {
     let x86 = cfg!(target_arch = "x86_64");
     // From M6 some configurations also have QEMU's tablets (note 0026, section 6), which are
     // virtio input devices too. The self-test image is the same for every configuration, so
-    // how many there are is told from their names; they come on top of the keyboard and mouse.
+    // how many there are is told from the kind each device says it is; they come on top of the
+    // keyboard and mouse.
     let mut tablets = 0;
     for x in list.iter().filter(|x| x.kind == DeviceClass::Input && x.name.starts_with("virtio")) {
         let ep = d.client.open(x.id).map_err(|e| format!("opening {}: {e}", x.name))?;
         let info = input::Client::new(Endpoint(ep)).info();
         let info = info.map_err(|e| format!("{}: info: {e}", x.name))?;
-        if info.name.contains("Tablet") {
+        if info.kind == InputKind::Tablet {
             tablets += 1;
         }
     }
@@ -181,6 +199,31 @@ fn scan(d: &Devmgr, m: &Machine) -> Result<Vec<DeviceInfo>, String> {
         return Err(format!("devices nobody expected: {list:?}"));
     }
     Ok(list)
+}
+
+/// Where the runner points with the first tablet, of the 32767 QEMU's tablets measure each
+/// way (`xtask/src/qemu.rs` has the same numbers); tablet `n` gets `n + 1` times this.
+const TABLET_AT: (u32, u32) = (4000, 3000);
+
+/// Expects from tablet `n`: one position, where the runner pointed, scaled to 0 to 65535 each
+/// way; then the left button pressed and released there.
+fn tablet_events(p: &mut Pad, n: u32) -> Result<(), String> {
+    let who = format!("tablet {n}");
+    // The driver scales a place on the tablet to 0 to 65535, rounding down.
+    let scaled = |v: u32| v * (n + 1) * 65535 / 32767;
+    let want = scaled(TABLET_AT.0) | (scaled(TABLET_AT.1) << 16);
+    let events = p.take(3, &who)?;
+    let got: Vec<(u32, u32, u32)> =
+        events.iter().map(|e| (u32::from(e.kind), u32::from(e.code), e.value as u32)).collect();
+    let expected = [
+        (input::EVENT_POSITION, 0, want),
+        (input::EVENT_BUTTON, input::BUTTON_LEFT, input::VALUE_PRESSED),
+        (input::EVENT_BUTTON, input::BUTTON_LEFT, input::VALUE_RELEASED),
+    ];
+    if got != expected {
+        return Err(format!("{who} sent {got:x?}, not {expected:x?}"));
+    }
+    Ok(())
 }
 
 /// Writes to COM2, then loops a byte back through the chip.
