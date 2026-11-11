@@ -28,8 +28,8 @@ impl Vnc {
     /// Connects to the VNC server listening on the Unix socket `path` and gets as far as being
     /// allowed to send messages.
     pub fn connect(path: &Path) -> Result<Vnc, String> {
-        let stream =
-            UnixStream::connect(path).map_err(|e| format!("VNC: connecting to {}: {e}", path.display()))?;
+        let stream = UnixStream::connect(path)
+            .map_err(|e| format!("VNC: connecting to {}: {e}", path.display()))?;
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
         let mut vnc = Vnc { stream };

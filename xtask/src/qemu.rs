@@ -40,17 +40,16 @@ pub struct Config {
     pub screens: Screens,
 }
 
-/// The screens a configuration has. Every configuration keeps the firmware's screen (QEMU's
-/// standard VGA, or `ramfb` on ARM64), which the kernel and the M5 console draw on until the
-/// display drivers of M6 stage 2 exist; `TwoVirtioGpu` adds a virtio-gpu with two screens and
-/// a tablet (an absolute pointer) tied to each.
+/// The screens a configuration has (note 0026, section 6): the firmware's (QEMU's standard
+/// VGA, or `ramfb` on ARM64), which the framebuffer driver serves, or a virtio-gpu's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screens {
     /// Only the firmware's screen, with no tablet: the PS/2 mouse is the pointer to test.
     Firmware,
     /// The firmware's screen, and a tablet (not tied to it; see [`command`]).
     FirmwareWithTablet,
-    /// The firmware's screen, and a virtio-gpu with two screens, a tablet on each.
+    /// No firmware screen: a virtio-gpu with two screens, a tablet tied to each. Nothing is
+    /// drawn until its driver runs, so the kernel's own messages are only on the serial port.
     TwoVirtioGpu,
 }
 
@@ -67,7 +66,7 @@ pub const TESTS: &[Config] = &[
             "on x86-64, started by UEFI.",
             "XSAVE, SMEP, SMAP",
             "Cores:         4 found, 4 running",
-            "Screens:       1 (",
+            "Screens:       0",
             "Randomness:    seeded",
             "Self-test passed",
             "Program self-test passed",
@@ -294,7 +293,11 @@ pub fn check_shell(work: &Path) -> Result<(), String> {
 }
 
 /// The QEMU command for a configuration, with the firmware found on this computer.
-fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
+///
+/// `headless` is a boot test: nobody is looking, so on the configurations with a virtio-gpu
+/// the test runner stands in for the viewer (see [`Screens::TwoVirtioGpu`]).
+fn command(cfg: &Config, image: &Path, work: &Path, headless: bool) -> Result<Command, String> {
+    let firmware_screen = !matches!(cfg.screens, Screens::TwoVirtioGpu);
     let drive = format!("format=raw,file={},snapshot=on", image.display());
     let mut cmd;
     if cfg.arch == "x86_64" {
@@ -330,7 +333,10 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
         // The screen has a name so that the keyboard and mouse below can be tied to it: the
         // test runner then sends them keys without the PS/2 pair getting any (and the other
         // way round).
-        cmd.args(["-vga", "none", "-device", "VGA,id=gpu"]);
+        cmd.args(["-vga", "none"]);
+        if firmware_screen {
+            cmd.args(["-device", "VGA,id=gpu"]);
+        }
     } else {
         cmd = Command::new("qemu-system-aarch64");
         let machine = if cfg.el2 { "virt,virtualization=on" } else { "virt" };
@@ -344,7 +350,10 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
         ])
         .ok_or("can't find UEFI for ARM64 QEMU: install the `qemu-efi-aarch64` package")?;
         cmd.arg("-bios").arg(fw);
-        cmd.args(["-device", "ramfb,id=gpu", "-device", "qemu-xhci", "-device", "usb-kbd"]);
+        if firmware_screen {
+            cmd.args(["-device", "ramfb,id=gpu"]);
+        }
+        cmd.args(["-device", "qemu-xhci", "-device", "usb-kbd"]);
         cmd.arg("-drive").arg(format!("if=none,id=disk,{drive}"));
         cmd.args(["-device", "virtio-blk-pci,drive=disk", "-device", "virtio-rng-pci"]);
     }
@@ -367,21 +376,40 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     let classic = classic_copy(cfg, work)?;
     cmd.arg("-drive").arg(format!("if=none,id=classic,format=raw,file={}", classic.display()));
     cmd.args(["-device", "virtio-blk-pci,drive=classic"]);
-    cmd.args(["-device", "virtio-keyboard-pci,id=vkbd,display=gpu"]);
-    cmd.args(["-device", "virtio-mouse-pci,id=vmouse,display=gpu"]);
-    // M6's screens and tablets (note 0026, section 6), after the mouse: devices are found in
-    // the order they are given, and M4's driver test uses the first virtio pointer it finds.
-    // QEMU ties a tablet to one screen (`display` and `head`), as a touch screen is.
+    // The virtio keyboard and mouse are tied to a screen, so that the runner can send them
+    // keys without the PS/2 pair getting any (and the other way round): see [`input_screen`].
+    // The devices come in this order because devices are found in the order they are given,
+    // and M4's driver test uses the first virtio pointer it finds.
+    let (device, head) = input_screen(cfg, headless);
+    if matches!(cfg.screens, Screens::TwoVirtioGpu) {
+        // The only screens there are (note 0020): a virtio-gpu with two outputs. In a boot
+        // test it has a third, which never has anything plugged in: it is there for the
+        // keyboard and mouse to be tied to, because QEMU sends a screen's clicks to the last
+        // pointer tied to it, and the first two screens each have a tablet.
+        let outputs = if headless { 3 } else { 2 };
+        cmd.arg("-device").arg(format!("virtio-gpu-pci,id=gpu2,max_outputs={outputs}"));
+    }
+    if firmware_screen || headless {
+        cmd.arg("-device").arg(format!("virtio-keyboard-pci,id=vkbd,display={device},head={head}"));
+        cmd.arg("-device").arg(format!("virtio-mouse-pci,id=vmouse,display={device},head={head}"));
+    } else {
+        cmd.args([
+            "-device",
+            "virtio-keyboard-pci,id=vkbd",
+            "-device",
+            "virtio-mouse-pci,id=vmouse",
+        ]);
+    }
+    // M6's tablets (note 0026, section 6). QEMU ties a tablet to one screen (`display` and
+    // `head`), as a touch screen is.
     match cfg.screens {
         Screens::Firmware => {}
         Screens::FirmwareWithTablet => {
-            // Not tied to the screen: the virtio mouse is, and QEMU sends a screen's buttons to
-            // the last device tied to it, which would take them from the mouse M4's test uses.
-            // An untied tablet gets only what is sent to no particular screen.
+            // Not tied to the screen: the virtio mouse is, and its clicks would go to the
+            // tablet instead. An untied tablet gets only what is sent to no particular screen.
             cmd.args(["-device", "virtio-tablet-pci,id=tablet0"]);
         }
         Screens::TwoVirtioGpu => {
-            cmd.args(["-device", "virtio-gpu-pci,id=gpu2,max_outputs=2"]);
             cmd.args(["-device", "virtio-tablet-pci,id=tablet0,display=gpu2,head=0"]);
             cmd.args(["-device", "virtio-tablet-pci,id=tablet1,display=gpu2,head=1"]);
         }
@@ -390,9 +418,19 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     Ok(cmd)
 }
 
+/// The QEMU screen the virtio keyboard and mouse are tied to, and through which the runner
+/// reaches them: its device's name and which of its outputs.
+fn input_screen(cfg: &Config, headless: bool) -> (&'static str, u32) {
+    match cfg.screens {
+        Screens::TwoVirtioGpu if headless => ("gpu2", 2),
+        Screens::TwoVirtioGpu => ("gpu2", 0),
+        _ => ("gpu", 0),
+    }
+}
+
 /// Runs one configuration in a window, for a person to watch.
 pub fn run(cfg: &Config, image: &Path, work: &Path) -> Result<(), String> {
-    let mut cmd = command(cfg, image, work)?;
+    let mut cmd = command(cfg, image, work, false)?;
     cmd.args(["-serial", "stdio"]);
     let st = cmd.status().map_err(|e| format!("couldn't start QEMU: {e}"))?;
     if st.success() { Ok(()) } else { Err("QEMU failed".into()) }
@@ -408,8 +446,16 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
         if cfg.el2 { "-el2" } else { "" }
     ));
     let _ = fs::remove_file(&log);
-    let mut cmd = command(cfg, image, work)?;
+    let mut cmd = command(cfg, image, work, true)?;
     cmd.args(["-display", "none", "-monitor", "none"]);
+    // The second screen of a virtio-gpu is plugged in, and later out and in again, by the
+    // runner pretending to be a viewer of it (`vnc.rs` says why and how).
+    let vnc_path = work.join(format!("vnc-{}{}.sock", cfg.arch, if cfg.el2 { "-el2" } else { "" }));
+    let _ = fs::remove_file(&vnc_path);
+    let two_screens = matches!(cfg.screens, Screens::TwoVirtioGpu);
+    if two_screens {
+        cmd.arg("-vnc").arg(format!("unix:{},display=gpu2,head=1", vnc_path.display()));
+    }
     cmd.arg("-serial").arg(format!("file:{}", log.display()));
     // The second serial port (x86-64: COM2) goes to a file the runner reads afterwards.
     let com2 = work.join(format!("com2-{}.txt", if cfg.bios { "bios" } else { "uefi" }));
@@ -428,7 +474,21 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("couldn't start QEMU: {e}"))?;
     let start = Instant::now();
-    let mut qmp = Qmp::new(qmp_path);
+    let mut qmp = Qmp::new(qmp_path, input_screen(cfg, true));
+    let mut vnc = None;
+    if two_screens {
+        // Plug the second screen in before the system starts looking.
+        match plug(&vnc_path) {
+            Ok(v) => vnc = Some(v),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("plugging in the second screen: {e}"));
+            }
+        }
+    }
+    // The guest's requests to unplug the second screen and plug it in again, done so far.
+    let mut plugs = [false; 2];
     let mut injected = [false; STAGES.len()];
     let mut typed = 0;
     // How many tablets have been pointed with.
@@ -478,6 +538,28 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
                 return Err(format!("sending input to QEMU: {e}\n--- serial output ---\n{text}"));
             }
             tablets += 1;
+        }
+        // The display self-test asks for the second screen to be unplugged, then plugged in.
+        for (i, (marker, size)) in [
+            ("Device self-test: unplug screen 1", (0, 0)),
+            ("Device self-test: plug screen 1", SECOND_SCREEN),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if !plugs[i] && text.contains(marker) {
+                plugs[i] = true;
+                eprintln!("  ({})", marker.trim_start_matches("Device self-test: "));
+                let done = match vnc.as_mut() {
+                    Some(v) => v.set_size(size.0, size.1),
+                    None => Err("this configuration has no second screen".into()),
+                };
+                if let Err(e) = done {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("{marker}: {e}\n--- serial output ---\n{text}"));
+                }
+            }
         }
         // The display self-test: the guest says which picture every screen of a display
         // shows; look at each, and press a key to say so (note 0020, section 7).
@@ -690,6 +772,26 @@ const STAGES: [Stage; 4] = [
     Stage { marker: "Device self-test: inject ps2", virtio: false, what: What::Typing },
 ];
 
+/// The size the runner gives the second screen of a virtio-gpu (the first is QEMU's own
+/// choice, 1280 by 800): different, so that a picture sent to the wrong screen doesn't fit.
+const SECOND_SCREEN: (u16, u16) = (1024, 768);
+
+/// Connects to QEMU's VNC server at `path` (waiting for QEMU to make it) and plugs the screen
+/// it is for in.
+fn plug(path: &Path) -> Result<crate::vnc::Vnc, String> {
+    let end = Instant::now() + Duration::from_secs(20);
+    loop {
+        match crate::vnc::Vnc::connect(path) {
+            Ok(mut v) => {
+                v.set_size(SECOND_SCREEN.0, SECOND_SCREEN.1)?;
+                return Ok(v);
+            }
+            Err(e) if Instant::now() > end => return Err(e),
+            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+}
+
 /// Where the first tablet is pointed, in QEMU's units (0 to 32767 each way); the second gets
 /// twice this. `services/root/src/drivertest.rs` expects the same numbers.
 const TABLET_X: u32 = 4000;
@@ -704,7 +806,7 @@ const MEMORY_MIB: &str = "1024";
 /// The first picture the guest has asked the runner to look at that it hasn't yet: the
 /// picture's number and the display device's name.
 fn next_look(text: &str, looked: &[(u32, String)]) -> Option<(u32, String)> {
-    (1..=3)
+    (1..=4)
         .flat_map(|n| pictures::asked(text, n).into_iter().map(move |d| (n, d)))
         .find(|ask| !looked.contains(ask))
 }
@@ -785,11 +887,13 @@ struct Qmp {
     )>,
     /// The events QEMU has sent so far (it sends them between answers), one JSON line each.
     events: Vec<String>,
+    /// The screen the virtio keyboard and mouse are tied to ([`input_screen`]).
+    input: (&'static str, u32),
 }
 
 impl Qmp {
-    fn new(path: PathBuf) -> Qmp {
-        Qmp { path, conn: None, events: Vec::new() }
+    fn new(path: PathBuf, input: (&'static str, u32)) -> Qmp {
+        Qmp { path, conn: None, events: Vec::new(), input }
     }
 
     fn connect(&mut self) -> Result<(), String> {
@@ -900,7 +1004,9 @@ impl Qmp {
     }
 
     fn send(&mut self, virtio: bool, events: &[String]) -> Result<(), String> {
-        let target = if virtio { r#""device":"gpu","head":0,"# } else { "" };
+        let (device, head) = self.input;
+        let target =
+            if virtio { format!(r#""device":"{device}","head":{head},"#) } else { String::new() };
         let json = format!(
             r#"{{"execute":"input-send-event","arguments":{{{target}"events":[{}]}}}}"#,
             events.join(",")
