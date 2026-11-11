@@ -15,6 +15,7 @@ members = [
     "drivers/ps2",
     "drivers/serial16550",
     "drivers/virtio-blk",
+    "drivers/virtio-gpu",
     "drivers/virtio-input",
     "kernel",
     "lib/archive",
@@ -99,6 +100,9 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.pbr-driver-framebuffer]
+opt-level = 2
+
+[profile.dev.package.pbr-driver-virtio-gpu]
 opt-level = 2
 
 [profile.release]

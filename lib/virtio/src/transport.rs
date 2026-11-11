@@ -421,6 +421,13 @@ impl<R: Registers> DeviceConfig<'_, R> {
         Ok(())
     }
 
+    /// Writes 32 bits (a register the driver acknowledges events in, such as the display
+    /// device's `events_clear`).
+    pub fn write32(&self, offset: u32, value: u32) -> Result<(), Error> {
+        self.bar.write32(self.at(offset, 4)?, value);
+        Ok(())
+    }
+
     /// Reads 8 bits.
     pub fn read8(&self, offset: u32) -> Result<u8, Error> {
         Ok(self.bar.read8(self.at(offset, 1)?))

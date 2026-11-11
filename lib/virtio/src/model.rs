@@ -6,6 +6,7 @@
 //! transport and processes the queue the driver set up, reading and writing the driver's DMA
 //! memory the way hardware would. It can be told to lie.
 
+use crate::model_gpu::{GpuLie, GpuModel};
 use core::cell::RefCell;
 use pbr_devices::pci::{Capability, Config, cap};
 use pbr_devices::regs::{Heap, Registers};
@@ -139,6 +140,8 @@ pub struct Dev {
     pub requests: u32,
     pub flushes: u32,
     pub dma: Rc<Heap>,
+    /// Set for a GPU: the device then has a GPU's configuration and processes GPU commands.
+    pub gpu: Option<GpuModel>,
 }
 
 pub struct Shared(pub Rc<Heap>);
@@ -170,6 +173,17 @@ pub struct Bar {
 }
 
 pub fn make(sectors: u64, dma_size: usize) -> (Rc<RefCell<Dev>>, Bar, Shared) {
+    build(sectors, dma_size, None)
+}
+
+/// A GPU with `scanouts` scanouts, offering `VERSION_1` and `EDID`.
+pub fn make_gpu(scanouts: u32, dma_size: usize) -> (Rc<RefCell<Dev>>, Bar, Shared) {
+    let (dev, bar, dma) = build(0, dma_size, Some(GpuModel::new(scanouts)));
+    dev.borrow_mut().dev_features = (1 << 32) | crate::gpu::F_EDID;
+    (dev, bar, dma)
+}
+
+fn build(sectors: u64, dma_size: usize, gpu: Option<GpuModel>) -> (Rc<RefCell<Dev>>, Bar, Shared) {
     let dma = Rc::new(Heap::new(dma_size));
     let mut disk = vec![0u8; (sectors * 512) as usize];
     for (i, b) in disk.iter_mut().enumerate() {
@@ -202,6 +216,7 @@ pub fn make(sectors: u64, dma_size: usize) -> (Rc<RefCell<Dev>>, Bar, Shared) {
         requests: 0,
         flushes: 0,
         dma: dma.clone(),
+        gpu,
     }));
     let bar = Bar { dev: dev.clone(), plain: RefCell::new(vec![0; BAR_SIZE]) };
     (dev, bar, Shared(dma))
@@ -222,7 +237,13 @@ impl Bar {
                 (8, 4) => u64::from(d.drv_select),
                 (12, 4) => 0,
                 (16, 2) => u64::from(d.config_vector),
-                (18, 2) => 1,
+                (18, 2) => {
+                    if d.gpu.is_some() {
+                        2
+                    } else {
+                        1
+                    }
+                }
                 (20, 1) => u64::from(d.status),
                 (21, 1) => u64::from(d.generation),
                 (22, 2) => u64::from(d.queue_select),
@@ -257,9 +278,11 @@ impl Bar {
             return (0..width).fold(0, |v, i| v | (u64::from(bytes[o - DEVICE_AT + i]) << (8 * i)));
         }
         if (DEVICE_AT..DEVICE_AT + 16).contains(&o) {
-            let cfg = d.capacity.to_le_bytes();
             let mut bytes = [0u8; 16];
-            bytes[..8].copy_from_slice(&cfg);
+            match &d.gpu {
+                Some(g) => bytes = g.config(),
+                None => bytes[..8].copy_from_slice(&d.capacity.to_le_bytes()),
+            }
             let mut v = 0u64;
             for i in 0..width {
                 v |= u64::from(bytes[o - DEVICE_AT + i]) << (8 * i);
@@ -317,6 +340,14 @@ impl Bar {
         }
         if o == NOTIFY_AT {
             self.dev.borrow_mut().process();
+            return;
+        }
+        // A GPU's `events_clear`: the bits written are cleared from `events_read`.
+        if o == DEVICE_AT + 4
+            && width == 4
+            && let Some(g) = self.dev.borrow_mut().gpu.as_mut()
+        {
+            g.events_read &= !(v as u32);
             return;
         }
         let mut m = self.plain.borrow_mut();
@@ -387,41 +418,58 @@ impl Dev {
                 }
                 at = next;
             }
-            let hdr = self.off(chain[0].0);
-            let (kind, sector) = (dma.read32(hdr), dma.read64(hdr + 8));
-            let (status_addr, _, _) = *chain.last().unwrap();
-            let mut written = 1u32;
-            let mut status = 0u8;
-            self.requests += 1;
-            match kind {
-                0 | 1 => {
-                    let (daddr, dlen, _) = chain[1];
-                    let start = sector as usize * 512;
-                    if start + dlen as usize > self.disk.len() {
-                        status = 1;
-                    } else if kind == 0 {
-                        dma.write_bytes(self.off(daddr), &self.disk[start..start + dlen as usize]);
-                        written += dlen;
-                    } else {
-                        let mut buf = vec![0u8; dlen as usize];
-                        dma.read_bytes(self.off(daddr), &mut buf);
-                        self.disk[start..start + dlen as usize].copy_from_slice(&buf);
-                    }
-                }
-                4 => self.flushes += 1,
-                _ => status = 2,
-            }
             let writable: u32 = chain.iter().filter(|c| c.2 & 2 != 0).map(|c| c.1).sum();
             let mut id = u32::from(head);
+            let mut written;
+            // A block device's status byte is written after the lies are told; a GPU has none.
+            let mut status_byte = None;
+            if self.gpu.is_some() {
+                self.requests += 1;
+                written = self.gpu_request(&chain);
+            } else {
+                let hdr = self.off(chain[0].0);
+                let (kind, sector) = (dma.read32(hdr), dma.read64(hdr + 8));
+                let (status_addr, _, _) = *chain.last().unwrap();
+                written = 1u32;
+                let mut status = 0u8;
+                self.requests += 1;
+                match kind {
+                    0 | 1 => {
+                        let (daddr, dlen, _) = chain[1];
+                        let start = sector as usize * 512;
+                        if start + dlen as usize > self.disk.len() {
+                            status = 1;
+                        } else if kind == 0 {
+                            dma.write_bytes(
+                                self.off(daddr),
+                                &self.disk[start..start + dlen as usize],
+                            );
+                            written += dlen;
+                        } else {
+                            let mut buf = vec![0u8; dlen as usize];
+                            dma.read_bytes(self.off(daddr), &mut buf);
+                            self.disk[start..start + dlen as usize].copy_from_slice(&buf);
+                        }
+                    }
+                    4 => self.flushes += 1,
+                    _ => status = 2,
+                }
+                match self.lie {
+                    Lie::BadStatus => status = 9,
+                    Lie::ShortRead if kind == 0 => written = 1,
+                    _ => {}
+                }
+                status_byte = Some((status_addr, status));
+            }
             match self.lie {
-                Lie::BadStatus => status = 9,
                 Lie::LongLength => written = writable + 1000,
                 Lie::BadId => id = u32::from(size) + 5,
                 Lie::Stranger => id = u32::from(head.wrapping_add(7) % size),
-                Lie::ShortRead if kind == 0 => written = 1,
                 _ => {}
             }
-            dma.write8(self.off(status_addr), status);
+            if let Some((addr, status)) = status_byte {
+                dma.write8(self.off(addr), status);
+            }
             let push = |this: &mut Dev, id: u32, len: u32| {
                 let slot = usize::from(this.used_idx % size);
                 dma.write32(used + 4 + 8 * slot, id);
@@ -440,6 +488,27 @@ impl Dev {
             }
             dma.write16(used + 2, self.used_idx);
         }
+    }
+}
+
+impl Dev {
+    /// Runs a GPU command: the request is the first buffer of the chain, the response goes in
+    /// the second. Returns how many bytes of response were written.
+    fn gpu_request(&mut self, chain: &[(u64, u32, u16)]) -> u32 {
+        let dma = self.dma.clone();
+        let (request_at, request_len, _) = chain[0];
+        let (response_at, response_len, _) = chain[1];
+        let mut request = vec![0u8; request_len as usize];
+        dma.read_bytes(self.off(request_at), &mut request);
+        let gpu = self.gpu.as_mut().expect("a GPU");
+        let mut response = gpu.execute(&request);
+        if gpu.lie == GpuLie::Silent {
+            // Claims the whole header, having written none of it.
+            return 24;
+        }
+        response.truncate(response_len as usize);
+        dma.write_bytes(self.off(response_at), &response);
+        response.len() as u32
     }
 }
 

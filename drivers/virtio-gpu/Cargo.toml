@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-driver-virtio-gpu"
+description = "The virtio GPU display driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "virtio-gpu"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-granite = { path = "../../lib/granite" }
+pbr-driver = { path = "../../lib/driver" }
+pbr-devices = { path = "../../lib/devices" }
+pbr-virtio = { path = "../../lib/virtio" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+
+[lints]
+workspace = true

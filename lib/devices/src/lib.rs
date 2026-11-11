@@ -15,6 +15,7 @@
 extern crate alloc;
 
 pub mod display;
+pub mod edid;
 pub mod keys;
 pub mod machine;
 pub mod manifest;
@@ -22,6 +23,7 @@ pub mod msix;
 pub mod pci;
 pub mod record;
 pub mod regs;
+pub mod screens;
 
 /// A small deterministic random number generator for tests (xorshift64*).
 #[cfg(test)]

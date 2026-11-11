@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+
+# The virtio GPU display driver (docs/design/0020-screens-and-virtio-gpu.md).
+class display
+match pci 1af4:1050
+budget 4M
+dma 256K
+buffers 4 10M
+irqs 1

@@ -30,7 +30,6 @@ mod pictures;
 mod qemu;
 mod symbols;
 mod testdisks;
-#[allow(dead_code)]
 mod vnc;
 
 /// A processor family PrettyBigRock is built for.
@@ -84,6 +83,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-driver-ps2", "ps2", "drivers/ps2"),
     ("pbr-driver-serial16550", "serial16550", "drivers/serial16550"),
     ("pbr-driver-virtio-blk", "virtio-blk", "drivers/virtio-blk"),
+    ("pbr-driver-virtio-gpu", "virtio-gpu", "drivers/virtio-gpu"),
     ("pbr-driver-virtio-input", "virtio-input", "drivers/virtio-input"),
     ("pbr-test-echo", "echo", "echo"),
     ("pbr-test-probe", "probe", "probe"),
@@ -100,6 +100,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("drivers/ps2.drv", "drivers/ps2.drv"),
     ("drivers/serial16550.drv", "drivers/serial16550.drv"),
     ("drivers/virtio-blk.drv", "drivers/virtio-blk.drv"),
+    ("drivers/virtio-gpu.drv", "drivers/virtio-gpu.drv"),
     ("drivers/virtio-input.drv", "drivers/virtio-input.drv"),
     // Apps' manifests sit beside them too (note 0017, section 4).
     ("apps/sandboxed.app", "tests/programs/sandboxed/sandboxed.app"),
@@ -115,6 +116,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-driver-ps2",
     "pbr-driver-serial16550",
     "pbr-driver-virtio-blk",
+    "pbr-driver-virtio-gpu",
     "pbr-driver-virtio-input",
     "pbr-fat-server",
     "pbr-files",
