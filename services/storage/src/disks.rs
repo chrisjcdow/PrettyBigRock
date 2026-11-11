@@ -65,6 +65,17 @@ fn connection_lost<E>(e: &CallError<E>) -> bool {
     matches!(e, CallError::Call(Error::PeerGone | Error::Revoked | Error::BadHandle))
 }
 
+/// Opening a device failed in a way that may pass. Only a driver the device manager has given
+/// up on (`Disabled`) is final. Everything else is tried again until the time allowed runs
+/// out: a driver still starting (`NotReady`), a device a restarted device manager hasn't
+/// listed yet (`NoSuchDevice`), and any failure of the call itself. Once in 120 boots of the
+/// supervision test, a call made just as the device manager was restarted failed some other
+/// way (which wasn't recorded; it is printed now), and giving up at once cost the disk, and
+/// with it the system volume, for good.
+fn worth_another_try(e: &CallError<DevicesError>) -> bool {
+    !matches!(e, CallError::Service(DevicesError::Disabled))
+}
+
 impl Disks {
     /// No disks yet; the device manager is found through `supervisor`.
     pub fn new(supervisor: supervisor::Client) -> Disks {
@@ -134,8 +145,8 @@ impl Disks {
                 }
                 match self.connect(d.id) {
                     Ok(client) => self.add(d.id, &d.name, client),
-                    Err(true) => waiting = true,
-                    Err(false) => {}
+                    Err(e) if worth_another_try(&e) => waiting = true,
+                    Err(_) => {}
                 }
             }
             if !waiting || time::now() > end {
@@ -145,21 +156,12 @@ impl Disks {
         }
     }
 
-    /// Opens device `id`'s driver. `Err(true)` means "not ready yet, ask again".
-    fn connect(&mut self, id: u32) -> Result<block::Client, bool> {
-        match self.with_devices(|d| d.open(id)) {
-            Ok(h) => {
-                let mut c = block::Client::new(Endpoint(h));
-                c.set_deadline(time::after_ms(CALL_MS));
-                Ok(c)
-            }
-            // Not ready, or not there yet (a restarted device manager lists its devices as it
-            // finds them).
-            Err(CallError::Service(DevicesError::NotReady | DevicesError::NoSuchDevice)) => {
-                Err(true)
-            }
-            Err(_) => Err(false),
-        }
+    /// Opens device `id`'s driver.
+    fn connect(&mut self, id: u32) -> Result<block::Client, CallError<DevicesError>> {
+        let h = self.with_devices(|d| d.open(id))?;
+        let mut c = block::Client::new(Endpoint(h));
+        c.set_deadline(time::after_ms(CALL_MS));
+        Ok(c)
     }
 
     fn add(&mut self, id: u32, name: &str, client: block::Client) {
@@ -218,9 +220,11 @@ impl Disks {
                     }
                     return true;
                 }
-                Err(true) if time::now() < end => time::sleep_ms(50),
-                Err(_) => {
-                    granite::println!("storage: disk {id}'s driver is gone; its volumes fail.");
+                Err(e) if worth_another_try(&e) && time::now() < end => time::sleep_ms(50),
+                Err(e) => {
+                    granite::println!(
+                        "storage: disk {id}'s driver is gone ({e}); its volumes fail."
+                    );
                     if let Some(d) = self.real.get_mut(&id) {
                         d.failed = true;
                     }
