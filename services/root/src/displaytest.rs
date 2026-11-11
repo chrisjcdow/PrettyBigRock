@@ -398,9 +398,89 @@ pub fn run(
     let list = screens(&again, firmware, name)?;
     let c = Taken::new(&again, &list, name)?;
     c.picture(3, name, key, name)?;
+    // A device with more than one screen (the test machines' virtio-gpu): the second is
+    // unplugged and plugged in again.
+    let plugged = firmware.is_none();
+    if plugged {
+        several_screens(&again, &list, c, name, key)?;
+    }
     granite::println!(
         "Device self-test: {name}: {} screen(s), {full} more buffers than screens, generation {generation}, back {ms} ms after a crash.",
         list.len()
     );
-    Ok(list.len())
+    Ok(list.iter().filter(|s| s.connected).count())
+}
+
+/// Waits for the driver to say its screens changed, and returns them as they are now.
+fn changed(
+    client: &display::Client,
+    done: &Notification,
+    name: &str,
+    what: &str,
+) -> Result<Vec<ScreenInfo>, String> {
+    let end = time::after_ms(DONE_MS);
+    loop {
+        match done.wait(end) {
+            Ok(bits) if bits & SCREENS_CHANGED != 0 => break,
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!("{name}: no word that the screens changed after {what}: {e}"));
+            }
+        }
+    }
+    Ok(client.screens().map_err(|e| format!("{name}: screens after {what}: {e}"))?.screens)
+}
+
+/// The test machines' virtio-gpu has two screens of different sizes plugged in, and an output
+/// with nothing in it. The runner unplugs the second screen and plugs it in again; the
+/// driver must say so each time, refuse to draw on a screen that isn't there, and draw on
+/// both once it is back (picture 4, which the runner looks at).
+fn several_screens(
+    client: &display::Client,
+    list: &[ScreenInfo],
+    taken: Taken,
+    name: &str,
+    key: &mut Pad,
+) -> Result<(), String> {
+    let on: Vec<&ScreenInfo> = list.iter().filter(|s| s.connected).collect();
+    let size = |s: &ScreenInfo| (s.current.width, s.current.height);
+    if on.len() != 2 || on[0].screen != 0 || on[1].screen != 1 || size(on[0]) == size(on[1]) {
+        return Err(format!(
+            "{name}: expected screens 0 and 1 plugged in, of different sizes: {list:?}"
+        ));
+    }
+    if !list.iter().any(|s| !s.connected && s.modes.is_empty() && s.current.width == 0) {
+        return Err(format!("{name}: expected an output with nothing plugged in: {list:?}"));
+    }
+    if on[0].connector == on[1].connector {
+        return Err(format!("{name}: two screens with one connector name: {list:?}"));
+    }
+    let second = size(on[1]);
+
+    granite::println!("Device self-test: unplug screen 1");
+    let now = changed(client, &taken.done, name, "unplugging")?;
+    if now.len() != list.len() || now[1].connected || !now[0].connected || now[1].current.width != 0
+    {
+        return Err(format!("{name}: with screen 1 unplugged, the screens are {now:?}"));
+    }
+    refused(
+        taken.taker.present(taken.canvases[1].id, &[]),
+        DisplayError::NotConnected,
+        "presenting on an unplugged screen",
+    )?;
+    refused(
+        taken.taker.create_buffer(1),
+        DisplayError::NotConnected,
+        "a buffer for an unplugged screen",
+    )?;
+    // The first screen is untouched.
+    taken.show(0, &[], name)?;
+
+    granite::println!("Device self-test: plug screen 1");
+    let now = changed(client, &taken.done, name, "plugging in")?;
+    if !now[1].connected || size(&now[1]) != second || !now[0].connected {
+        return Err(format!("{name}: with screen 1 plugged in again, the screens are {now:?}"));
+    }
+    // The buffer made before it was unplugged is still the right size, and still works.
+    taken.picture(4, name, key, name)
 }

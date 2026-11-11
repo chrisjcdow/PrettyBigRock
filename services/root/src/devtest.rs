@@ -47,10 +47,17 @@ pub fn run(f: &Files<'_>, start: &mut granite::Start) -> Result<String, String> 
 
     dma(&caps, fb)?;
     parts.push("DMA memory".into());
-    mapping(&caps, fb)?;
-    parts.push("mapping device memory".into());
-    revoked_mapping(f, &caps, fb)?;
-    parts.push("revoking a mapping".into());
+    // Mapping needs a page of device memory that can be written and read back without
+    // upsetting anything, and the only such page a program can find by itself is in the
+    // firmware's framebuffer. A machine whose only screens are a virtio-gpu's (note 0020)
+    // has none, so there these two are left out; the test machines with a firmware screen,
+    // one of each architecture, still run them.
+    if let Some(fb) = fb {
+        mapping(&caps, fb)?;
+        parts.push("mapping device memory".into());
+        revoked_mapping(f, &caps, fb)?;
+        parts.push("revoking a mapping".into());
+    }
     let irq = interrupts(f, &caps)?;
     parts.push(format!("interrupts (line {irq})"));
     if caps.pool.is_some() {
@@ -108,18 +115,21 @@ fn description(c: &Caps) -> Result<u32, String> {
 }
 
 /// The last page of the first framebuffer: harmless device memory that is not RAM. (The
-/// kernel draws text at the top of the screen.)
-fn framebuffer(c: &Caps) -> Result<u64, String> {
+/// kernel draws text at the top of the screen.) `None` if the machine has no framebuffer.
+fn framebuffer(c: &Caps) -> Result<Option<u64>, String> {
     let mut rec = [0u8; 16];
     c.machine.read(64, &mut rec).map_err(e("reading the machine description"))?;
     let (base, len) = (
         u64::from_le_bytes(rec[..8].try_into().unwrap_or([0; 8])),
         u64::from_le_bytes(rec[8..].try_into().unwrap_or([0; 8])),
     );
-    if base == 0 || len < 2 * PAGE {
-        return Err("the machine has no framebuffer to test with".into());
+    if base == 0 {
+        return Ok(None);
     }
-    Ok((base + len) / PAGE * PAGE - PAGE)
+    if len < 2 * PAGE {
+        return Err("the machine's framebuffer is too small to test with".into());
+    }
+    Ok(Some((base + len) / PAGE * PAGE - PAGE))
 }
 
 /// A slice of one page of device memory at physical address `addr`.
@@ -127,7 +137,7 @@ fn page_at(c: &Caps, addr: u64, mask: u32) -> Result<DeviceMemory, Error> {
     c.memory.slice(addr, PAGE, mask)
 }
 
-fn dma(c: &Caps, fb: u64) -> Outcome {
+fn dma(c: &Caps, fb: Option<u64>) -> Outcome {
     let m = c.memory.create_dma(4 * PAGE, 0).map_err(e("creating DMA memory"))?;
     if m.size().map_err(e("size"))? != 4 * PAGE {
         return Err("DMA memory has the wrong size".into());
@@ -166,7 +176,11 @@ fn dma(c: &Caps, fb: u64) -> Outcome {
     refused("no DMA memory", c.memory.create_dma(0, 0), Error::InvalidArgument)?;
     refused("an unknown flag", c.memory.create_dma(PAGE, 2), Error::InvalidArgument)?;
     // The rights.
-    let no_dma = page_at(c, fb, ALL & !rights::DMA).map_err(e("slicing"))?;
+    // (A page of the framebuffer if there is one, or else all device memory.)
+    let no_dma = match fb {
+        Some(fb) => page_at(c, fb, ALL & !rights::DMA).map_err(e("slicing"))?,
+        None => DeviceMemory(c.memory.0.duplicate(ALL & !rights::DMA).map_err(e("duplicating"))?),
+    };
     refused("DMA memory without the DMA right", no_dma.create_dma(PAGE, 0), Error::NoRight)?;
     refused(
         "a bus address with a device without DMA",
@@ -199,8 +213,10 @@ fn dma(c: &Caps, fb: u64) -> Outcome {
         c.memory.slice(1 << 49, PAGE, ALL),
         Error::InvalidArgument,
     )?;
-    refused("an unaligned slice", c.memory.slice(fb + 1, PAGE, ALL), Error::InvalidArgument)?;
-    refused("an empty slice", c.memory.slice(fb, 0, ALL), Error::InvalidArgument)?;
+    // Refused whatever is at the address, so without a framebuffer any address will do.
+    let at = fb.unwrap_or(0xE000_0000);
+    refused("an unaligned slice", c.memory.slice(at + 1, PAGE, ALL), Error::InvalidArgument)?;
+    refused("an empty slice", c.memory.slice(at, 0, ALL), Error::InvalidArgument)?;
     Ok(())
 }
 

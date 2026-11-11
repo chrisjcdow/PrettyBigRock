@@ -188,7 +188,13 @@ fn scan(d: &Devmgr, m: &Machine) -> Result<Vec<DeviceInfo>, String> {
         ("virtio input devices", count(DeviceClass::Input, "virtio-input"), 2 + tablets),
         ("PS/2 controllers", count(DeviceClass::Input, "ps2"), usize::from(x86 && m.ps2)),
         ("serial ports", count(DeviceClass::Serial, "serial16550"), usize::from(x86)),
-        ("screens", count(DeviceClass::Display, "framebuffer"), usize::from(m.screen.is_some())),
+        // A test machine has the firmware's screen or a virtio-gpu, never both (note 0026).
+        (
+            "framebuffers",
+            count(DeviceClass::Display, "framebuffer"),
+            usize::from(m.screen.is_some()),
+        ),
+        ("virtio-gpus", count(DeviceClass::Display, "virtio-gpu"), usize::from(m.screen.is_none())),
     ];
     for (what, have, wanted) in want {
         if have != wanted {
