@@ -14,6 +14,7 @@
 
 extern crate alloc;
 
+pub mod display;
 pub mod keys;
 pub mod machine;
 pub mod manifest;
