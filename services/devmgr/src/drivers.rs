@@ -17,7 +17,7 @@ use pbr_archive::Archive;
 use pbr_devices::machine::Screen;
 use pbr_devices::manifest::{Class, Manifest};
 use pbr_devices::pci::{Bar, BarKind, Function};
-use pbr_devices::record::{Kind, MAX_BARS, Message, Record, Screen as Screen2};
+use pbr_devices::record::{Kind, MAX_BARS, MAX_BUFFERS, Message, Record, Screen as Screen2};
 use pbr_driver::{ConfigPage, role};
 use pbr_interfaces::pbr_supervisor as supervisor;
 
@@ -98,8 +98,19 @@ pub struct Plan {
     pub bars: Vec<(usize, DeviceMemory)>,
     /// The interrupts given (message-signalled for PCI, wired lines for legacy devices).
     pub irqs: Vec<Interrupts>,
-    /// The DMA memory, if the manifest asks for any.
+    /// The DMA memory, if the manifest asks for any: the copy drivers are given theirs from,
+    /// and the one that is revoked when a driver ends, to take back whatever it passed on.
     pub dma: Option<Memory>,
+    /// The DMA memory's original capability. It is never revoked: the copy the supervisor keeps
+    /// (note 0018, section 4) was made from it, and revoking destroys every copy made from a
+    /// capability, so revoking this one would take the supervisor's with it.
+    #[expect(dead_code, reason = "kept so that the memory lives; nothing needs to use it")]
+    pub dma_root: Option<Memory>,
+    /// A display driver's buffers (note 0020, section 4): more DMA memory, each its own memory
+    /// object so that the driver can share one with its client. Unlike `dma` these are not
+    /// revoked when the driver ends: its client has them mapped and may be drawing, and memory
+    /// that vanished under it would end the client too. They only ever hold pictures.
+    pub buffers: Vec<Memory>,
     /// I/O ports (legacy devices).
     pub ports: Option<IoPorts>,
     /// A second range of I/O ports, for a device whose ports aren't together.
@@ -127,7 +138,9 @@ fn givable(f: &Function) -> impl Iterator<Item = &Bar> {
 /// space, allocates its interrupts and DMA memory, and writes its record. `page` is the device
 /// manager's own mapping of the configuration space `config`. A copy of the DMA memory goes to
 /// `keeper` (the supervisor) to keep, so that it outlives this device manager if it dies
-/// (note 0018, section 4).
+/// (note 0018, section 4). `log_control` is the device manager's kernel log with `CONTROL`;
+/// a display driver gets a copy with only that right.
+#[allow(clippy::too_many_arguments)] // each is a different root capability or its mapping
 pub fn plan(
     f: &Function,
     config: DeviceMemory,
@@ -136,6 +149,7 @@ pub fn plan(
     memory: &DeviceMemory,
     pool: Option<&Interrupts>,
     keeper: Option<&supervisor::Client>,
+    log_control: Option<&Handle>,
 ) -> Result<Plan, PlanError> {
     let mut record = Record::new(Kind::Pci);
     record.vendor = f.vendor;
@@ -167,11 +181,11 @@ pub fn plan(
     }
     record.interrupt_count = msis.len() as u8;
 
-    let dma = if m.dma != 0 {
-        let mem = config.create_dma(m.dma, 0).map_err(err("making DMA memory"))?;
-        record.dma_bus =
-            bus_address(&mem, &config, 0).map_err(err("finding the DMA memory's address"))?;
-        record.dma_size = m.dma;
+    // Makes a piece of DMA memory, has the supervisor keep a copy, and finds its bus address
+    // (the address the device uses for it).
+    let make = |size: u64| -> Result<(Memory, u64), PlanError> {
+        let mem = config.create_dma(size, 0).map_err(err("making DMA memory"))?;
+        let bus = bus_address(&mem, &config, 0).map_err(err("finding the DMA memory's address"))?;
         if let Some(k) = keeper {
             // Any rights will do to keep it alive; it has to be transferable to be sent.
             let copy = mem
@@ -180,10 +194,24 @@ pub fn plan(
                 .map_err(err("copying DMA memory"))?;
             k.keep(Memory(copy)).map_err(|e| PlanError(format!("having DMA memory kept: {e}")))?;
         }
-        Some(mem)
-    } else {
-        None
+        Ok((mem, bus))
     };
+    let (dma, dma_root) = if m.dma != 0 {
+        let (root, bus) = make(m.dma)?;
+        (record.dma_bus, record.dma_size) = (bus, m.dma);
+        let share = root.0.duplicate(rights::ALL).map_err(err("copying DMA memory"))?;
+        (Some(Memory(share)), Some(root))
+    } else {
+        (None, None)
+    };
+    let mut buffers = Vec::new();
+    let (count, each) = m.buffers;
+    for i in 0..(count as usize).min(MAX_BUFFERS) {
+        let (mem, bus) = make(each)?;
+        record.buffers[i] = (bus, each);
+        buffers.push(mem);
+    }
+    record.buffer_count = buffers.len() as u8;
 
     let own = config;
     let config =
@@ -197,9 +225,24 @@ pub fn plan(
         bars,
         irqs: msis,
         dma,
+        dma_root,
+        buffers,
         ports: None,
         ports2: None,
-        log_control: None,
+        log_control: if m.class == Class::Display { copy_log_control(log_control) } else { None },
+    })
+}
+
+/// A copy of the kernel log with the right to take the screen from the kernel, for a display
+/// driver's plan. Without it the driver still works; the kernel just keeps drawing its text
+/// on the screen too.
+fn copy_log_control(log_control: Option<&Handle>) -> Option<Handle> {
+    log_control.and_then(|h| {
+        // (`DUPLICATE` and `TRANSFER` too, so that `start` can give the driver a copy: the driver's
+        // copy has only `CONTROL`.)
+        h.duplicate(rights::CONTROL | rights::DUPLICATE | rights::TRANSFER)
+            .map_err(|e| granite::println!("devmgr: copying the kernel log for the screen: {e}"))
+            .ok()
     })
 }
 
@@ -260,6 +303,8 @@ pub fn plan_legacy(
         bars: Vec::new(),
         irqs,
         dma: None,
+        dma_root: None,
+        buffers: Vec::new(),
         ports: Some(slice),
         ports2,
         log_control: None,
@@ -284,14 +329,7 @@ pub fn plan_framebuffer(
     record.bars[0] = size;
     record.screen = Screen2 { width: s.width, height: s.height, stride: s.stride, format };
     let slice = memory.slice(start, size, rights::ALL).map_err(err("slicing the framebuffer"))?;
-    // Without it the driver still works; the kernel just keeps drawing on the screen too.
-    let log_control = log_control.and_then(|h| {
-        // (`DUPLICATE` and `TRANSFER` too, so that `start` can give the driver a copy: the driver's
-        // copy has only `CONTROL`.)
-        h.duplicate(rights::CONTROL | rights::DUPLICATE | rights::TRANSFER)
-            .map_err(|e| granite::println!("devmgr: copying the kernel log for the screen: {e}"))
-            .ok()
-    });
+    let log_control = copy_log_control(log_control);
     Ok(Plan {
         record: write_record(&record)?,
         kind: Kind::Framebuffer,
@@ -299,6 +337,8 @@ pub fn plan_framebuffer(
         bars: alloc::vec![(0, slice)],
         irqs: Vec::new(),
         dma: None,
+        dma_root: None,
+        buffers: Vec::new(),
         ports: None,
         ports2: None,
         log_control,
@@ -361,6 +401,21 @@ pub fn start(
             role::DMA,
             dma.0.raw(),
             rights::READ | rights::WRITE | rights::MAP | rights::INSPECT,
+            false,
+        ));
+    }
+    // A display driver shares each buffer with its client, so it may copy and pass them on.
+    for (i, buffer) in plan.buffers.iter().enumerate() {
+        grants.push((
+            role::BUFFER + i as u32,
+            buffer.0.raw(),
+            rights::READ
+                | rights::WRITE
+                | rights::MAP
+                | rights::INSPECT
+                | rights::DUPLICATE
+                | rights::TRANSFER
+                | rights::REVOKE,
             false,
         ));
     }

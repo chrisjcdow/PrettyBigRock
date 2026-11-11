@@ -131,6 +131,10 @@ fn crashed(id: u32) {
         if let Some(dma) = &plan.dma {
             zero(dma);
         }
+        // A display driver's buffers too: the new driver's client starts from blank screens.
+        for buffer in &plan.buffers {
+            zero(buffer);
+        }
     }
     // 5. Decide.
     let now = now_ms();

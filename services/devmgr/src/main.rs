@@ -168,6 +168,8 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         granite::println!("devmgr: no PCI Express configuration space (no MCFG table).");
     }
     let mut found = Vec::new();
+    // The memory (BARs) of every PCI device that has a display driver: (base, size).
+    let mut display_memory: Vec<(u64, u64)> = Vec::new();
     for region in regions.into_iter().filter(|r| r.segment == 0) {
         let mut ecam = ecam::Ecam::new(&memory, region);
         let scan = pci::scan(&mut ecam, region.start_bus, region.end_bus);
@@ -208,6 +210,10 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
                 continue;
             };
             granite::println!("devmgr: {label}: {}.", drivers[i].name);
+            if manifests[i].class == Class::Display {
+                // Remembered for the firmware's screen, below.
+                display_memory.extend(f.bars.iter().map(|b| (b.base, b.size)));
+            }
             let Some(config) = ecam.function(a) else {
                 granite::println!("devmgr: {label}: can't get its configuration space.");
                 continue;
@@ -241,9 +247,17 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         let a = f.addr;
         let id = next_id;
         next_id += 1;
-        let plan =
-            drivers::plan(&f, config, page, &d.manifest, &memory, pool.as_ref(), keeper.as_ref())
-                .map_err(|e| e.0);
+        let plan = drivers::plan(
+            &f,
+            config,
+            page,
+            &d.manifest,
+            &memory,
+            pool.as_ref(),
+            keeper.as_ref(),
+            log_control.as_ref(),
+        )
+        .map_err(|e| e.0);
         let label = alloc::format!("{:02x}:{:02x}.{}", a.bus, a.device, a.function);
         add(d, i, label, plan, &host_ep, id, selftest);
     }
@@ -281,9 +295,19 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
             granite::println!("devmgr: ps2: no controller.");
         }
     }
-    // One screen is served; more would need a way to pick between them.
+    // The firmware's screen. One is served; more would need a way to pick between them. If
+    // it is drawn by a PCI device that has a display driver of its own, that driver has it:
+    // one device never gets two drivers (note 0020, section 5).
+    let owned = |s: &pbr_devices::machine::Screen| {
+        display_memory.iter().any(|&(base, size)| s.inside(base, size))
+    };
     if let Some(screen) = machine.screens.first() {
-        if let Some(i) = choose(&manifests, &Target::Legacy(Legacy::Framebuffer)) {
+        if owned(screen) {
+            granite::println!(
+                "devmgr: framebuffer: the firmware's screen belongs to a device with its own \
+                 display driver."
+            );
+        } else if let Some(i) = choose(&manifests, &Target::Legacy(Legacy::Framebuffer)) {
             let id = next_id;
             granite::println!(
                 "devmgr: framebuffer ({}x{}): {}.",

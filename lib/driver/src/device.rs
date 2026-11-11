@@ -30,6 +30,8 @@ pub mod role {
     pub const MSI: u32 = 1020;
     /// The DMA memory.
     pub const DMA: u32 = 1030;
+    /// A display driver's buffer 0; buffer *i* is this plus *i* (at most 8).
+    pub const BUFFER: u32 = 1031;
     /// I/O ports.
     pub const PORTS: u32 = 1040;
     /// A second range of I/O ports, for a device whose ports aren't together.
@@ -76,6 +78,11 @@ pub struct Device {
     pub irqs: Vec<Irq>,
     /// The DMA memory.
     pub dma: Option<Dma>,
+    /// A display driver's buffers (note 0020, section 4): each a piece of DMA memory and the
+    /// address the device knows it by. They aren't mapped here; the display driver hands them
+    /// to its client. Unlike everything else here they outlive the driver: after a restart the
+    /// new driver gets the same ones, zeroed.
+    pub buffers: Vec<(Memory, u64)>,
     /// I/O ports (legacy devices).
     pub ports: Option<IoPorts>,
     /// A second range of I/O ports.
@@ -87,6 +94,9 @@ pub struct Device {
     /// The arguments from the manifest.
     pub args: String,
 }
+
+/// The largest piece of DMA memory the kernel makes (note 0010, section 5).
+const MAX_DMA: u64 = 16 << 20;
 
 fn bad<T>(what: &'static str) -> Result<T, StartError> {
     Err(StartError(what))
@@ -148,7 +158,7 @@ impl Device {
 
         let dma = if record.dma_size != 0 {
             let Some(h) = start.take(role::DMA) else { return bad("the DMA memory is missing") };
-            if record.dma_size > (4 << 20)
+            if record.dma_size > MAX_DMA
                 || !record.dma_size.is_multiple_of(4096)
                 || !record.dma_bus.is_multiple_of(4096)
             {
@@ -166,6 +176,30 @@ impl Device {
             None
         };
 
+        let mut buffers = Vec::new();
+        if usize::from(record.buffer_count) > record::MAX_BUFFERS {
+            return bad("too many buffers");
+        }
+        for i in 0..usize::from(record.buffer_count) {
+            let (bus, size) = record.buffers[i];
+            let Some(h) = start.take(role::BUFFER + i as u32) else {
+                return bad("a buffer is missing");
+            };
+            if size == 0
+                || size > MAX_DMA
+                || !size.is_multiple_of(4096)
+                || !bus.is_multiple_of(4096)
+            {
+                return bad("a buffer has an impossible size or address");
+            }
+            let mem = Memory(h);
+            match mem.size() {
+                Ok(s) if s >= size => {}
+                _ => return bad("a buffer is smaller than the record says"),
+            }
+            buffers.push((mem, bus));
+        }
+
         Ok(Device {
             record,
             config,
@@ -173,6 +207,7 @@ impl Device {
             memory,
             irqs,
             dma,
+            buffers,
             ports: start.take(role::PORTS).map(IoPorts),
             ports2: start.take(role::PORTS_2).map(IoPorts),
             host: start.take(role::HOST).map(Endpoint),

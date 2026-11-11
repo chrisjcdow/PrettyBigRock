@@ -71,14 +71,16 @@ impl Kind {
         }
     }
 
-    /// Its budget. The device manager's covers every driver of the self-test's machines; the
+    /// Its budget. The device manager's covers every driver of the self-test's machines,
+    /// which is 96 MiB without a display, and one display driver's buffers (four of 10 MiB
+    /// for virtio-gpu, or the framebuffer driver's allowance of 40 MiB; note 0020); the
     /// storage service's its 16 MiB cache, volumes in memory and 8 MiB for each filesystem
     /// server; the users service's three sessions of 16 MiB at once. The console's holds its
-    /// text grid and its threads (the screen it draws on is the device's own memory).
+    /// text grid and its threads (the buffer it draws in is the display driver's memory).
     fn budget(self) -> u64 {
         const MIB: u64 = 1024 * 1024;
         match self {
-            Kind::Devmgr => 96 * MIB,
+            Kind::Devmgr => 144 * MIB,
             Kind::Storage => 128 * MIB,
             Kind::Users => 64 * MIB,
             Kind::Console => 8 * MIB,
