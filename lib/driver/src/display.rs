@@ -61,8 +61,10 @@ pub trait Backend {
     fn create(&mut self, screen: u32, id: u32) -> Result<Made, DisplayError>;
 
     /// Destroys buffer `id`. The client has already lost its access to the memory. It may be
-    /// the buffer on the screen, or one whose present isn't done: the backend must then not
-    /// report that present finished (see [`Display::finished`]).
+    /// the buffer on the screen. It may also be one whose present isn't done, but only when
+    /// another client has taken the display or the taker has gone (a taker can't destroy a
+    /// buffer it is presenting): the backend must then make sure that present's end isn't
+    /// taken for the end of a later present on the same screen.
     fn destroy(&mut self, id: u32);
 
     /// Puts the rectangles `changed` of buffer `id` on its screen. Returns `true` if the

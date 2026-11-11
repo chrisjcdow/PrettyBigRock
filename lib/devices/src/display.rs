@@ -75,6 +75,8 @@ pub struct State {
     next_buffer: u32,
     /// Bit *n*: screen *n* has a present that isn't done.
     busy: u32,
+    /// For each busy screen, the buffer being presented on it.
+    presenting: [u32; MAX_SCREENS as usize],
 }
 
 impl Default for State {
@@ -92,6 +94,7 @@ impl State {
             buffers: BTreeMap::new(),
             next_buffer: 1,
             busy: 0,
+            presenting: [0; MAX_SCREENS as usize],
         }
     }
 
@@ -141,9 +144,15 @@ impl State {
         Ok(id)
     }
 
-    /// Forgets buffer `id`.
+    /// Forgets buffer `id`. Refused with `Busy` while the buffer is being presented: the
+    /// device is still reading it, and the screen's present couldn't be finished without it.
     pub fn remove(&mut self, id: u32) -> Result<Buffer, Refusal> {
-        self.buffers.remove(&id).ok_or(Refusal::NoSuchBuffer)
+        let b = *self.buffers.get(&id).ok_or(Refusal::NoSuchBuffer)?;
+        if self.is_busy(b.screen) && self.presenting[b.screen as usize] == id {
+            return Err(Refusal::Busy);
+        }
+        self.buffers.remove(&id);
+        Ok(b)
     }
 
     /// Forgets every buffer of `screen` (its mode changed, so they are the wrong size) and
@@ -185,6 +194,7 @@ impl State {
             changed.to_vec()
         };
         self.busy |= 1 << b.screen;
+        self.presenting[b.screen as usize] = id;
         Ok((b, rects))
     }
 
@@ -481,8 +491,17 @@ mod tests {
         assert_eq!(s.present(a2, &[]), Err(Refusal::Busy));
         assert!(s.present(b, &[]).is_ok());
         assert!(s.is_busy(0) && s.is_busy(1) && !s.is_busy(2) && !s.is_busy(MAX_SCREENS));
+        // A buffer being presented can't be destroyed; another of the same screen can.
+        assert_eq!(s.remove(a), Err(Refusal::Busy));
+        assert_eq!(s.remove(b), Err(Refusal::Busy));
+        let spare = s.add(0, 640, 480).unwrap();
+        assert!(s.remove(spare).is_ok());
         assert!(s.done(0));
         assert!(!s.is_busy(0));
+        assert!(s.remove(a).is_ok());
+        let a = s.add(0, 640, 480).unwrap();
+        assert!(s.present(a, &[]).is_ok());
+        assert!(s.done(0));
         assert!(!s.done(0), "done twice");
         assert!(!s.done(MAX_SCREENS));
         assert!(s.present(a2, &[]).is_ok());

@@ -67,6 +67,7 @@ struct ScreenInfo {
     error DisplayError;
 
 /// Destroys a buffer. If it is the one on the screen, the screen keeps its last picture.
+/// A buffer whose present isn't done can't be destroyed yet (`Busy`).
 @5 fn destroy_buffer(buffer: u32) -> () error DisplayError;
 
 /// Shows a buffer on its screen, copying the rectangles in `changed` (all of it if the list
@@ -88,7 +89,7 @@ flexible enum DisplayError {
     NoSuchBuffer @5,
     /// Not called through the current taker's capability.
     NotTaken @6,
-    /// The previous present on that screen isn't done.
+    /// The previous present on that screen isn't done (or, destroying a buffer: its own).
     Busy @7,
     /// A rectangle outside the buffer, or a list too long.
     BadArgument @8,
