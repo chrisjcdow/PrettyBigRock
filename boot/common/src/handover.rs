@@ -181,6 +181,20 @@ mod imp {
                     "movk x9, #0x30C5, lsl #16",
                     "msr sctlr_el2, x9",
                     "isb",
+                    // HCR_EL2: EL1 runs AArch64; nothing trapped; and E2H (bit 34) off. With
+                    // E2H on, which newer firmware leaves it where the processor has it,
+                    // EL2 itself is run like an EL1 (so that a whole operating system can
+                    // live there), and to make that work the processor quietly redirects
+                    // the EL1 register names used at EL2 to EL2's own registers. Everything
+                    // below that sets up EL1 would then be setting up EL2 instead. So E2H
+                    // goes off first, while EL2's translation is off and nothing depends on
+                    // which of the two layouts EL2's registers have.
+                    "mov x9, #(1 << 31)",
+                    "msr hcr_el2, x9",
+                    "isb",
+                    // On the newest processors E2H can't be turned off: it reads back as 1.
+                    "mrs x9, hcr_el2",
+                    "tbnz x9, #34, 2f",
                     "msr mair_el1, x2",
                     "msr tcr_el1, x3",
                     "msr ttbr0_el1, x4",
@@ -189,16 +203,34 @@ mod imp {
                     "mov x9, #0x1805",
                     "movk x9, #0x30D0, lsl #16",
                     "msr sctlr_el1, x9",
-                    "mov x9, #(1 << 31)", // HCR_EL2: EL1 runs AArch64; nothing trapped
-                    "msr hcr_el2, x9",
                     "mrs x9, cnthctl_el2", // EL1 may use the physical timer and counter
                     "orr x9, x9, #3",
                     "msr cnthctl_el2, x9",
-                    "msr cntvoff_el2, xzr",
                     "mov x9, #0x33ff", // CPTR_EL2: don't trap floating point
                     "msr cptr_el2, x9",
                     "mov x9, #(3 << 20)", // CPACR_EL1: don't trap floating point at EL1 either
                     "msr cpacr_el1, x9",
+                    "b 3f",
+                    // E2H stays on. The same set-up, with EL1's registers reached by their
+                    // "EL12" names (which exist for exactly this; written as numbers because
+                    // older assemblers don't know the names), and with the two EL2 registers
+                    // that have a different layout when E2H is on.
+                    "2:",
+                    "msr s3_5_c10_c2_0, x2", // MAIR_EL12
+                    "msr s3_5_c2_c0_2, x3",  // TCR_EL12
+                    "msr s3_5_c2_c0_0, x4",  // TTBR0_EL12
+                    "msr s3_5_c2_c0_1, x5",  // TTBR1_EL12
+                    "mov x9, #0x1805",
+                    "movk x9, #0x30D0, lsl #16",
+                    "msr s3_5_c1_c0_0, x9", // SCTLR_EL12
+                    "mrs x9, cnthctl_el2",  // the timer and counter bits are 10 and 11 here
+                    "orr x9, x9, #(3 << 10)",
+                    "msr cnthctl_el2, x9",
+                    "mov x9, #(3 << 20)", // CPTR_EL2 has CPACR's layout: floating point allowed
+                    "msr cptr_el2, x9",
+                    "msr s3_5_c1_c0_2, x9", // CPACR_EL12
+                    "3:",
+                    "msr cntvoff_el2, xzr",
                     "msr vbar_el2, x6",
                     "msr sp_el1, x7",
                     "mov x9, #0x3c5", // return to EL1h with all interrupts masked
