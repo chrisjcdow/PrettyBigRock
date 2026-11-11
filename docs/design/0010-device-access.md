@@ -194,7 +194,7 @@ controls the machine.** The design therefore holds two levels apart:
 
 **The calls.**
 - `memory_create_dma(device h, size, flags) → memory h`: makes a memory object of **physically
-  contiguous** pages, zeroed, charged to the caller's budget, and up to **4 MiB** (`TOO_BIG`
+  contiguous** pages, zeroed, charged to the caller's budget, and up to **16 MiB** (4 MiB until M6, note 0020; `TOO_BIG`
   beyond that). Needs the `DMA` right on `device h`, a device memory capability. `flags`
   bit 0, `BELOW_4G`, puts the pages below 4 GiB, for devices with only 32-bit addressing.
   The memory gets the memory-type right **`BUS`** (type bit 8), which can be removed from

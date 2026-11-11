@@ -14,8 +14,9 @@ use alloc::vec::Vec;
 /// The largest memory object, in bytes.
 pub const MAX_SIZE: u64 = 4 << 30;
 
-/// The largest object of contiguous pages, in bytes (note 0010, section 6).
-pub const MAX_DMA_SIZE: u64 = 4 << 20;
+/// The largest object of contiguous pages, in bytes (note 0010, section 6). 16 MiB since M6:
+/// a display driver's buffer holds a whole screen's picture (note 0020, section 4).
+pub const MAX_DMA_SIZE: u64 = 16 << 20;
 
 /// A set of pages.
 pub struct MemoryObject {

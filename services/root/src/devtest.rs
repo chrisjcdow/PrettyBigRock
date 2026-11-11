@@ -162,7 +162,7 @@ fn dma(c: &Caps, fb: u64) -> Outcome {
         return Err(format!("memory asked for below 4 GiB is at {l:#x}"));
     }
     // The limits.
-    refused("5 MiB of DMA memory", c.memory.create_dma(5 << 20, 0), Error::TooBig)?;
+    refused("17 MiB of DMA memory", c.memory.create_dma(17 << 20, 0), Error::TooBig)?;
     refused("no DMA memory", c.memory.create_dma(0, 0), Error::InvalidArgument)?;
     refused("an unknown flag", c.memory.create_dma(PAGE, 2), Error::InvalidArgument)?;
     // The rights.
