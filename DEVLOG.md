@@ -630,3 +630,24 @@ disks made by 1.3, including writing and reading back.
   (SIGSEGV) once on x86-64 UEFI, just after the device manager started, as in session 11; the
   rerun passed. Worth watching now that those configurations have more devices.
 - `cargo xtask ci` passed on all four configurations (36 minutes).
+- **Stress after stage 1** (10 to 11 November): the first run on `e8eccf0` failed 1 boot of 120.
+  ARM64 EL1, in the supervision test: the storage service was killed and started again
+  ("supervisor: storage started again (1 restarts)"), and then nothing at all was printed for
+  17 minutes, by the new storage service or anything else, until the runner's time limit. Two
+  cores were in the kernel with interrupts on; two were idle. Every wait in the storage
+  service's start has a time limit and says so when it runs out, so the silence points at the
+  kernel, not at storage. The services involved don't use the new calls, and the stage 1
+  changes to `endpoint.rs` and `caps.rs` were read again without finding anything that could
+  loop, but that doesn't clear them.
+  - The dump couldn't be read: the kernel GitHub builds isn't the same as the one built here
+    (its loader reports 860 KiB against 1200 KiB here, cause not yet known), so its addresses
+    can't be matched afterwards, and artifacts can't be downloaded from this workspace.
+  - So the runner now names the kernel function for every address in a hung boot's registers
+    and stacks, from the symbol table of the kernel it booted (`xtask/src/symbols.rs`, host
+    tests; demangled when `llvm-cxxfilt` or `rustfilt` is there). `8443d13`; `cargo xtask ci`
+    passed on all four (41 minutes).
+  - Then: Stress on `m6` at `8443d13`, 120 boots, all passed; Stress on `m5` (`9345496`) as a
+    comparison, 120 boots, all passed; 12 ARM64 boots here, all passed. So it is 1 hang in 252
+    boots with stage 1 and none in 240 without (120 now, 120 on 9 November): too few to say
+    whether stage 1 brought it or only met it. **Unexplained.** The next time it happens the
+    log will say where each core is.
