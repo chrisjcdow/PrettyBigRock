@@ -236,6 +236,11 @@ buffers' memory stays safe until the device is stopped (note 0018, section 4).
 
 ## Open questions
 
+- A client of a display driver that was restarted keeps its copies of the old buffers until it
+  lets go of them, and the new driver hands the same memory to its next taker. Only the
+  display server and the console are ever clients, and both see the whole screen anyway, but
+  it would be cleaner for the device manager to take the copies back once the client has been
+  told.
 - A hardware cursor (virtio-gpu's cursor queue; later GPUs).
 - Hardware rotation and scaling, other pixel formats, higher depths (10-bit colour).
 - 3D and GPU drawing: a separate interface, with the display server's buffers drawn by a GPU
@@ -244,5 +249,33 @@ buffers' memory stays safe until the device is stopped (note 0018, section 4).
 - Brightness for laptop screens (M11).
 
 ## Changes
+- 11 November 2026, building (M6 stage 2). What building changed:
+  - **`take` answers with a capability of its own** (`taker`), and `set_mode`, `create_buffer`,
+    `destroy_buffer` and `present` are only obeyed through it. The draft told the taker from
+    other clients by nothing at all: every client's capability carries the same badge, so the
+    driver couldn't have known who was asking. The taker's capability is derived from the
+    caller's (note 0013, section 2), carries a watched badge, and can't be copied, so the
+    driver hears when it goes. A badge is never used twice, so an old taker's capability is
+    simply refused (`NotTaken`) once another has taken over.
+  - **A new done notification for each taker**, so an old taker hears nothing of the new one.
+  - **`set_mode` on a screen whose present isn't done answers `Busy`**, and after it bit 63 is
+    signalled like any other change to the screens.
+  - **The rules live in `pbr_devices::display::State`** (host-tested: who is the taker, which
+    buffers exist, busy screens, rectangles inside the buffer) and **`pbr_driver::display`**
+    answers the interface for every display driver; a driver implements its `Backend`.
+  - **A destroyed buffer's memory is taken back by revoking** the capability the client's copy
+    was made from, which also unmaps it from the client (note 0006, section 5): a client must
+    not touch a buffer after it has been told it is gone, or after another client takes over.
+  - **Buffers are their own DMA memory objects, not part of the driver's `dma` memory**: a
+    manifest key `buffers COUNT SIZE` (at most 8, each at most 16 MiB), so that one buffer can
+    be shared with a client without the rest. virtio-gpu's manifest asks for `dma 256K` and
+    `buffers 4 10M` in place of `dma 48M`. The kernel's limit on one piece of DMA memory goes
+    from 4 MiB to 16 MiB (not 64 MiB). The device record and the driver's start-up roles gain
+    the buffers (notes 0010 and 0011).
+  - **A display driver's buffers are not revoked when it is restarted** (its `dma` memory
+    still is): the client has them mapped. They are zeroed before the new driver gets them.
+  - **Section 7's QEMU tests**: `Busy` is tested on the host only, since no driver here can be
+    made slow on purpose; a buffer of the first taker is shown to be revoked by its memory
+    capability no longer working.
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).
