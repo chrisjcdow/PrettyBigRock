@@ -651,3 +651,50 @@ disks made by 1.3, including writing and reading back.
     boots with stage 1 and none in 240 without (120 now, 120 on 9 November): too few to say
     whether stage 1 brought it or only met it. **Unexplained.** The next time it happens the
     log will say where each core is.
+
+### Stage 2: screens (11 November 2026)
+
+Built by the session's model (Fable 5.2), with two pieces by Sonnet subagents to written
+briefs, both reviewed in full: the virtio-gpu driver and tablets in the virtio-input driver.
+
+- **`pbr.display` version 2** (note 0020): screens with modes; `take`, which answers with a
+  capability of its own that the drawing calls must come through; buffers the driver makes;
+  `present` with the rectangles that changed; a notification when the picture is on the screen.
+  The draft note had no way to tell the taker from any other client; building found that at
+  once, and the taker's capability (derived, badged, watched) is the fix.
+- **The rules are in `lib/devices/src/display.rs`**, tested on the host: who the taker is,
+  which buffers exist, one picture at a time for each screen, rectangles inside the buffer,
+  the pixel conversions, and the checked row spans the framebuffer driver copies by.
+  `lib/driver/src/display.rs` answers the interface for any driver that implements `Backend`.
+- **The framebuffer driver** makes buffers of ordinary memory and copies presented rectangles
+  to the screen, converting to its format, so screens of three bytes a pixel work (M5's open
+  question). **The console** draws in a buffer and presents the rows that changed.
+- **Display buffers are DMA memory of their own**: a manifest key `buffers COUNT SIZE`, kept
+  (zeroed) across a driver's restart; the kernel's limit on one piece of DMA memory is 16 MiB.
+  Along the way: a driver's ordinary DMA memory is now handed over as a copy of the kept
+  original, so revoking the driver's access no longer takes the supervisor's copy too.
+- **The virtio-gpu driver** (subagent): two-dimensional, any number of screens, EDID, screens
+  plugged in and out. It passed its first boot: every picture on both screens matched.
+- **Tablets** (subagent): a virtio device with absolute axes is a tablet; `EVENT_POSITION`.
+  The brief was wrong about where y goes in a 16-byte event (the subagent caught it): both
+  coordinates are packed into `value`.
+- **Tests.** The display self-test shows pictures on every screen and the runner compares
+  QEMU's screenshots with them, pixel for pixel: a whole pattern while the kernel prints; one
+  changed rectangle; a new client after the driver crashed; and on the virtio-gpu, both
+  screens after the second was unplugged and plugged in again. The runner plugs that screen
+  by being a VNC client (`xtask/src/vnc.rs`), since QEMU has no command for it. Each tablet is
+  pointed with and must report exactly that place.
+- **The UEFI and EL2 test machines now have only the virtio-gpu.** Test machines have 1 GiB
+  (note 0026's Changes says why).
+- **Two bugs found outside stage 2:**
+  - *ARM64 at EL2 under newer firmware.* Chris ran the stress script on Impala (QEMU 10.2,
+    EDK2 2025.11) and the EL2 boot stopped before the kernel's first line. His register dump
+    showed the loader faulting for ever at its write to `HCR_EL2`: that firmware hands over
+    with `E2H` on, which makes EL1 register names used at EL2 reach EL2's registers, so the
+    loader was reprogramming EL2. Fixed in the loader and for the other cores (`dc6a364`;
+    note 0003). Chris confirmed the boot on Impala.
+  - *Storage giving up on a disk.* Stress on `7ec222c` failed 1 boot of 120 (ARM64 EL2): after
+    the device manager was restarted, the storage service gave up reopening a disk on the
+    first unexpected error, and the next write answered `DiskError`. It now retries anything
+    but "disabled" for the 30 seconds already allowed (`5d92be4`).
+  - The 17-minute hang of 10 November is still unexplained.

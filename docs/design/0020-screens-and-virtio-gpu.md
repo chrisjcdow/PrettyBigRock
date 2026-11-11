@@ -277,5 +277,33 @@ buffers' memory stays safe until the device is stopped (note 0018, section 4).
   - **Section 7's QEMU tests**: `Busy` is tested on the host only, since no driver here can be
     made slow on purpose; a buffer of the first taker is shown to be revoked by its memory
     capability no longer working.
+  - **A buffer whose present isn't done can't be destroyed** (`Busy`); otherwise its screen
+    would stay busy for good. Only a change of taker ends such a buffer.
+  - **virtio-gpu** (written by a Sonnet subagent to a brief, reviewed; `drivers/virtio-gpu`,
+    `lib/virtio/src/gpu.rs`, `lib/devices/src/edid.rs` and `screens.rs`):
+    - a present's rectangles are merged into at most four before they are sent (more than
+      was named may be copied, never less), so a present is at most seven commands and the
+      16 command slots are enough;
+    - making and destroying buffers and setting scanouts wait for the device's answer (at
+      most a second); a present doesn't, and is done when its fenced flush is answered;
+    - a destroyed buffer that is on the screen keeps its device resource, without its
+      memory, until the screen shows something else;
+    - modes: the size the device prefers, then eleven common sizes; any size from 64x64 that
+      fits a buffer is accepted;
+    - a screen's `identity` is its EDID maker, product and serial number. QEMU's screens all
+      give the same one, so the display server can't yet tell them apart by it (it has the
+      connector name too);
+    - an enabled output with an impossible size is treated as not connected.
+  - **How the test machines get two screens.** QEMU counts an output of its virtio-gpu as
+    plugged in when a viewer has asked for a size for it, and without a window the only
+    viewer is a VNC client. So in boot tests the runner is one (`xtask/src/vnc.rs`): it gives
+    the second output 1024x768 before the system starts (the first is 1280x800), and unplugs
+    it (0x0) and plugs it in again when the display test asks. A third output, always empty,
+    is what the virtio keyboard and mouse are tied to, so that the tablets on the first two
+    don't take their clicks; it also shows the driver an output with nothing in it.
+  - **The UEFI and EL2 test machines have no firmware screen** now (section 7's last
+    paragraph, done): the kernel reports 0 screens there and its messages are on the serial
+    port only. The M4 device-access test leaves out its two parts that need a page of
+    framebuffer on those machines; BIOS and ARM64 EL1 still run them.
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).

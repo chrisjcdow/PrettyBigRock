@@ -243,5 +243,10 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 11 November 2026 (stage 2): the test machines have 1 GiB of memory, not 512 MiB. The
+  services' budgets are fixed shares (note 0006, section 9); with a display driver's buffers
+  added, 512 MiB no longer left room to restart the storage service, which needs its budget
+  free while the one it replaces still holds its own. How the two virtio-gpu machines get
+  their screens, and what their keyboard and mouse are tied to, is in note 0020's Changes.
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).
