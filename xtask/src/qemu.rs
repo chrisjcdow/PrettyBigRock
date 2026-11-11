@@ -472,7 +472,7 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
                 matches!(child.try_wait(), Ok(Some(_)))
             });
             if !exited {
-                let regs = qmp.registers(cfg.cores);
+                let regs = name_addresses(qmp.registers(cfg.cores), cfg, image);
                 let _ = fs::write(log.with_extension("registers.txt"), &regs);
                 break Err(format!(
                     "the kernel said it was restarting, but the machine didn't restart.\n--- \
@@ -486,7 +486,7 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
         if text.contains("\nException on core") || text.contains("The kernel stopped because") {
             std::thread::sleep(Duration::from_secs(3));
             let text = fs::read_to_string(&log).unwrap_or_default();
-            let regs = qmp.registers(cfg.cores);
+            let regs = name_addresses(qmp.registers(cfg.cores), cfg, image);
             let _ = fs::write(log.with_extension("registers.txt"), &regs);
             break Err(format!(
                 "the kernel stopped.\n--- serial output ---\n{text}\n--- registers ---\n{regs}"
@@ -503,7 +503,7 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
             ));
         }
         if start.elapsed() > limit {
-            let regs = qmp.registers(cfg.cores);
+            let regs = name_addresses(qmp.registers(cfg.cores), cfg, image);
             let _ = fs::write(log.with_extension("registers.txt"), &regs);
             break Err(format!(
                 "no start-up report after {} seconds.\n--- serial output ---\n{text}\n--- \
@@ -658,6 +658,21 @@ const STAGES: [Stage; 4] = [
 ];
 
 /// A connection to QEMU's control socket, made when first needed.
+/// The registers and stacks QEMU gave, with the kernel function named for every address in
+/// them that is inside one (see [`crate::symbols`]). The kernel that was booted is beside the
+/// disk image: `build/debug/x.img` goes with `build/<architecture>/debug/kernel.elf`. If it
+/// can't be read, the dump is returned as it was.
+fn name_addresses(dump: String, cfg: &Config, image: &Path) -> String {
+    let kernel = image.parent().and_then(|profile| {
+        let build = profile.parent()?;
+        Some(build.join(cfg.arch).join(profile.file_name()?).join("kernel.elf"))
+    });
+    match kernel.as_deref().and_then(crate::symbols::Symbols::of_kernel) {
+        Some(symbols) => symbols.annotate(&dump),
+        None => dump,
+    }
+}
+
 /// Whether the serial log shows a passed program self-test followed by the kernel's line
 /// that it is restarting the machine.
 fn said_restarting(text: &str) -> bool {

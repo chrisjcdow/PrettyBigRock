@@ -27,6 +27,7 @@ mod classicdisk;
 mod elf;
 mod image;
 mod qemu;
+mod symbols;
 mod testdisks;
 
 /// A processor family PrettyBigRock is built for.
