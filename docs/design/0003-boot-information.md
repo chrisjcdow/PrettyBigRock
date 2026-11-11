@@ -72,6 +72,9 @@ must not rely on them, and replaces the page tables early.
   Any other `HVC` returns without doing anything.
 - Timers: `CNTHCTL_EL2` lets EL1 use the physical counter and timer, and `CNTVOFF_EL2` is 0.
   Floating-point instructions aren't trapped to EL2.
+- `HCR_EL2.E2H` is off, whatever the firmware left, unless the processor can't turn it off
+  (it then reads back as 1, and the kernel must expect `CNTHCTL_EL2` and `CPTR_EL2` in the
+  layout they have with E2H on if it later takes over EL2).
 - Other cores: parked by the firmware, as the device tree or ACPI tables describe (PSCI or a
   spin table).
 
@@ -187,6 +190,9 @@ table.
 - A fuller EL2 stub interface on Arm, if the virtual-machine work needs one.
 
 ## Changes
+- 11 November 2026: the `HCR_EL2.E2H` rule. Newer firmware hands over at EL2 with E2H on,
+  which made the loader's set-up of EL1 reprogram EL2 instead; found on Chris's machine with
+  QEMU 10.2 and EDK2 2025.11 (M6, while stress-testing stage 1).
 - 29 October 2026: version 1.0.
 - 29 October 2026: still 1.0, since nothing had been released. The entry point also receives
   `direct_map_base` in a second register, and the EL2 stub's interface is defined. Both
