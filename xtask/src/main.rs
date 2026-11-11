@@ -30,6 +30,8 @@ mod pictures;
 mod qemu;
 mod symbols;
 mod testdisks;
+#[allow(dead_code)]
+mod vnc;
 
 /// A processor family PrettyBigRock is built for.
 struct Arch {
