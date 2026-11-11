@@ -136,6 +136,7 @@ irqs 1
 | `match legacy NAME` | Which built-in legacy device (`com2`, `ps2`, `framebuffer`) |
 | `budget SIZE` | The memory budget for the process (suffixes `K`, `M`) |
 | `dma SIZE` | The size of its DMA memory (`0` if none; at most 4 MiB) |
+| `buffers COUNT SIZE` | Display drivers only (note 0020): `COUNT` more pieces of DMA memory (at most 8) of `SIZE` each (at most 16 MiB), to share with the driver's client one at a time. They are kept, zeroed, across a restart of the driver |
 | `irqs N` | How many message-signalled interrupts it wants (`0` if none) |
 | `args TEXT` | Its start-up arguments |
 

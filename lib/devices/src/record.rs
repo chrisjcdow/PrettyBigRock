@@ -7,7 +7,9 @@
 //! a crash in a driver.
 
 /// The size of an encoded record.
-pub const SIZE: usize = 232;
+pub const SIZE: usize = 360;
+/// The most display buffers a record can describe.
+pub const MAX_BUFFERS: usize = 8;
 /// The most interrupts a record can describe.
 pub const MAX_INTERRUPTS: usize = 8;
 /// The most BARs.
@@ -43,7 +45,9 @@ pub struct Screen {
     pub height: u32,
     /// Bytes from one row to the next.
     pub stride: u32,
-    /// 1: blue, green, red, unused; 2: red, green, blue, unused (`pbr.display`'s `PixelFormat`).
+    /// How a pixel lies in memory, lowest byte first. 1: blue, green, red, unused; 2: red,
+    /// green, blue, unused; 3: blue, green, red (three bytes a pixel); 4: red, green, blue
+    /// (three bytes).
     pub format: u32,
 }
 
@@ -76,6 +80,12 @@ pub struct Record {
     pub dma_size: u64,
     /// For [`Kind::Framebuffer`].
     pub screen: Screen,
+    /// A display driver's buffers (note 0020, section 4): more DMA memory, each a memory
+    /// object of its own so that it can be shared with the driver's client. The bus address
+    /// and size of each; the first `buffer_count` are real.
+    pub buffers: [(u64, u64); MAX_BUFFERS],
+    /// How many of `buffers` are real.
+    pub buffer_count: u8,
 }
 
 /// What was wrong with a record.
@@ -112,6 +122,8 @@ impl Record {
             dma_bus: 0,
             dma_size: 0,
             screen: Screen::default(),
+            buffers: [(0, 0); MAX_BUFFERS],
+            buffer_count: 0,
         }
     }
 
@@ -126,6 +138,7 @@ impl Record {
         b[12..16].copy_from_slice(&[self.class, self.subclass, self.prog_if, self.revision]);
         b[16] = self.bars.iter().filter(|&&s| s != 0).count() as u8;
         b[17] = self.interrupt_count;
+        b[18] = self.buffer_count;
         for (i, s) in self.bars.iter().enumerate() {
             b[24 + 8 * i..32 + 8 * i].copy_from_slice(&s.to_le_bytes());
         }
@@ -139,6 +152,10 @@ impl Record {
         b[220..224].copy_from_slice(&self.screen.height.to_le_bytes());
         b[224..228].copy_from_slice(&self.screen.stride.to_le_bytes());
         b[228..232].copy_from_slice(&self.screen.format.to_le_bytes());
+        for (i, (bus, size)) in self.buffers.iter().enumerate() {
+            b[232 + 16 * i..240 + 16 * i].copy_from_slice(&bus.to_le_bytes());
+            b[240 + 16 * i..248 + 16 * i].copy_from_slice(&size.to_le_bytes());
+        }
         b
     }
 
@@ -180,7 +197,11 @@ impl Record {
         if usize::from(r.interrupt_count) > MAX_INTERRUPTS {
             return Err(Error::BadCount);
         }
-        if b[18..24].iter().any(|&x| x != 0) {
+        r.buffer_count = b[18];
+        if usize::from(r.buffer_count) > MAX_BUFFERS {
+            return Err(Error::BadCount);
+        }
+        if b[19..24].iter().any(|&x| x != 0) {
             return Err(Error::NotZero);
         }
         for i in 0..MAX_INTERRUPTS {
@@ -194,6 +215,16 @@ impl Record {
             stride: u32_at(224),
             format: u32_at(228),
         };
+        for i in 0..MAX_BUFFERS {
+            r.buffers[i] = (u64_at(232 + 16 * i), u64_at(240 + 16 * i));
+        }
+        // The buffers that are real have a size; the rest are empty.
+        let real = usize::from(r.buffer_count);
+        if r.buffers[..real].iter().any(|&(_, size)| size == 0)
+            || r.buffers[real..].iter().any(|&b| b != (0, 0))
+        {
+            return Err(Error::BadCount);
+        }
         Ok(r)
     }
 }
@@ -214,6 +245,9 @@ mod tests {
         r.interrupt_count = 1;
         r.dma_bus = 0x1234_5000;
         r.dma_size = 0x10_0000;
+        r.buffers[0] = (0x4000_0000, 0xA0_0000);
+        r.buffers[1] = (0x4100_0000, 0xA0_0000);
+        r.buffer_count = 2;
         r
     }
 
@@ -251,6 +285,16 @@ mod tests {
         let mut b = good;
         b[20] = 1;
         assert_eq!(Record::decode(&b), Err(Error::NotZero));
+        // More buffers than there can be; a real buffer with no size; one past the count.
+        let mut b = good;
+        b[18] = 9;
+        assert_eq!(Record::decode(&b), Err(Error::BadCount));
+        let mut b = good;
+        b[240..248].fill(0);
+        assert_eq!(Record::decode(&b), Err(Error::BadCount));
+        let mut b = good;
+        b[232 + 32] = 1;
+        assert_eq!(Record::decode(&b), Err(Error::BadCount));
         // Longer is fine.
         let mut long = good.to_vec();
         long.extend_from_slice(&[0xAA; 64]);
@@ -267,6 +311,7 @@ mod tests {
             }
             if let Ok(r) = Record::decode(&b) {
                 assert!(usize::from(r.interrupt_count) <= MAX_INTERRUPTS);
+                assert!(usize::from(r.buffer_count) <= MAX_BUFFERS);
             }
         }
     }

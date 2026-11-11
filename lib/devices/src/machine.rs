@@ -42,19 +42,35 @@ pub struct Screen {
 }
 
 impl Screen {
-    /// The format as the record and `pbr.display` number it (1 blue lowest, 2 red lowest), if
-    /// it is one of the two 32-bit layouts drivers know and the numbers are sane.
+    /// The format as the device record numbers it (1 and 2: four bytes a pixel, blue or red
+    /// lowest; 3 and 4: the same with three bytes a pixel), if it is one of the layouts the
+    /// framebuffer driver knows and the numbers are sane.
     pub fn format(&self) -> Option<u32> {
-        let sane = self.bits_per_pixel == 32
-            && self.width != 0
+        let bytes = match self.bits_per_pixel {
+            32 => 4,
+            24 => 3,
+            _ => return None,
+        };
+        let sane = self.width != 0
             && self.height != 0
-            && u64::from(self.stride) >= u64::from(self.width) * 4
+            && u64::from(self.stride) >= u64::from(self.width) * bytes
             && u64::from(self.stride) * u64::from(self.height) <= self.len;
-        match (sane, self.red_shift, self.blue_shift) {
-            (true, 16, 0) => Some(1),
-            (true, 0, 16) => Some(2),
+        match (sane, bytes, self.red_shift, self.blue_shift) {
+            (true, 4, 16, 0) => Some(1),
+            (true, 4, 0, 16) => Some(2),
+            (true, 3, 16, 0) => Some(3),
+            (true, 3, 0, 16) => Some(4),
             _ => None,
         }
+    }
+}
+
+impl Screen {
+    /// Whether this screen's memory starts inside the `size` bytes of device memory at `base`:
+    /// that is, whether the firmware's screen is drawn by the device those bytes belong to. The
+    /// device manager uses it so that one device never gets two drivers (note 0020, section 5).
+    pub fn inside(&self, base: u64, size: u64) -> bool {
+        self.base >= base && self.base - base < size
     }
 }
 
@@ -194,9 +210,21 @@ mod tests {
         // Nonsense is refused, not passed on.
         assert_eq!(Screen { stride: 100, ..s }.format(), None);
         assert_eq!(Screen { len: 1000, ..s }.format(), None);
-        assert_eq!(Screen { bits_per_pixel: 24, ..s }.format(), None);
+        // Three bytes a pixel, which 1.3's VESA modes can be: a stride of three bytes a pixel is
+        // enough for those.
+        assert_eq!(Screen { bits_per_pixel: 24, ..s }.format(), Some(3));
+        assert_eq!(Screen { bits_per_pixel: 24, stride: 3840, ..rgb }.format(), Some(4));
+        assert_eq!(Screen { bits_per_pixel: 24, stride: 3839, ..s }.format(), None);
+        assert_eq!(Screen { bits_per_pixel: 16, ..s }.format(), None);
         assert_eq!(Screen { red_shift: 8, ..s }.format(), None);
         assert!(Machine::decode(&b, 0).unwrap().screens.is_empty());
+        // Whose memory the screen is in: a device's 16 MiB BAR at 0xFD00_0000, and not others.
+        assert!(s.inside(0xFD00_0000, 16 << 20));
+        assert!(s.inside(0xFC00_0000, 32 << 20));
+        assert!(!s.inside(0xFE00_0000, 16 << 20));
+        assert!(!s.inside(0xFC00_0000, 16 << 20));
+        assert!(!s.inside(0xFD00_0000, 0));
+        assert!(!s.inside(u64::MAX, u64::MAX));
     }
 
     #[test]

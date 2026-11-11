@@ -25,8 +25,13 @@ pub const MAX_MATCHES: usize = 16;
 pub const MAX_ARGS: usize = 128;
 /// The most interrupts a driver can ask for.
 pub const MAX_IRQS: u32 = 8;
-/// The most DMA memory a driver can ask for (what the kernel allows, note 0010).
+/// The most DMA memory a driver can ask for with `dma`.
 pub const MAX_DMA: u64 = 4 << 20;
+/// The most display buffers a driver can ask for with `buffers`, and the largest each can be
+/// (what the kernel allows for one piece of DMA memory, note 0010).
+pub const MAX_BUFFERS: u32 = 8;
+/// See [`MAX_BUFFERS`].
+pub const MAX_BUFFER_SIZE: u64 = 16 << 20;
 /// The smallest and largest memory budgets.
 pub const MIN_BUDGET: u64 = 64 << 10;
 /// See [`MIN_BUDGET`].
@@ -90,6 +95,9 @@ pub struct Manifest {
     pub budget: u64,
     /// Its DMA memory in bytes (0: none).
     pub dma: u64,
+    /// Display buffers (`buffers COUNT SIZE`, note 0020 section 4): how many more pieces of
+    /// DMA memory it wants, and the size of each in bytes. (0, 0) if none.
+    pub buffers: (u32, u64),
     /// How many message-signalled interrupts it wants.
     pub irqs: u32,
     /// Its start-up arguments.
@@ -184,16 +192,17 @@ impl Manifest {
             ReadError::NotText | ReadError::BadQuote => Error::NotText,
         })?;
         let (mut class, mut budget, mut dma, mut irqs, mut args) = (None, None, None, None, None);
+        let mut buffers = None;
         let mut matches = Vec::new();
         for line in lines {
             let (key, value) = (line.key, line.rest);
             if value.is_empty() {
                 // Every key needs a value (`dma 0` and `irqs 0` say "none").
-                return if matches!(key, "class" | "match" | "budget" | "dma" | "irqs" | "args") {
-                    Err(Error::BadValue)
-                } else {
-                    Err(Error::UnknownKey)
-                };
+                let known = matches!(
+                    key,
+                    "class" | "match" | "budget" | "dma" | "buffers" | "irqs" | "args"
+                );
+                return if known { Err(Error::BadValue) } else { Err(Error::UnknownKey) };
             }
             fn once<T>(slot: &mut Option<T>, v: T) -> Result<(), Error> {
                 if slot.is_some() {
@@ -233,6 +242,24 @@ impl Manifest {
                     }
                     once(&mut dma, v)?;
                 }
+                "buffers" => {
+                    // `buffers COUNT SIZE`: both must be there, and neither may be nothing.
+                    let mut w = value.split_ascii_whitespace();
+                    let (count, each) = (w.next(), w.next());
+                    let (Some(count), Some(each), None) = (count, each, w.next()) else {
+                        return Err(Error::BadValue);
+                    };
+                    let (count, each) = (size(count)?, size(each)?);
+                    if count == 0
+                        || count > u64::from(MAX_BUFFERS)
+                        || each == 0
+                        || each > MAX_BUFFER_SIZE
+                        || !each.is_multiple_of(4096)
+                    {
+                        return Err(Error::OutOfRange);
+                    }
+                    once(&mut buffers, (count as u32, each))?;
+                }
                 "irqs" => {
                     let v = size(value)?;
                     if v > u64::from(MAX_IRQS) || value.ends_with(['K', 'M']) {
@@ -255,6 +282,7 @@ impl Manifest {
                 matches,
                 budget,
                 dma: dma.unwrap_or(0),
+                buffers: buffers.unwrap_or((0, 0)),
                 irqs: irqs.unwrap_or(0),
                 args: args.unwrap_or_default(),
             }),
@@ -345,6 +373,13 @@ mod tests {
                 .unwrap();
         assert_eq!(k.matches[1], Match::PciClass { class: 3, subclass: 0, prog_if: None });
         assert_eq!((k.dma, k.irqs), (0, 0));
+        assert_eq!(k.buffers, (0, 0));
+        // A display driver's buffers: how many, and how big each is.
+        let g = Manifest::parse(
+            b"class display\nmatch pci 1af4:1050\nbudget 4M\ndma 256K\nbuffers 4 10M\nirqs 1\n",
+        )
+        .unwrap();
+        assert_eq!((g.dma, g.buffers), (256 << 10, (4, 10 << 20)));
         let c = Manifest::parse(b"class input\nmatch pci class c:3:30\nbudget 100K").unwrap();
         assert_eq!(c.matches[0], Match::PciClass { class: 0xc, subclass: 3, prog_if: Some(0x30) });
     }
@@ -364,6 +399,16 @@ mod tests {
         assert_eq!(ok(&format!("{base}dma 5000\n")), Err(Error::OutOfRange));
         assert_eq!(ok(&format!("{base}dma 5M\n")), Err(Error::OutOfRange));
         assert_eq!(ok(&format!("{base}irqs 9\n")), Err(Error::OutOfRange));
+        assert_eq!(ok(&format!("{base}buffers\n")), Err(Error::BadValue));
+        assert_eq!(ok(&format!("{base}buffers 4\n")), Err(Error::BadValue));
+        assert_eq!(ok(&format!("{base}buffers 4 1M 2\n")), Err(Error::BadValue));
+        assert_eq!(ok(&format!("{base}buffers four 1M\n")), Err(Error::BadValue));
+        assert_eq!(ok(&format!("{base}buffers 0 1M\n")), Err(Error::OutOfRange));
+        assert_eq!(ok(&format!("{base}buffers 9 1M\n")), Err(Error::OutOfRange));
+        assert_eq!(ok(&format!("{base}buffers 2 0\n")), Err(Error::OutOfRange));
+        assert_eq!(ok(&format!("{base}buffers 2 17M\n")), Err(Error::OutOfRange));
+        assert_eq!(ok(&format!("{base}buffers 2 5000\n")), Err(Error::OutOfRange));
+        assert_eq!(ok(&format!("{base}buffers 2 1M\nbuffers 2 1M\n")), Err(Error::Repeated));
         assert_eq!(ok(&format!("{base}irqs 1M\n")), Err(Error::OutOfRange));
         assert_eq!(ok("class block\nmatch pci 1:2\nbudget 1G\n"), Err(Error::BadValue));
         assert_eq!(ok("class block\nmatch pci 1:2\nbudget 4K\n"), Err(Error::OutOfRange));
