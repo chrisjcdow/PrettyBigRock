@@ -4,4 +4,4 @@
 # The firmware's framebuffer (docs/design/0011-device-manager-and-drivers.md).
 class display
 match legacy framebuffer
-budget 1M
+budget 40M

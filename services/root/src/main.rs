@@ -15,6 +15,7 @@ mod blocktest;
 mod classictest;
 mod crashtest;
 mod devtest;
+mod displaytest;
 mod drivertest;
 mod fattest;
 mod filestest;

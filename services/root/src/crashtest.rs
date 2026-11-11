@@ -33,7 +33,7 @@ const CHUNK: u32 = 128;
 /// QEMU's software emulation, on two host cores shared by four virtual ones, where starting
 /// a driver alone takes up to a second. The test records the slowest restart so that the real
 /// number is visible, and the limit still catches a restart that hangs.
-const RESTART_LIMIT_MS: u64 = 5000;
+pub const RESTART_LIMIT_MS: u64 = 5000;
 /// How much the device manager's memory use may drift over many restarts.
 const LEAK_MARGIN: u64 = 64 * 1024;
 
@@ -47,7 +47,7 @@ fn info_of(d: &Devmgr, id: u32) -> Result<DeviceInfo, String> {
 }
 
 /// Opens the device's driver, trying again while it is starting, for at most `limit_ms`.
-fn reconnect(d: &Devmgr, id: u32, limit_ms: u64) -> Result<Handle, String> {
+pub fn reconnect(d: &Devmgr, id: u32, limit_ms: u64) -> Result<Handle, String> {
     let t0 = time::now();
     loop {
         match d.client.open(id) {
@@ -125,6 +125,11 @@ fn end_driver(d: &Devmgr, id: u32, h: &Handle, how: How) -> Result<(), String> {
         }
         How::Stop => d.debug.stop(id).map_err(|e| format!("stopping the driver: {e}")),
     }
+}
+
+/// Crashes the driver that `driver` (a client's endpoint) talks to, for another driver's test.
+pub fn crash_driver(d: &Devmgr, id: u32, driver: &Endpoint, kind: CrashKind) -> Result<(), String> {
+    end_driver(d, id, &driver.0, How::Crash(kind))
 }
 
 /// One crash and restart. Returns how long the restart took, in milliseconds.
@@ -235,7 +240,7 @@ enum Bystander {
 impl Bystander {
     fn ask(&self) -> bool {
         match self {
-            Bystander::Display(c) => c.info().is_ok(),
+            Bystander::Display(c) => c.screens().is_ok(),
             Bystander::Input(c) => c.info().is_ok(),
             Bystander::Serial(c) => c.read(0).is_ok(),
         }

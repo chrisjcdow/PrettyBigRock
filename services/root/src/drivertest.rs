@@ -6,8 +6,7 @@
 //!
 //! - The scan: the device manager found exactly the devices the QEMU configuration has and
 //!   every driver is running.
-//! - The framebuffer: the screen can be taken from the kernel and drawn on, and a kernel
-//!   message afterwards leaves the pixels alone.
+//! - The screens: see `displaytest.rs`.
 //! - COM2 (x86-64): text goes out of the port (the test runner captures it), and with the chip
 //!   in loopback a byte comes back with the readable notification.
 //! - Keyboards and mice: the test runner presses keys and moves the mouse through QEMU when it
@@ -19,9 +18,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::ManuallyDrop;
-use core::ptr::{read_volatile, write_volatile};
 use granite::Handle;
-use granite::device::{self, IoPorts};
+use granite::device::IoPorts;
 use granite::endpoint::Endpoint;
 use granite::memory::{Mapping, Memory};
 use granite::notification::Notification;
@@ -31,7 +29,6 @@ use granite::sys::{perm, rights};
 use granite::time;
 use pbr_devices::keys;
 use pbr_interfaces::pbr_devices::{DeviceClass, DeviceInfo, DeviceState};
-use pbr_interfaces::pbr_display as display;
 use pbr_interfaces::pbr_input::{self as input, InputKind};
 use pbr_interfaces::pbr_serial as serial;
 
@@ -84,11 +81,6 @@ pub fn run(d: &Devmgr, inputs: &Inputs) -> Result<String, String> {
     };
     let of = |class: DeviceClass| list.iter().filter(move |x| x.kind == class);
 
-    if let Some(screen) = m.screen {
-        let info = of(DeviceClass::Display).next().ok_or("no display")?;
-        framebuffer(open(info)?, screen)?;
-        done.push("the framebuffer");
-    }
     if cfg!(target_arch = "x86_64") {
         let info = of(DeviceClass::Serial).next().ok_or("no serial port")?;
         let ports = inputs.ports.as_ref().ok_or("no I/O ports")?;
@@ -107,6 +99,18 @@ pub fn run(d: &Devmgr, inputs: &Inputs) -> Result<String, String> {
     keyboard_events(&mut pads[kb], "the virtio keyboard")?;
     mouse_events(&mut pads[mouse], "the virtio mouse")?;
     done.push("a virtio keyboard and mouse");
+
+    // The displays (`displaytest.rs`): the runner answers on the virtio keyboard when it has
+    // looked at the screens, so this comes once that keyboard is known to work.
+    let mut screens = 0;
+    for info in of(DeviceClass::Display) {
+        let firmware = info.name.starts_with("framebuffer");
+        let size = m.screen.filter(|_| firmware).map(|(width, height, _)| (width, height));
+        screens += crate::displaytest::run(d, info, size, &mut pads[kb])?;
+    }
+    if screens > 0 {
+        done.push("the screens");
+    }
 
     granite::println!("Device self-test: inject flood");
     let sent = pads[mouse].flood()?;
@@ -179,67 +183,6 @@ fn scan(d: &Devmgr, m: &Machine) -> Result<Vec<DeviceInfo>, String> {
     Ok(list)
 }
 
-/// A screen the kernel's text is taken off, then drawn on.
-fn framebuffer(ep: Endpoint, (width, height, stride): (u32, u32, u32)) -> Result<(), String> {
-    let c = display::Client::new(ep);
-    let info = c.info().map_err(|e| format!("display info: {e}"))?;
-    if (info.width, info.height, info.stride) != (width, height, stride) {
-        return Err(format!(
-            "the driver says {info:?}, the machine says {width}x{height}/{stride}"
-        ));
-    }
-    let memory = c.framebuffer().map_err(|e| format!("the framebuffer: {e}"))?;
-    // A client works the size out from the screen: whole pages, as many as the rows need.
-    let size = (u64::from(stride) * u64::from(height)).next_multiple_of(4096);
-    let map = memory
-        .map(0, size, perm::READ_WRITE | perm::WRITE_COMBINING)
-        .map_err(|e| format!("mapping the framebuffer: {e}"))?;
-
-    // Take the screen from the kernel, then draw. Without the right to, the kernel would keep
-    // drawing its text over this.
-    // (The log handle is the program's own; only look at it.)
-    let log = ManuallyDrop::new(Handle::from_raw(granite::log::handle()));
-    device::console_screen_release(&log).map_err(|e| format!("taking the screen: {e}"))?;
-    let (w, h) = (width.min(256) as usize, height as usize);
-    let pixel =
-        |x: usize, y: usize| (x as u32).wrapping_mul(0x0101_0101) ^ (y as u32 * 0x0001_0F01);
-    let draw_at = |x: usize, y: usize| y * stride as usize + x * 4;
-    for y in 0..h {
-        for x in 0..w {
-            // SAFETY: inside the mapping, which is at least `stride * height` bytes.
-            unsafe {
-                write_volatile(map.as_mut_ptr().add(draw_at(x, y)).cast::<u32>(), pixel(x, y))
-            };
-        }
-    }
-    let check = |when: &str| -> Result<(), String> {
-        for y in 0..h {
-            for x in 0..w {
-                // SAFETY: as above.
-                let got = unsafe { read_volatile(map.as_ptr().add(draw_at(x, y)).cast::<u32>()) };
-                if got != pixel(x, y) {
-                    return Err(format!(
-                        "{when}: pixel ({x}, {y}) is {got:#x}, expected {:#x}",
-                        pixel(x, y)
-                    ));
-                }
-            }
-        }
-        Ok(())
-    };
-    check("after drawing")?;
-    // The kernel talks: if it still drew on the screen, the left edge, where its text goes,
-    // would change.
-    for i in 0..8 {
-        granite::println!(
-            "Device self-test: the kernel log carries on while the screen is drawn on ({i})"
-        );
-    }
-    check("after the kernel printed")?;
-    drop::<Mapping>(map);
-    Ok(())
-}
-
 /// Writes to COM2, then loops a byte back through the chip.
 fn com2(ep: Endpoint, ports: &IoPorts) -> Result<(), String> {
     let c = serial::Client::new(ep);
@@ -280,7 +223,7 @@ fn com2(ep: Endpoint, ports: &IoPorts) -> Result<(), String> {
 }
 
 /// An opened input device.
-struct Pad {
+pub struct Pad {
     kind: InputKind,
     virtio: bool,
     ring: Consumer,
@@ -411,7 +354,7 @@ impl Pad {
 const FLOOD: u32 = 700;
 
 /// The runner pressed and released A.
-fn keyboard_events(p: &mut Pad, who: &str) -> Result<(), String> {
+pub fn keyboard_events(p: &mut Pad, who: &str) -> Result<(), String> {
     if !matches!(p.kind, InputKind::Keyboard | InputKind::KeyboardAndMouse) {
         return Err(format!("{who} says it is a {:?}", p.kind));
     }

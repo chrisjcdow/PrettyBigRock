@@ -4,6 +4,7 @@
 //! Running PrettyBigRock in QEMU: by hand (`cargo xtask run`) and as automatic boot tests
 //! (`cargo xtask qemu-test`).
 
+use crate::pictures;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -76,7 +77,7 @@ pub const TESTS: &[Config] = &[
             "Sandbox self-test passed",
             "Supervision self-test passed",
             "Shell self-test passed",
-            "the framebuffer",
+            "the screens",
             "a virtio keyboard and mouse",
             "a full ring",
             "COM2 (output and loopback)",
@@ -107,7 +108,7 @@ pub const TESTS: &[Config] = &[
             "Sandbox self-test passed",
             "Supervision self-test passed",
             "Shell self-test passed",
-            "the framebuffer",
+            "the screens",
             "a virtio keyboard and mouse",
             "a full ring",
             "COM2 (output and loopback)",
@@ -138,7 +139,7 @@ pub const TESTS: &[Config] = &[
             "Sandbox self-test passed",
             "Supervision self-test passed",
             "Shell self-test passed",
-            "the framebuffer",
+            "the screens",
             "a virtio keyboard and mouse",
             "a full ring",
             "receiver watches and the machine capability",
@@ -166,7 +167,7 @@ pub const TESTS: &[Config] = &[
             "Sandbox self-test passed",
             "Supervision self-test passed",
             "Shell self-test passed",
-            "the framebuffer",
+            "the screens",
             "a virtio keyboard and mouse",
             "a full ring",
             "receiver watches and the machine capability",
@@ -298,7 +299,7 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     let mut cmd;
     if cfg.arch == "x86_64" {
         cmd = Command::new("qemu-system-x86_64");
-        cmd.args(["-machine", "q35", "-m", "512"]);
+        cmd.args(["-machine", "q35", "-m", MEMORY_MIB]);
         if let Some(cpu) = cfg.cpu {
             cmd.args(["-cpu", cpu]);
         }
@@ -333,7 +334,7 @@ fn command(cfg: &Config, image: &Path, work: &Path) -> Result<Command, String> {
     } else {
         cmd = Command::new("qemu-system-aarch64");
         let machine = if cfg.el2 { "virt,virtualization=on" } else { "virt" };
-        cmd.args(["-machine", machine, "-cpu", cfg.cpu.unwrap_or("cortex-a72"), "-m", "512"]);
+        cmd.args(["-machine", machine, "-cpu", cfg.cpu.unwrap_or("cortex-a72"), "-m", MEMORY_MIB]);
         cmd.arg("-smp").arg(cfg.cores.to_string());
         let fw = first_existing(&[
             "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
@@ -430,6 +431,8 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     let mut qmp = Qmp::new(qmp_path);
     let mut injected = [false; STAGES.len()];
     let mut typed = 0;
+    // The pictures already looked at for the display self-test: (picture, device).
+    let mut looked: Vec<(u32, String)> = Vec::new();
     let result = loop {
         let text = fs::read_to_string(&log).unwrap_or_default();
         // The shell test: a command each time the console starts waiting for a line.
@@ -459,6 +462,20 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
                     ));
                 }
             }
+        }
+        // The display self-test: the guest says which picture every screen of a display
+        // shows; look at each, and press a key to say so (note 0020, section 7).
+        if let Some((number, device)) = next_look(&text, &looked) {
+            eprintln!("  (looking at picture {number} on {device})");
+            let seen = look(&mut qmp, &text, number, &device, &log).and_then(|()| qmp.press_a());
+            if let Err(e) = seen {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "picture {number} on {device}: {e}\n--- serial output ---\n{text}"
+                ));
+            }
+            looked.push((number, device));
         }
         if text.contains(REPORT_DONE) {
             break Ok(text);
@@ -657,6 +674,54 @@ const STAGES: [Stage; 4] = [
     Stage { marker: "Device self-test: inject ps2", virtio: false, what: What::Typing },
 ];
 
+/// The memory every test machine has, in MiB. It was 512 until M6: the services' budgets (a
+/// fixed share of memory each, note 0006, section 9) then grew by a display driver's buffers
+/// (note 0020), and a service being restarted needs its budget free while the one it replaces
+/// still holds its own, which 512 MiB no longer left room for.
+const MEMORY_MIB: &str = "1024";
+
+/// The first picture the guest has asked the runner to look at that it hasn't yet: the
+/// picture's number and the display device's name.
+fn next_look(text: &str, looked: &[(u32, String)]) -> Option<(u32, String)> {
+    (1..=3)
+        .flat_map(|n| pictures::asked(text, n).into_iter().map(move |d| (n, d)))
+        .find(|ask| !looked.contains(ask))
+}
+
+/// Takes a screenshot of every screen of `device` that the guest says shows picture
+/// `number`, and compares each with that picture. A screenshot that is wrong is kept beside
+/// the log, for a person to look at.
+fn look(qmp: &mut Qmp, text: &str, number: u32, device: &str, log: &Path) -> Result<(), String> {
+    let screens = pictures::shown(text, number, device);
+    if screens.is_empty() {
+        return Err("the guest didn't say which screens show it".into());
+    }
+    // The device manager names a device after its driver; QEMU knows it by the name given
+    // on its command line ([`command`]).
+    let qemu_name = if device.starts_with("virtio-gpu") { "gpu2" } else { "gpu" };
+    for want in &screens {
+        let file = log.with_extension(format!("picture{number}-{qemu_name}-{}.ppm", want.screen));
+        let _ = fs::remove_file(&file);
+        qmp.screendump(qemu_name, want.screen, &file)?;
+        let bytes = fs::read(&file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+        let result =
+            pictures::read_ppm(&bytes).and_then(|shot| pictures::compare(&shot, number, want));
+        match result {
+            Ok(()) => {
+                let _ = fs::remove_file(&file);
+            }
+            Err(e) => {
+                return Err(format!(
+                    "screen {}: {e} (screenshot kept: {})",
+                    want.screen,
+                    file.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A connection to QEMU's control socket, made when first needed.
 /// The registers and stacks QEMU gave, with the kernel function named for every address in
 /// them that is inside one (see [`crate::symbols`]). The kernel that was booted is beside the
@@ -820,6 +885,28 @@ impl Qmp {
             events.join(",")
         );
         self.command(&json)
+    }
+
+    /// Has QEMU write a picture of what screen `head` of its device `device` shows to `file`.
+    fn screendump(&mut self, device: &str, head: u32, file: &Path) -> Result<(), String> {
+        self.connect()?;
+        self.command(&format!(
+            r#"{{"execute":"screendump","arguments":{{"filename":"{}","device":"{device}","head":{head}}}}}"#,
+            file.display()
+        ))
+    }
+
+    /// Presses and releases A on the virtio keyboard: the runner's answer to the guest.
+    fn press_a(&mut self) -> Result<(), String> {
+        self.connect()?;
+        let key = |down: bool| {
+            format!(
+                r#"{{"type":"key","data":{{"down":{down},"key":{{"type":"qcode","data":"a"}}}}}}"#
+            )
+        };
+        self.send(true, &[key(true)])?;
+        std::thread::sleep(Duration::from_millis(100));
+        self.send(true, &[key(false)])
     }
 
     /// Types `line` and presses Enter on the virtio keyboard, a key at a time, the way a person

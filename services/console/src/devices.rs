@@ -24,7 +24,7 @@
 //! - a **keyboard thread** for each keyboard ([`KeyboardThread`]), which sleeps until the
 //!   keyboard's doorbell rings, then turns its events into keys.
 
-use crate::screen::Screen;
+use crate::screen::{Screen, Taken};
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::format;
@@ -44,7 +44,7 @@ use granite::{Error, time};
 use pbr_interfaces::pbr_devices::{
     self as devices, DeviceClass, DeviceInfo, DeviceState, DevicesError,
 };
-use pbr_interfaces::pbr_display::{self as display, PixelFormat};
+use pbr_interfaces::pbr_display as display;
 use pbr_interfaces::pbr_input::{self as input, InputKind};
 use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
 use pbr_terminal::Key;
@@ -325,7 +325,7 @@ impl Devices {
         let gone = self
             .display
             .as_ref()
-            .is_some_and(|client| matches!(client.info(), Err(ref e) if lost(e)));
+            .is_some_and(|client| matches!(client.screens(), Err(ref e) if lost(e)));
         if gone {
             granite::println!("console: the screen has gone; looking for it again.");
             self.display = None;
@@ -439,31 +439,48 @@ impl Devices {
         }
     }
 
-    /// Opens display `id`: takes the screen from the kernel (by asking for the framebuffer),
-    /// maps it and tells the main thread.
+    /// Opens display `id`: takes it (which also takes the screen from the kernel), gets a
+    /// buffer for its first connected screen, maps it and tells the main thread.
     fn open_display(&mut self, id: u32) -> Result<(), Trouble> {
         let mut client = display::Client::new(self.endpoint(id)?);
         client.set_timeout_ms(CALL_MS);
-        let info = client.info().map_err(|e| trouble("the screen's size", e))?;
-        let order = match info.format {
-            PixelFormat::Bgrx => PixelOrder::Bgrx,
-            PixelFormat::Rgbx => PixelOrder::Rgbx,
+        let listed = client.screens().map_err(|e| trouble("its screens", e))?;
+        // A device can have several screens; the console writes on the first that has
+        // something plugged in. (The desktop, note 0022, uses them all.)
+        let Some(info) = listed.screens.iter().find(|s| s.connected && s.screen < 16) else {
+            return Err(Trouble::Failed(String::from("nothing is plugged in to it")));
         };
-        let layout = Layout::new(info.width, info.height, info.stride, order).ok_or_else(|| {
-            Trouble::Failed(format!(
-                "a screen of {}x{} pixels ({} bytes a row) is of no use",
-                info.width, info.height, info.stride
-            ))
-        })?;
-        // Asking for the framebuffer is what makes the driver take the screen from the kernel.
-        let memory = client.framebuffer().map_err(|e| trouble("the framebuffer", e))?;
-        // The driver says how big the screen is, but the mapping is what is really there.
-        let size = layout.bytes().next_multiple_of(4096);
-        let map = memory
-            .map(0, size, perm::READ_WRITE | perm::WRITE_COMBINING)
-            .map_err(|e| Trouble::Failed(format!("mapping the framebuffer: {e}")))?;
-        let screen = Screen::new(layout, map, memory).ok_or_else(|| {
-            Trouble::Failed(String::from("the framebuffer is smaller than the screen"))
+        let taken = client.take().map_err(|e| trouble("taking it", e))?;
+        let (mut taker, done) = (taken.taker, taken.done);
+        taker.set_timeout_ms(CALL_MS);
+        // A screen that is plugged in but switched off shows the mode it likes best.
+        let mut mode = info.current.clone();
+        if mode.width == 0 {
+            let Some(first) = info.modes.first() else {
+                return Err(Trouble::Failed(String::from("the screen is off and offers no mode")));
+            };
+            taker.set_mode(info.screen, first).map_err(|e| trouble("switching it on", e))?;
+            mode = first.clone();
+        }
+        let made = taker.create_buffer(info.screen).map_err(|e| trouble("a buffer", e))?;
+        // Buffers are always blue, green, red, one unused byte, whatever the screen itself is.
+        let layout = Layout::new(mode.width, mode.height, made.stride, PixelOrder::Bgrx)
+            .ok_or_else(|| {
+                Trouble::Failed(format!(
+                    "a screen of {}x{} pixels ({} bytes a row) is of no use",
+                    mode.width, mode.height, made.stride
+                ))
+            })?;
+        // The driver says how big the buffer is, but the mapping is what is really there
+        // (`Screen::new` compares them).
+        let map = made
+            .memory
+            .map(perm::READ_WRITE)
+            .map_err(|e| Trouble::Failed(format!("mapping the buffer: {e}")))?;
+        let taken =
+            Taken { taker, done, screen: info.screen, buffer: made.buffer, _memory: made.memory };
+        let screen = Screen::new(layout, map, taken).ok_or_else(|| {
+            Trouble::Failed(String::from("the buffer is smaller than the screen"))
         })?;
         self.display = Some(client);
         self.problem = None;

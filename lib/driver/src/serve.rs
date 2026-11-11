@@ -18,6 +18,11 @@ pub trait Service {
 
     /// Interrupts fired: bit *i* is interrupt *i* (see `Device::bind_interrupts`).
     fn signal(&mut self, bits: u64);
+
+    /// Every capability carrying the watched badge `badge` has gone (note 0013, section 1).
+    /// Only drivers that hand out such capabilities hear this; the others needn't write it,
+    /// because a trait can give a function a body of its own, used unless a type replaces it.
+    fn gone(&mut self, _badge: u64) {}
 }
 
 /// How many receive failures in a row end the driver (it is restarted by the device manager).
@@ -38,8 +43,10 @@ pub fn serve(ep: &Endpoint, buffer_size: usize, service: &mut impl Service) -> !
                 failures = 0;
                 service.signal(bits);
             }
-            // Drivers don't mint watched badges, so this never comes.
-            Ok(Event::Gone(_)) => failures = 0,
+            Ok(Event::Gone(badge)) => {
+                failures = 0;
+                service.gone(badge);
+            }
             Err(e) => {
                 failures += 1;
                 if failures >= MAX_FAILURES {

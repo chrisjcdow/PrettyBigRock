@@ -212,6 +212,8 @@ impl Console {
             let caret_column = caret.filter(|c| c.1 == row).map(|c| c.0);
             screen.draw_row(row, grid.row(row), caret_column);
         }
+        // Nothing drawn is seen until the buffer is shown.
+        screen.show();
         self.drawn_caret = caret;
     }
 

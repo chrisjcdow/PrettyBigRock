@@ -93,6 +93,14 @@ opt-level = 2
 [profile.dev.package.pbr-terminal]
 opt-level = 2
 
+# The display rules and pixel conversion, and the framebuffer driver's copying: every pixel
+# of every picture goes through them.
+[profile.dev.package.pbr-devices]
+opt-level = 2
+
+[profile.dev.package.pbr-driver-framebuffer]
+opt-level = 2
+
 [profile.release]
 panic = "abort"
 debug = true
