@@ -38,6 +38,7 @@ const EV_ABS: u16 = 3;
 const SYN_REPORT: u16 = 0;
 const REL_X: u16 = 0;
 const REL_Y: u16 = 1;
+const REL_HWHEEL: u16 = 6;
 const REL_WHEEL: u16 = 8;
 const BTN_LEFT: u16 = 0x110;
 const BTN_RIGHT: u16 = 0x111;
@@ -173,6 +174,10 @@ impl Hid {
             (EV_REL, REL_WHEEL) => {
                 self.flush_position();
                 self.input.wheel(e.value);
+            }
+            (EV_REL, REL_HWHEEL) => {
+                self.flush_position();
+                self.input.hwheel(e.value);
             }
             (EV_ABS, code) => {
                 if let Some(t) = &mut self.tablet {

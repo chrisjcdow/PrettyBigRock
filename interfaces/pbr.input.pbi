@@ -45,7 +45,10 @@ const VALUE_REPEAT: u32 = 2;
 /// Codes of move and scroll events.
 const AXIS_X: u32 = 1;
 const AXIS_Y: u32 = 2;
+/// The wheel: up (away from the user) is positive.
 const AXIS_WHEEL: u32 = 3;
+/// A sideways wheel or a tilting one: right is positive.
+const AXIS_HWHEEL: u32 = 4;
 
 /// Codes of button events.
 const BUTTON_LEFT: u32 = 1;
@@ -137,6 +140,31 @@ const KEY_LEFT_ALT: u32 = 80;
 const KEY_RIGHT_ALT: u32 = 81;
 const KEY_LEFT_META: u32 = 82;
 const KEY_RIGHT_META: u32 = 83;
+/// The key beside the left Shift key on European keyboards (ISO), which US keyboards lack.
+const KEY_102ND: u32 = 84;
+/// The keypad. What its keys type depends on Num Lock, which the input service keeps (note 0021).
+const KEY_KP_0: u32 = 85;
+const KEY_KP_1: u32 = 86;
+const KEY_KP_2: u32 = 87;
+const KEY_KP_3: u32 = 88;
+const KEY_KP_4: u32 = 89;
+const KEY_KP_5: u32 = 90;
+const KEY_KP_6: u32 = 91;
+const KEY_KP_7: u32 = 92;
+const KEY_KP_8: u32 = 93;
+const KEY_KP_9: u32 = 94;
+const KEY_KP_PERIOD: u32 = 95;
+const KEY_KP_PLUS: u32 = 96;
+const KEY_KP_MINUS: u32 = 97;
+const KEY_KP_MULTIPLY: u32 = 98;
+const KEY_KP_DIVIDE: u32 = 99;
+const KEY_KP_ENTER: u32 = 100;
+const KEY_NUM_LOCK: u32 = 101;
+const KEY_SCROLL_LOCK: u32 = 102;
+const KEY_PRINT_SCREEN: u32 = 103;
+const KEY_PAUSE: u32 = 104;
+/// The menu key, beside the right Ctrl key.
+const KEY_MENU: u32 = 105;
 
 /// What the device is, and its name.
 @1 fn info() -> (kind: InputKind, name: string<64>);

@@ -123,6 +123,14 @@ impl Input {
         }
     }
 
+    /// A sideways wheel turned (or a wheel was tilted) by `amount` notches, positive to the
+    /// right.
+    pub fn hwheel(&mut self, amount: i32) {
+        if amount != 0 {
+            self.post(input::EVENT_SCROLL as u16, input::AXIS_HWHEEL as u16, amount);
+        }
+    }
+
     /// Adds an event to the ring, if a client has the device open, and rings the doorbell.
     pub fn post(&mut self, kind: u16, code: u16, value: i32) {
         let Some(p) = &mut self.producer else { return };

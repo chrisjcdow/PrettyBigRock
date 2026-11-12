@@ -90,6 +90,28 @@ pub mod key {
     pub const RIGHT_ALT: u16 = 81;
     pub const LEFT_META: u16 = 82;
     pub const RIGHT_META: u16 = 83;
+    pub const K102ND: u16 = 84;
+    pub const KP_0: u16 = 85;
+    pub const KP_1: u16 = 86;
+    pub const KP_2: u16 = 87;
+    pub const KP_3: u16 = 88;
+    pub const KP_4: u16 = 89;
+    pub const KP_5: u16 = 90;
+    pub const KP_6: u16 = 91;
+    pub const KP_7: u16 = 92;
+    pub const KP_8: u16 = 93;
+    pub const KP_9: u16 = 94;
+    pub const KP_PERIOD: u16 = 95;
+    pub const KP_PLUS: u16 = 96;
+    pub const KP_MINUS: u16 = 97;
+    pub const KP_MULTIPLY: u16 = 98;
+    pub const KP_DIVIDE: u16 = 99;
+    pub const KP_ENTER: u16 = 100;
+    pub const NUM_LOCK: u16 = 101;
+    pub const SCROLL_LOCK: u16 = 102;
+    pub const PRINT_SCREEN: u16 = 103;
+    pub const PAUSE: u16 = 104;
+    pub const MENU: u16 = 105;
 }
 
 /// Every key code with its name, in numeric order (the names are the interface file's).
@@ -177,6 +199,28 @@ pub const ALL: &[(&str, u16)] = &[
     ("RIGHT_ALT", key::RIGHT_ALT),
     ("LEFT_META", key::LEFT_META),
     ("RIGHT_META", key::RIGHT_META),
+    ("102ND", key::K102ND),
+    ("KP_0", key::KP_0),
+    ("KP_1", key::KP_1),
+    ("KP_2", key::KP_2),
+    ("KP_3", key::KP_3),
+    ("KP_4", key::KP_4),
+    ("KP_5", key::KP_5),
+    ("KP_6", key::KP_6),
+    ("KP_7", key::KP_7),
+    ("KP_8", key::KP_8),
+    ("KP_9", key::KP_9),
+    ("KP_PERIOD", key::KP_PERIOD),
+    ("KP_PLUS", key::KP_PLUS),
+    ("KP_MINUS", key::KP_MINUS),
+    ("KP_MULTIPLY", key::KP_MULTIPLY),
+    ("KP_DIVIDE", key::KP_DIVIDE),
+    ("KP_ENTER", key::KP_ENTER),
+    ("NUM_LOCK", key::NUM_LOCK),
+    ("SCROLL_LOCK", key::SCROLL_LOCK),
+    ("PRINT_SCREEN", key::PRINT_SCREEN),
+    ("PAUSE", key::PAUSE),
+    ("MENU", key::MENU),
 ];
 
 /// Linux input event codes (what virtio-input devices send) and the key each is.
@@ -264,6 +308,29 @@ pub const EVDEV: &[(u16, u16)] = &[
     (111, key::DELETE),
     (125, key::LEFT_META),
     (126, key::RIGHT_META),
+    // The keypad, the locks and the rest (note 0021, section 4).
+    (55, key::KP_MULTIPLY),
+    (69, key::NUM_LOCK),
+    (70, key::SCROLL_LOCK),
+    (71, key::KP_7),
+    (72, key::KP_8),
+    (73, key::KP_9),
+    (74, key::KP_MINUS),
+    (75, key::KP_4),
+    (76, key::KP_5),
+    (77, key::KP_6),
+    (78, key::KP_PLUS),
+    (79, key::KP_1),
+    (80, key::KP_2),
+    (81, key::KP_3),
+    (82, key::KP_0),
+    (83, key::KP_PERIOD),
+    (86, key::K102ND),
+    (96, key::KP_ENTER),
+    (98, key::KP_DIVIDE),
+    (99, key::PRINT_SCREEN),
+    (119, key::PAUSE),
+    (127, key::MENU),
 ];
 
 /// Set 1 scan codes of keys that send one byte (the make code; the break code has bit 7 set).
@@ -338,6 +405,24 @@ pub const SET1: &[(u8, u16)] = &[
     (0x44, key::F10),
     (0x57, key::F11),
     (0x58, key::F12),
+    // The keypad, the locks and the key beside the left Shift.
+    (0x37, key::KP_MULTIPLY),
+    (0x45, key::NUM_LOCK),
+    (0x46, key::SCROLL_LOCK),
+    (0x47, key::KP_7),
+    (0x48, key::KP_8),
+    (0x49, key::KP_9),
+    (0x4a, key::KP_MINUS),
+    (0x4b, key::KP_4),
+    (0x4c, key::KP_5),
+    (0x4d, key::KP_6),
+    (0x4e, key::KP_PLUS),
+    (0x4f, key::KP_1),
+    (0x50, key::KP_2),
+    (0x51, key::KP_3),
+    (0x52, key::KP_0),
+    (0x53, key::KP_PERIOD),
+    (0x56, key::K102ND),
 ];
 
 /// Set 1 scan codes of keys that send `0xE0` first.
@@ -356,8 +441,12 @@ pub const SET1_EXTENDED: &[(u8, u16)] = &[
     (0x53, key::DELETE),
     (0x5b, key::LEFT_META),
     (0x5c, key::RIGHT_META),
-    // The keypad's Enter is an Enter.
-    (0x1C, key::ENTER),
+    (0x1c, key::KP_ENTER),
+    (0x35, key::KP_DIVIDE),
+    // Print Screen sends E0 2A E0 37: the first pair is a pretend Shift, which is in no table
+    // and so is dropped; the second is the key.
+    (0x37, key::PRINT_SCREEN),
+    (0x5d, key::MENU),
 ];
 
 /// The key a Linux input event code is, if it is one PrettyBigRock numbers.
@@ -420,26 +509,39 @@ pub enum Scan {
 /// that a wrong byte can wedge: an unknown byte ends any prefix.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Set1 {
+    /// The prefix byte the next byte belongs to: `0xE0`, `0xE1`, or 0 for none.
     prefix: u8,
-    skip: u8,
+    /// How many bytes have come since an `0xE1`.
+    after_e1: u8,
 }
 
 impl Set1 {
     /// Takes the next byte.
     pub fn feed(&mut self, byte: u8) -> Scan {
-        if self.skip > 0 {
-            self.skip -= 1;
-            return Scan::None;
+        if self.prefix == 0xE1 {
+            // Pause is the one key that starts with E1: it sends E1 1D 45 when it goes down
+            // and E1 9D C5 straight after (it never says when it is let go). The byte after
+            // the E1 is a pretend Ctrl; the one after that is the key, with bit 7 set for the
+            // release like any other.
+            self.after_e1 += 1;
+            if self.after_e1 < 2 {
+                return Scan::None;
+            }
+            self.prefix = 0;
+            return if byte & 0x7F == 0x45 {
+                Scan::Key(key::PAUSE, byte & 0x80 == 0)
+            } else {
+                Scan::None
+            };
         }
         match (self.prefix, byte) {
             (_, 0xE0) => {
                 self.prefix = 0xE0;
                 Scan::None
             }
-            // Pause sends E1 and five more bytes; it has no key here.
             (_, 0xE1) => {
-                self.prefix = 0;
-                self.skip = 5;
+                self.prefix = 0xE1;
+                self.after_e1 = 0;
                 Scan::None
             }
             (p, b) => {
@@ -526,7 +628,8 @@ mod tests {
         }
         // Every key can be typed on a set 1 keyboard, and every key is a Linux key too.
         for (name, k) in ALL {
-            let set1 = SET1.iter().chain(SET1_EXTENDED).any(|(_, x)| x == k);
+            // (Pause has no entry: it is a sequence of its own, which `Set1::feed` knows.)
+            let set1 = *k == key::PAUSE || SET1.iter().chain(SET1_EXTENDED).any(|(_, x)| x == k);
             assert!(set1, "{name} has no set 1 scan code");
             assert!(EVDEV.iter().any(|(_, x)| x == k), "{name} has no Linux code");
         }
@@ -636,12 +739,36 @@ mod tests {
         assert_eq!(d.feed(0x48), Scan::Key(key::UP, true));
         assert_eq!(d.feed(0xE0), Scan::None);
         assert_eq!(d.feed(0xC8), Scan::Key(key::UP, false));
-        // The prefix applies to one byte only.
-        assert_eq!(d.feed(0x48), Scan::None); // plain 0x48 is the keypad 8: not a key here
-        // Pause (E1 1D 45 E1 9D C5) is skipped whole and the decoder carries on.
-        for b in [0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5] {
+        // The prefix applies to one byte only: plain 0x48 is the keypad's 8, not the up arrow.
+        assert_eq!(d.feed(0x48), Scan::Key(key::KP_8, true));
+        assert_eq!(d.feed(0xC8), Scan::Key(key::KP_8, false));
+        // Pause sends its press and its release one after the other.
+        let pause: Vec<Scan> =
+            [0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5].into_iter().map(|b| d.feed(b)).collect();
+        assert_eq!(
+            pause,
+            [
+                Scan::None,
+                Scan::None,
+                Scan::Key(key::PAUSE, true),
+                Scan::None,
+                Scan::None,
+                Scan::Key(key::PAUSE, false)
+            ]
+        );
+        // Anything else after E1 is dropped, two bytes of it, and the decoder carries on.
+        for b in [0xE1, 0x1E, 0x1E] {
             assert_eq!(d.feed(b), Scan::None);
         }
+        // Print Screen (E0 2A E0 37): the pretend Shift is dropped, the key is kept.
+        let print: Vec<Scan> = [0xE0, 0x2A, 0xE0, 0x37].into_iter().map(|b| d.feed(b)).collect();
+        assert_eq!(print, [Scan::None, Scan::None, Scan::None, Scan::Key(key::PRINT_SCREEN, true)]);
+        // The keypad's Enter and slash are extended; its star is not.
+        assert_eq!(d.feed(0xE0), Scan::None);
+        assert_eq!(d.feed(0x1C), Scan::Key(key::KP_ENTER, true));
+        assert_eq!(d.feed(0xE0), Scan::None);
+        assert_eq!(d.feed(0x35), Scan::Key(key::KP_DIVIDE, true));
+        assert_eq!(d.feed(0x37), Scan::Key(key::KP_MULTIPLY, true));
         assert_eq!(d.feed(0x39), Scan::Key(key::SPACE, true));
         // Unknown bytes are ignored and cancel a prefix.
         assert_eq!(d.feed(0xE0), Scan::None);
