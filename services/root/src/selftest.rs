@@ -166,6 +166,14 @@ fn all(
     }
     step("supervision", supervision.as_ref().map(|_| ()).map_err(Clone::clone))?;
     done.push("services crashed and restarted");
+    // The input service is started here and stays for the shell test, whose console takes
+    // the seat from this test.
+    let seat = crate::seattest::run(&sup);
+    if let Ok(summary) = &seat {
+        granite::println!("Input self-test passed: {summary}");
+    }
+    step("the input service", seat.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("the input service");
     // The shell's last command shuts the storage service down; the test starts it again after.
     let shell = crate::shelltest::run(&sup);
     if let Ok(summary) = &shell {
@@ -186,6 +194,7 @@ fn all(
     done.push("calls on 4 threads to a service with 4 threads");
 
     drop(storage);
+    sup.retire(Kind::Input).map_err(|e| format!("stopping the input service: {e}"))?;
     sup.retire(Kind::Storage).map_err(|e| format!("stopping storage: {e}"))?;
     sup.retire(Kind::Devmgr).map_err(|e| format!("stopping devmgr: {e}"))?;
     echo.process.stop(0).map_err(|e| format!("stopping echo: {e}"))?;

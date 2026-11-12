@@ -75,6 +75,7 @@ pub const TESTS: &[Config] = &[
             "Device self-test passed",
             "Sandbox self-test passed",
             "Supervision self-test passed",
+            "Input self-test passed",
             "Shell self-test passed",
             "the screens",
             "a virtio keyboard and mouse",
@@ -106,6 +107,7 @@ pub const TESTS: &[Config] = &[
             "Device self-test passed",
             "Sandbox self-test passed",
             "Supervision self-test passed",
+            "Input self-test passed",
             "Shell self-test passed",
             "the screens",
             "a virtio keyboard and mouse",
@@ -137,6 +139,7 @@ pub const TESTS: &[Config] = &[
             "Device self-test passed",
             "Sandbox self-test passed",
             "Supervision self-test passed",
+            "Input self-test passed",
             "Shell self-test passed",
             "the screens",
             "a virtio keyboard and mouse",
@@ -165,6 +168,7 @@ pub const TESTS: &[Config] = &[
             "Device self-test passed",
             "Sandbox self-test passed",
             "Supervision self-test passed",
+            "Input self-test passed",
             "Shell self-test passed",
             "the screens",
             "a virtio keyboard and mouse",
@@ -493,6 +497,9 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     let mut typed = 0;
     // How many tablets have been pointed with.
     let mut tablets = 0u32;
+    // The same for the input service's self-test, and which of its key requests are done.
+    let mut seat_tablets = 0u32;
+    let mut seat_keys = [false; SEAT_KEYS.len()];
     // The pictures already looked at for the display self-test: (picture, device).
     let mut looked: Vec<(u32, String)> = Vec::new();
     let result = loop {
@@ -500,10 +507,14 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
         // The shell test: a command each time the console starts waiting for a line.
         if let Some(at) = text.find(SHELL_READY) {
             let waiting = text[at..].matches(CONSOLE_READ).count();
-            if typed < SHELL_COMMANDS.len() && typed < waiting {
+            let ready = |command: &str| {
+                SHELL_WAITS.iter().all(|(c, line)| *c != command || text.contains(line))
+            };
+            if typed < SHELL_COMMANDS.len() && typed < waiting && ready(SHELL_COMMANDS[typed].0) {
                 let (command, _, _) = SHELL_COMMANDS[typed];
                 eprintln!("  (typing: {command})");
-                if let Err(e) = qmp.type_line(command) {
+                let keys = SHELL_KEYS.iter().find(|(c, _)| *c == command).map_or(command, |k| k.1);
+                if let Err(e) = qmp.type_line(keys) {
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(format!("typing into QEMU: {e}\n--- serial output ---\n{text}"));
@@ -524,6 +535,37 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
                     ));
                 }
             }
+        }
+        // The input service's self-test: a key held, let go, and tapped.
+        for (i, (marker, name, moves)) in SEAT_KEYS.iter().enumerate() {
+            if seat_keys[i] || !text.contains(marker) {
+                continue;
+            }
+            seat_keys[i] = true;
+            eprintln!("  (sending input for: {marker})");
+            let sent = moves.iter().try_for_each(|down| {
+                let r = qmp.key(name, *down);
+                std::thread::sleep(Duration::from_millis(100));
+                r
+            });
+            if let Err(e) = sent {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("sending input to QEMU: {e}\n--- serial output ---\n{text}"));
+            }
+        }
+        // And its tablets, pointed with as the driver test's are.
+        if seat_tablets < 2
+            && text.contains(&format!("Seat self-test: point tablet {seat_tablets}"))
+        {
+            eprintln!("  (pointing with tablet {seat_tablets} for the input service)");
+            let screen = matches!(cfg.screens, Screens::TwoVirtioGpu).then_some(seat_tablets);
+            if let Err(e) = qmp.point(screen, seat_tablets) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("sending input to QEMU: {e}\n--- serial output ---\n{text}"));
+            }
+            seat_tablets += 1;
         }
         // The tablets: the guest asks for each in turn (they are numbered in the order they
         // are on the command line), and gets a position of its own and a click.
@@ -688,7 +730,52 @@ const SHELL_COMMANDS: &[(&str, &[&str], &[&str])] = &[
     ("stop sandboxed", &[], &[]),
     ("volumes", &["Home", "PICTURES", "FAT32"], &[]),
     ("frobnicate", &["frobnicate: no such command"], &[]),
+    // Keyboard layouts (note 0021, section 9). Each `echo` is typed with the keys in
+    // `SHELL_KEYS`, which only type this on that layout. After `set layout gb` the guest
+    // crashes its input service (`SHELL_WAITS`): the line after it also shows that the
+    // console found the new one and that the new one was told the layout.
+    ("settings", &["layout us", "timezone +00:00"], &[]),
+    ("set layout klingon", &["set: the settings are layout"], &[]),
+    ("set layout gb", &[], &["set:"]),
+    ("echo £@€é¬\\|#~", &["£@€é¬\\|#~"], &[]),
+    ("set layout us-intl", &[], &["set:"]),
+    ("echo êëôûïñ€^x¿", &["êëôûïñ€^x¿"], &[]),
+    ("set timezone +02:00", &[], &["set:"]),
+    ("set layout us", &[], &["set:"]),
+    ("settings", &["layout us", "timezone +02:00"], &["gb", "intl"]),
     ("shutdown", &["It's now safe to turn off your computer."], &[]),
+];
+
+/// The keys that type the commands a US keyboard's keys wouldn't: (the command as the console
+/// shows it, the keys in `Qmp::type_line`'s notation).
+const SHELL_KEYS: &[(&str, &str)] = &[
+    // UK: Shift+3, Shift+apostrophe, AltGr+4, AltGr+e, Shift+grave, the key beside the left
+    // Shift plain and shifted, and the key beside Enter plain and shifted.
+    (
+        "echo £@€é¬\\|#~",
+        "echo {S-3}{S-apostrophe}{G-4}{G-e}{S-grave_accent}{less}{S-less}{backslash}{S-backslash}",
+    ),
+    // US international: the circumflex (Shift+6) and diaeresis (Shift+apostrophe) dead keys
+    // before letters, AltGr+n and AltGr+5, a dead key before a letter it doesn't combine
+    // with (which types both), and AltGr+slash.
+    (
+        "echo êëôûïñ€^x¿",
+        "echo {S-6}e{S-apostrophe}e{S-6}o{S-6}u{S-apostrophe}i{G-n}{G-5}{S-6}x{G-slash}",
+    ),
+];
+
+/// Commands that are typed only once the guest has printed a line: (the command, the line).
+/// `services/root/src/shelltest.rs` crashes the input service once the layout is `gb`, and
+/// says when the new one is ready to be typed at.
+const SHELL_WAITS: &[(&str, &str)] =
+    &[("echo £@€é¬\\|#~", "Shell self-test: the input service was restarted")];
+
+/// What the input service's self-test asks for, and the key to press or let go
+/// (`services/root/src/seattest.rs`): (the line, the key, down or up, then up again).
+const SEAT_KEYS: &[(&str, &str, &[bool])] = &[
+    ("Seat self-test: hold b", "b", &[true]),
+    ("Seat self-test: release b", "b", &[false]),
+    ("Seat self-test: tap a", "a", &[true, false]),
 ];
 
 /// Checks the console's answer to every command in [`SHELL_COMMANDS`].
@@ -742,6 +829,7 @@ fn qcode(c: char) -> Option<(String, bool)> {
         '\'' => plain("apostrophe"),
         '"' => shifted("apostrophe"),
         ':' => shifted("semicolon"),
+        '+' => shifted("equal"),
         _ => None,
     }
 }
@@ -1039,6 +1127,12 @@ impl Qmp {
     /// Types `line` and presses Enter on the virtio keyboard, a key at a time, the way a person
     /// would: each press and release is its own event, with a pause after each so the guest
     /// has handed back its buffers (see `Flood` below).
+    ///
+    /// A character is typed with the key that types it on a US keyboard. A key can also be
+    /// named, in braces, by QEMU's name for it (its "qcode"), with `S-` in front for Shift and
+    /// `G-` for AltGr (the right Alt key): `{S-3}` is Shift and 3, whatever that types on the
+    /// guest's layout. That is how the layout tests press keys that don't type what a US
+    /// keyboard would.
     fn type_line(&mut self, line: &str) -> Result<(), String> {
         self.connect()?;
         let key = |name: &str, down: bool| {
@@ -1046,27 +1140,61 @@ impl Qmp {
                 r#"{{"type":"key","data":{{"down":{down},"key":{{"type":"qcode","data":"{name}"}}}}}}"#
             )
         };
-        let mut keys: Vec<(String, bool)> = Vec::new();
-        for c in line.chars() {
-            keys.push(qcode(c).ok_or_else(|| format!("can't type {c:?}"))?);
+        // (The key, the modifier keys held round it.)
+        let mut keys: Vec<(String, Vec<&str>)> = Vec::new();
+        let mut rest = line;
+        while let Some(c) = rest.chars().next() {
+            if c == '{' {
+                let end = rest.find('}').ok_or_else(|| format!("no closing brace in {line:?}"))?;
+                let mut name = &rest[1..end];
+                let mut held = Vec::new();
+                loop {
+                    if let Some(n) = name.strip_prefix("S-") {
+                        held.push("shift");
+                        name = n;
+                    } else if let Some(n) = name.strip_prefix("G-") {
+                        held.push("alt_r");
+                        name = n;
+                    } else {
+                        break;
+                    }
+                }
+                keys.push((String::from(name), held));
+                rest = &rest[end + 1..];
+            } else {
+                let (name, shift) = qcode(c).ok_or_else(|| format!("can't type {c:?}"))?;
+                keys.push((name, if shift { vec!["shift"] } else { Vec::new() }));
+                rest = &rest[c.len_utf8()..];
+            }
         }
-        keys.push((String::from("ret"), false));
+        keys.push((String::from("ret"), Vec::new()));
         let pause = || std::thread::sleep(Duration::from_millis(15));
-        for (name, shift) in keys {
-            if shift {
-                self.send(true, &[key("shift", true)])?;
+        for (name, held) in keys {
+            for h in &held {
+                self.send(true, &[key(h, true)])?;
                 pause();
             }
             self.send(true, &[key(&name, true)])?;
             pause();
             self.send(true, &[key(&name, false)])?;
             pause();
-            if shift {
-                self.send(true, &[key("shift", false)])?;
+            for h in held.iter().rev() {
+                self.send(true, &[key(h, false)])?;
                 pause();
             }
         }
         Ok(())
+    }
+
+    /// Presses or lets go of one key on the virtio keyboard and leaves it that way.
+    fn key(&mut self, name: &str, down: bool) -> Result<(), String> {
+        self.connect()?;
+        self.send(
+            true,
+            &[format!(
+                r#"{{"type":"key","data":{{"down":{down},"key":{{"type":"qcode","data":"{name}"}}}}}}"#
+            )],
+        )
     }
 
     /// Points with tablet `n` and clicks: at ([`TABLET_X`], [`TABLET_Y`]) times `n + 1`, of

@@ -22,6 +22,7 @@ mod filestest;
 mod kernel12;
 mod kernel13;
 mod sandboxtest;
+mod seattest;
 mod selftest;
 mod shelltest;
 mod storagetest;
