@@ -20,10 +20,12 @@ pub const MAX_CELLS: usize = 1 << 22;
 /// Tab stops are every this many columns.
 pub const TAB_STOP: usize = 8;
 
-/// The character that is drawn for `c`: itself if it is printable ASCII (space to `~`), `?`
-/// for anything else, because the font has no other glyphs (note 0018, section 5).
+/// The character that is drawn for `c`: itself if the system font has a drawing for it
+/// (ASCII, the accented Latin letters and some punctuation: `lib/font`), `?` for anything
+/// else, control characters included. (Until M6 only ASCII was kept; keyboard layouts type
+/// `£` and `ê`, and the font has had them since note 0023.)
 pub fn printable(c: char) -> char {
-    if (' '..='~').contains(&c) { c } else { '?' }
+    if !c.is_control() && pbr_font::lookup(c).is_some() { c } else { '?' }
 }
 
 /// What changed in a [`Grid`] since the last [`Grid::take_changes`].
@@ -167,7 +169,7 @@ impl Grid {
     ///   cells it passes with spaces. In a full row it does nothing.
     /// - A character that would go past the right edge starts a new row first; at the bottom
     ///   the top row goes (the grid scrolls up).
-    /// - Anything that is not printable ASCII is written as `?`.
+    /// - A character the font can't draw is written as `?` ([`printable`]).
     pub fn write_str(&mut self, text: &str) {
         for c in text.chars() {
             match c {
@@ -334,10 +336,13 @@ mod tests {
     #[test]
     fn anything_else_is_a_question_mark() {
         let mut g = grid(12, 1);
-        g.write_str("caf\u{e9} \u{1F600}\x08\x7f\0~");
+        g.write_str("caf\u{4e2d} \u{1F600}\x08\x7f\0~");
         assert_eq!(g.row(0).iter().collect::<String>(), "caf? ????~  ");
         assert_eq!(printable('a'), 'a');
-        assert_eq!(printable('\u{e9}'), '?');
+        assert_eq!(printable('\u{e9}'), '\u{e9}', "é is in the font");
+        assert_eq!(printable('£'), '£');
+        assert_eq!(printable('\u{4e2d}'), '?', "a character the font lacks");
+        assert_eq!(printable('\u{7f}'), '?');
         assert_eq!(printable('\n'), '?');
     }
 

@@ -26,8 +26,8 @@ use alloc::vec::Vec;
 pub const MAX_LINE: usize = 4096;
 
 /// What the mirror shows for `c` in a line of text: `None` for a carriage return (it only
-/// moves the screen's cursor, and would make a log line end oddly), a tab as it is, other
-/// printable ASCII as it is, and `?` for anything else, as on the screen.
+/// moves the screen's cursor, and would make a log line end oddly), a tab as it is, any other
+/// character the screen can draw as it is, and `?` for anything else, as on the screen.
 fn shown(c: char) -> Option<char> {
     match c {
         '\r' => None,
@@ -181,9 +181,9 @@ mod tests {
     #[test]
     fn what_the_screen_cannot_draw_is_a_question_mark() {
         let mut m = Mirror::new();
-        m.text("caf\u{e9}\r\nt\tb\x08\0\u{1F600}\n");
-        m.read_started("\u{e9}> ");
-        m.line_entered("\u{e9}> ", "a\nb\r");
+        m.text("caf\u{4e2d}\r\nt\tb\x08\0\u{1F600}\n");
+        m.read_started("\u{4e2d}> ");
+        m.line_entered("\u{4e2d}> ", "a\nb\r");
         assert_eq!(
             taken(&mut m),
             ["[console] caf?", "[console] t\tb???", "[console:read] ?> ", "[console] ?> a?b"]

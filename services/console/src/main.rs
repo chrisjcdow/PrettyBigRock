@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Christopher Cameron-Dow
 
 //! The console service (docs/design/0018-supervision-shell-and-m5-tests.md, section 5): a text
-//! terminal on the screen, for the shell. It finds the screen and the keyboards through the
-//! device manager (`devices.rs`), draws a grid of text on the screen with the kernel's own font
+//! terminal on the screen, for the shell. It finds the screen through the device manager and
+//! takes the seat from the input service for its keys (`devices.rs`; note 0021, section 6), draws a grid of text on the screen with the kernel's own font
 //! and colours (`screen.rs`), and serves `pbr.terminal` on its endpoint to whoever holds a
 //! capability for it: `write`, `read_line`, `size` and `clear`.
 //!
@@ -14,7 +14,7 @@
 //! - **This thread** (the main one) does everything the terminal needs: it waits for a call on
 //!   the endpoint *or* a signal, handles it, and draws what changed. Nothing else touches the
 //!   terminal, so it needs no locks.
-//! - **Keyboard threads** and a **watcher** (`devices.rs`) sleep until they have something to
+//! - **A seat thread** and a **watcher** (`devices.rs`) sleep until they have something to
 //!   say, put it in a queue and signal a notification that is *bound* to the endpoint. A bound
 //!   notification makes `Endpoint::receive` return `Event::Signal` as if a call had come in, so
 //!   waiting for calls and waiting for keys is one wait, with no polling (note 0008).
@@ -41,6 +41,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use devices::{Devices, Event as Queued, Shared};
 use granite::endpoint::{Endpoint, Event};
+use granite::notification::Notification;
 use granite::process::role;
 use granite::thread;
 use granite::time;
@@ -84,7 +85,11 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     // start) and goes on watching for as long as the program runs. Until it has had its first
     // look, there is nothing to draw on and nobody could type, so nothing is served.
     let for_watcher = shared.clone();
-    let watcher = thread::spawn(move || Devices::new(parent, for_watcher).watch())
+    // Made here because making it can fail and a new thread has nobody to tell; the watcher
+    // itself is made on its own thread, because it will hold the handles of threads it
+    // starts, and those can't be passed from one thread to another.
+    let seat_gone = Notification::create().map_err(|e| format!("making a notification: {e}"))?;
+    let watcher = thread::spawn(move || Devices::new(parent, for_watcher, seat_gone).watch())
         .map_err(|e| format!("starting a thread: {e}"))?;
     if !shared.wait_settled() {
         granite::println!("console: the first look for devices took too long; carrying on.");
@@ -120,13 +125,12 @@ impl Console {
     /// Says what was found.
     fn announce(&self, selftest: bool) {
         let grid = self.terminal.grid();
-        let keyboards = self.shared.keyboards();
-        let plural = if keyboards == 1 { "" } else { "s" };
+        let keys = if self.shared.has_seat() { "keys from the input service" } else { "no keys" };
         match &self.screen {
             Some(screen) => {
                 let l = screen.layout();
                 granite::println!(
-                    "console: {}x{}, {}x{} characters, {keyboards} keyboard{plural}.",
+                    "console: {}x{}, {}x{} characters, {keys}.",
                     l.width,
                     l.height,
                     grid.columns(),
@@ -134,7 +138,7 @@ impl Console {
                 );
             }
             None => granite::println!(
-                "console: no screen, {}x{} characters, {keyboards} keyboard{plural}.",
+                "console: no screen, {}x{} characters, {keys}.",
                 grid.columns(),
                 grid.rows(),
             ),
@@ -272,9 +276,9 @@ impl terminal_if::Server for Calls<'_> {
 
     fn read_line(&mut self, prompt: String, reply: terminal_if::read_line::Reply) {
         let console = &mut *self.0;
-        // Without a keyboard nobody could ever answer. (Without a screen, the line is still
-        // read, and mirrored.)
-        if console.shared.keyboards() == 0 {
+        // Without the seat no key can arrive, so nobody could ever answer. (Without a screen,
+        // the line is still read, and mirrored.)
+        if !console.shared.has_seat() {
             answered(reply.err(TerminalError::Closed));
             return;
         }

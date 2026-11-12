@@ -10,7 +10,7 @@
 //! - [`editor`]: the line being typed (Backspace, Delete, the arrows, history) on abstract
 //!   [`Key`]s.
 //! - [`view`]: showing that line, with its prompt, on the grid, wherever it wraps or scrolls.
-//! - [`input`]: turning a keyboard's 16-byte events into [`Key`]s, with Shift.
+//! - [`input`]: turning the seat's events (`pbr.seat`, note 0021) into [`Key`]s.
 //! - [`mirror`]: the log records the console makes in self-test runs, so that the test runner
 //!   can see what is on a screen it cannot see.
 //! - [`render`]: how big the letters are on a screen, and the pixels of each row of text.
@@ -34,7 +34,6 @@ pub mod view;
 
 pub use editor::{Key, LineEditor};
 pub use grid::{Changes, Grid};
-pub use input::KeyDecoder;
 pub use mirror::Mirror;
 pub use terminal::{Busy, Terminal};
 pub use view::EditView;

@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(split_prompt(""), ("", ""));
         // Characters the font cannot draw are shown as the font shows them.
         let mut g = Grid::new(6, 1).unwrap();
-        EditView::begin(&mut g, "\u{e9}\t>", &LineEditor::new());
+        EditView::begin(&mut g, "\u{4e2d}\t>", &LineEditor::new());
         assert_eq!(rows(&g), ["??>   "]);
     }
 

@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 pbr-devices = { path = "../devices" }
 pbr-font = { path = "../font" }
+pbr-seat = { path = "../seat" }
 
 [lints]
 workspace = true

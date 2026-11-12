@@ -5,8 +5,8 @@
 /// 5). Served by the console. The users service gives it to the first administrator's session,
 /// whose sandbox manager passes it to apps granted `terminal` (note 0017, section 5): the shell.
 ///
-/// Text is UTF-8. The console draws the printable ASCII characters and `\n`; anything else is
-/// drawn as `?`. If the console is restarted, calls fail with PEER_GONE: the app ends, and its
+/// Text is UTF-8. The console draws every character the system font has (ASCII, the accented
+/// Latin letters and some punctuation; `lib/font`) and `\n`; anything else is drawn as `?`. If the console is restarted, calls fail with PEER_GONE: the app ends, and its
 /// session starts it again with the new console's terminal.
 interface pbr.terminal version 1;
 
@@ -30,6 +30,6 @@ flexible enum TerminalError {
     /// has one user, which asks for a line at a time; a second means the first caller has
     /// probably gone, which the console can't otherwise tell.)
     Busy @1,
-    /// The console has no screen or no keyboard to serve with.
+    /// The console has nothing to get keys from (it has not been given the seat, note 0021).
     Closed @2,
 }

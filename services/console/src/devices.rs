@@ -1,28 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! Finding the screen and the keyboards, and keeping them found.
+//! Finding the screen and the seat, and keeping them found.
 //!
 //! The console does not own any hardware. The device manager does (note 0011): it starts a
 //! driver program for each device, and this service asks it, through `pbr.devices`, for the
-//! display and every input device, then talks to their drivers through `pbr.display` and
-//! `pbr.input`. It finds the device manager through its supervisor, the root program
-//! (`pbr.supervisor.lookup`, note 0018, section 2).
+//! display, then talks to its driver through `pbr.display`. Keys come from the input service
+//! (note 0021): the console takes the *seat* (`pbr.seat`: every keyboard merged, with the
+//! user's layout applied) and reads key events from the ring that gives it. It finds both
+//! services through its supervisor, the root program (`pbr.supervisor.lookup`, note 0018,
+//! section 2), which is also what decides that the console may take the seat at all.
 //!
 //! A driver is an ordinary program, and can crash and be restarted (note 0012); so can the
-//! device manager. When that happens every capability this service holds for it stops working:
-//! calls fail with `PeerGone` (the program is gone) or `Revoked` or `BadHandle`. A call that
-//! fails like that is not a reason to give up: the device is asked for again, at most once a
-//! second ([`CHECK_MS`]), and used again once it is found.
+//! device manager and the input service. When that happens every capability this service
+//! holds for it stops working: calls fail with `PeerGone` (the program is gone) or `Revoked`
+//! or `BadHandle`. That is not a reason to give up: the display is asked for again, at most
+//! once a second ([`CHECK_MS`]), and the seat is taken again from the new input service as
+//! soon as it can be looked up.
 //!
 //! Several threads are involved, and all of them only *tell the main thread* what they
 //! find, through a [`Shared`] queue and a notification bound to the service's endpoint (a
 //! bound notification wakes the main thread's `receive`, so it never has to poll):
 //! - the main thread, which draws and serves `pbr.terminal` (`main.rs`);
-//! - a **watcher** ([`Devices::watch`]) that finds the devices at start-up, then looks for
-//!   what is missing and what has gone;
-//! - a **keyboard thread** for each keyboard ([`KeyboardThread`]), which sleeps until the
-//!   keyboard's doorbell rings, then turns its events into keys.
+//! - a **watcher** ([`Devices::watch`]) that finds the display and the seat at start-up, then
+//!   looks for what is missing and what has gone;
+//! - a **seat thread** ([`SeatThread`]), which sleeps until the seat's doorbell rings, then
+//!   turns its events into keys.
 
 use crate::screen::{Screen, Taken};
 use alloc::boxed::Box;
@@ -31,7 +34,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use granite::endpoint::Endpoint;
 use granite::interface::CallError;
 use granite::lock::Lock;
@@ -45,27 +48,27 @@ use pbr_interfaces::pbr_devices::{
     self as devices, DeviceClass, DeviceInfo, DeviceState, DevicesError,
 };
 use pbr_interfaces::pbr_display as display;
-use pbr_interfaces::pbr_input::{self as input, InputKind};
+use pbr_interfaces::pbr_seat::{self as seat, SeatError};
 use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
 use pbr_terminal::Key;
-use pbr_terminal::input::{EVENT_SIZE, KeyDecoder};
+use pbr_terminal::input::{EVENT_SIZE, keys};
 use pbr_terminal::render::{Layout, PixelOrder};
 
 /// How long to keep asking the supervisor for the device manager when it is not ready, at
 /// start-up.
 const LOOKUP_MS: u64 = 60_000;
-/// How long, at start-up, to wait for a display or a keyboard that is still starting.
+/// How long, at start-up, to wait for a display that is still starting, or for the seat.
 const SETTLE_MS: u64 = 30_000;
 /// How long one call to the device manager or a driver may take. A driver that is not
 /// answering must not stop the console for ever.
 const CALL_MS: u64 = 5_000;
-/// How often the watcher looks for what has gone or is missing, and how often an idle
-/// keyboard thread checks that its keyboard is still there.
+/// How often the watcher looks for what has gone or is missing, and how often an idle seat
+/// thread checks whether it has been asked to stop.
 const CHECK_MS: u64 = 1_000;
 /// How many times opening one device may fail before it is left alone.
 const MAX_TRIES: u32 = 5;
-/// How many keys may wait for the main thread. A keyboard that sends keys faster than that
-/// for long (or a main thread that is stuck) loses the newest.
+/// How many keys may wait for the main thread. Keys that come faster than that for long (or
+/// a main thread that is stuck) lose the newest.
 const MAX_QUEUED: usize = 1024;
 /// The signal bit that means "look at the queue".
 const WAKE: u64 = 1;
@@ -78,14 +81,14 @@ pub enum Event {
     Screen(Box<Screen>),
 }
 
-/// What the threads share: the queue of events for the main thread, and how many keyboards
-/// there are.
+/// What the threads share: the queue of events for the main thread, and whether there is a
+/// seat to get keys from.
 ///
 /// Rust only lets a value be shared between threads in ways that cannot go wrong: an `Arc<T>`
 /// (see below) is a pointer to a `T` that several threads own together, freed when the last
 /// owner lets go; a [`Lock`] lets one thread at a time use the value inside it; and an
-/// `AtomicUsize` (or `AtomicBool`) is a number that threads can change without a lock, one
-/// indivisible step at a time.
+/// `AtomicBool` is a flag that threads can read and change without a lock, one indivisible
+/// step at a time.
 pub struct Shared {
     queue: Lock<VecDeque<Event>>,
     /// Signalled when the queue has something in it. The main thread binds it to its
@@ -93,7 +96,8 @@ pub struct Shared {
     wake: Notification,
     /// Signalled once, when the watcher has finished looking for the devices at start-up.
     settled: Notification,
-    keyboards: AtomicUsize,
+    /// Whether the seat is taken: keys can arrive.
+    seat: AtomicBool,
 }
 
 impl Shared {
@@ -104,7 +108,7 @@ impl Shared {
             queue: Lock::new(VecDeque::new()),
             wake: make()?,
             settled: make()?,
-            keyboards: AtomicUsize::new(0),
+            seat: AtomicBool::new(false),
         }))
     }
 
@@ -119,9 +123,9 @@ impl Shared {
         &self.wake
     }
 
-    /// How many keyboards are open right now.
-    pub fn keyboards(&self) -> usize {
-        self.keyboards.load(Ordering::Acquire)
+    /// Whether the console has the seat right now, so that typing can reach it.
+    pub fn has_seat(&self) -> bool {
+        self.seat.load(Ordering::Acquire)
     }
 
     /// Adds an event for the main thread and wakes it.
@@ -162,14 +166,7 @@ enum Trouble {
     Failed(String),
 }
 
-/// What a look at the device list found still starting, which is worth waiting for at start-up.
-#[derive(Default)]
-struct Pending {
-    display: bool,
-    keyboard: bool,
-}
-
-/// Flags shared with a keyboard thread.
+/// Flags shared with the seat thread.
 #[derive(Default)]
 struct Flags {
     /// Asked of the thread by the watcher: end when you next wake.
@@ -178,24 +175,30 @@ struct Flags {
     done: AtomicBool,
 }
 
-/// A keyboard that is open.
-struct Keyboard {
-    id: u32,
+/// The seat, while the console has it.
+struct Seat {
+    /// The input service, through the capability the seat was taken with. The watch for the
+    /// input service going is on this capability, so it is kept for as long as the seat is.
+    _client: seat::Client,
     flags: Arc<Flags>,
     thread: JoinHandle,
 }
 
-/// The device manager and everything found through it.
+/// The device manager, the input service, and everything found through them.
 pub struct Devices {
     supervisor: supervisor::Client,
     devmgr: Option<devices::Client>,
     /// The display driver, while it is the one whose screen is being drawn on.
     display: Option<display::Client>,
-    keyboards: Vec<Keyboard>,
-    /// Keyboards of a device manager that has gone, ending.
-    retiring: Vec<Keyboard>,
-    /// Devices to leave alone until the device manager changes: mice, and devices that failed
-    /// to open too often.
+    seat: Option<Seat>,
+    /// Seat threads of an input service that has gone, ending.
+    retiring: Vec<Seat>,
+    /// Signalled (bit 0) by the kernel when the input service whose seat this is can no longer
+    /// receive calls: it has ended (a *receiver watch*, note 0019, section 2). The watcher
+    /// sleeps on it, so it wakes at once instead of at its next look.
+    seat_gone: Notification,
+    /// Displays to leave alone until the device manager changes: ones that failed to open
+    /// too often.
     ignored: Vec<u32>,
     /// How many times each device has failed to open.
     tries: Vec<(u32, u32)>,
@@ -205,14 +208,21 @@ pub struct Devices {
 }
 
 impl Devices {
-    /// Nothing found yet. `supervisor` is where the device manager is looked up.
-    pub fn new(supervisor: supervisor::Client, shared: Arc<Shared>) -> Devices {
+    /// Nothing found yet. `supervisor` is where the device manager and the input service are
+    /// looked up; `seat_gone` is a notification of the watcher's own, for hearing that the
+    /// input service has gone.
+    pub fn new(
+        supervisor: supervisor::Client,
+        shared: Arc<Shared>,
+        seat_gone: Notification,
+    ) -> Devices {
         Devices {
             supervisor,
             devmgr: None,
             display: None,
-            keyboards: Vec::new(),
+            seat: None,
             retiring: Vec::new(),
+            seat_gone,
             ignored: Vec::new(),
             tries: Vec::new(),
             shared,
@@ -221,17 +231,17 @@ impl Devices {
     }
 
     /// Start-up: finds the device manager (waiting for it for up to a minute), the first
-    /// display that runs and the keyboards, waiting up to 30 seconds for a display or a
-    /// keyboard that is still starting. Carries on with whatever was found: the watcher keeps
-    /// looking for the rest.
+    /// display that runs and the seat, waiting up to 30 seconds for a display that is still
+    /// starting or an input service that is. Carries on with whatever was found: the watcher
+    /// keeps looking for the rest.
     fn settle(&mut self) {
         let end = time::after_ms(SETTLE_MS);
         let mut patience = LOOKUP_MS;
         loop {
-            let pending = self.look(patience);
+            let display_pending = self.look(patience);
             patience = 0;
-            let waiting = (pending.display && self.display.is_none())
-                || (pending.keyboard && self.keyboards.is_empty());
+            self.find_seat();
+            let waiting = (display_pending && self.display.is_none()) || self.seat.is_none();
             if !waiting || time::now() >= end {
                 return;
             }
@@ -239,21 +249,26 @@ impl Devices {
         }
     }
 
-    /// The watcher thread's work. It finds the devices at start-up and tells the main thread
-    /// when it is done (the main thread does not serve until then, so that a `read_line` is not
-    /// refused for want of a keyboard that is about to be found). Then, for ever, once a
-    /// second, it notices what has gone and looks for what is missing.
+    /// The watcher thread's work. It finds the display and the seat at start-up and tells the
+    /// main thread when it is done (the main thread does not serve until then, so that a
+    /// `read_line` is not refused for want of a seat that is about to be taken). Then, for
+    /// ever, once a second, or at once when the input service goes, it notices what has gone
+    /// and looks for what is missing.
     ///
     /// It all happens on this thread, from the first look on, because a thread's handle cannot
-    /// be passed to another thread: the keyboard threads started here are joined here.
+    /// be passed to another thread: the seat threads started here are joined here.
     pub fn watch(mut self) {
         self.settle();
         let _ = self.shared.settled.signal(1);
         loop {
-            time::sleep_ms(CHECK_MS);
+            // Sleeps for a second, or until the kernel says the input service has gone.
+            if self.seat_gone.wait(time::after_ms(CHECK_MS)).is_ok() {
+                self.seat_lost();
+            }
             self.reap();
             self.check_display();
             self.look(0);
+            self.find_seat();
         }
     }
 
@@ -291,31 +306,122 @@ impl Devices {
     }
 
     /// The device manager has gone: its devices are gone with it, and the ids it gave out mean
-    /// something else to the next one.
+    /// something else to the next one. (The seat is the input service's, which finds its
+    /// devices again by itself: the console keeps the seat.)
     fn devmgr_gone(&mut self) {
         granite::println!("console: the device manager has gone; looking for it again.");
         self.devmgr = None;
         self.ignored.clear();
         self.tries.clear();
         self.display = None;
-        for keyboard in &self.keyboards {
-            keyboard.flags.stop.store(true, Ordering::Release);
-        }
-        self.retiring.append(&mut self.keyboards);
     }
 
-    /// Joins the keyboard threads that have ended and forgets their keyboards.
+    /// The input service has gone: the seat it gave is dead. Its thread is asked to end, and
+    /// the next look takes the seat from the new input service.
+    fn seat_lost(&mut self) {
+        if let Some(seat) = self.seat.take() {
+            granite::println!("console: the input service has gone; looking for it again.");
+            self.shared.seat.store(false, Ordering::Release);
+            seat.flags.stop.store(true, Ordering::Release);
+            self.retiring.push(seat);
+        }
+    }
+
+    /// Joins the seat threads that have ended. One that ended by itself (its ring broke) also
+    /// means the seat is to be taken again.
     fn reap(&mut self) {
-        for list in [&mut self.keyboards, &mut self.retiring] {
-            let mut i = 0;
-            while i < list.len() {
-                if list[i].flags.done.load(Ordering::Acquire) {
-                    let keyboard = list.swap_remove(i);
-                    // (The thread has finished, so this does not wait.)
-                    let _ = keyboard.thread.join();
-                } else {
-                    i += 1;
-                }
+        if self.seat.as_ref().is_some_and(|s| s.flags.done.load(Ordering::Acquire)) {
+            self.seat_lost();
+        }
+        let mut i = 0;
+        while i < self.retiring.len() {
+            if self.retiring[i].flags.done.load(Ordering::Acquire) {
+                let seat = self.retiring.swap_remove(i);
+                // (The thread has finished, so this does not wait.)
+                let _ = seat.thread.join();
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Takes the seat, if the console doesn't have it: looks the input service up, asks it to
+    /// tell us when it goes, takes the seat (which stops whoever had it before from getting
+    /// keys) and starts a thread to read the ring. If the input service isn't running yet, or
+    /// is being started again, the next look tries again.
+    fn find_seat(&mut self) {
+        if self.seat.is_some() {
+            return;
+        }
+        let endpoint = match self.supervisor.lookup("input") {
+            Ok(h) => Endpoint(h),
+            Err(CallError::Service(SupervisorError::NotReady)) => return,
+            Err(e) => {
+                self.report(format!("can't find the input service: {e}"));
+                return;
+            }
+        };
+        // Forget a signal left from the input service before this one, then watch this one.
+        // (The watch belongs to this capability, so the capability is kept with the seat.)
+        let _ = self.seat_gone.wait(time::NOW);
+        if let Err(e) = endpoint.watch_receiver(&self.seat_gone, 1) {
+            self.report(format!("can't watch the input service: {e}"));
+            return;
+        }
+        let mut client = seat::Client::new(endpoint);
+        client.set_timeout_ms(CALL_MS);
+        let taken = match client.take() {
+            Ok(t) => t,
+            // It went between the lookup and the call: the watch has fired, or will.
+            Err(ref e) if lost(e) => return,
+            Err(CallError::Service(SeatError::NotAllowed)) => {
+                self.report(String::from("the input service won't give the console the seat"));
+                return;
+            }
+            Err(e) => {
+                self.report(format!("can't take the seat: {e}"));
+                return;
+            }
+        };
+        let map = match taken.ring.map(perm::READ_WRITE) {
+            Ok(m) => m,
+            Err(e) => {
+                self.report(format!("mapping the seat's ring: {e}"));
+                return;
+            }
+        };
+        // SAFETY: the mapping is readable and writable for its whole length and starts on a
+        // page, which is aligned to 64 as a ring needs. It is kept in the same struct as the
+        // consumer, so it lives as long as the consumer does.
+        let consumer = match unsafe { Consumer::new(map.as_mut_ptr(), map.len() as usize) } {
+            Ok(c) => c,
+            Err(e) => {
+                self.report(format!("the seat's ring is no good: {e:?}"));
+                return;
+            }
+        };
+        let flags = Arc::new(Flags::default());
+        let thread = SeatThread {
+            consumer,
+            doorbell: taken.doorbell,
+            _map: map,
+            _ring: taken.ring,
+            flags: flags.clone(),
+            shared: self.shared.clone(),
+        };
+        // Set before the thread starts, so that a `read_line` that comes at once finds it.
+        self.shared.seat.store(true, Ordering::Release);
+        // `move ||` makes a closure (a function with no name) that takes everything it uses
+        // with it, which is how a new thread is given its ring.
+        match thread::spawn(move || thread.run()) {
+            Ok(handle) => {
+                granite::println!("console: keys come from the input service.");
+                self.problem = None;
+                self.seat = Some(Seat { _client: client, flags, thread: handle });
+            }
+            Err(e) => {
+                self.shared.seat.store(false, Ordering::Release);
+                self.report(format!("starting a thread: {e}"));
             }
         }
     }
@@ -332,10 +438,10 @@ impl Devices {
         }
     }
 
-    /// Looks at the device list once and opens what is running and not open yet: the first
-    /// display, if there is none now, and every keyboard. Returns what is still starting.
-    fn look(&mut self, patience_ms: u64) -> Pending {
-        let mut pending = Pending::default();
+    /// Looks at the device list once and opens the first display that is running, if there is
+    /// none now. Returns whether a display is still starting.
+    fn look(&mut self, patience_ms: u64) -> bool {
+        let mut pending = false;
         if self.devmgr.is_none() && !self.connect(patience_ms) {
             return pending;
         }
@@ -354,50 +460,30 @@ impl Devices {
                 return pending;
             }
         };
-        self.problem = None;
-
-        if self.display.is_none() {
-            let screens: Vec<&DeviceInfo> = list
-                .iter()
-                .filter(|d| d.kind == DeviceClass::Display && self.wanted(d.id))
-                .collect();
-            for d in screens {
-                match d.state {
-                    DeviceState::Running => {
-                        let (id, name) = (d.id, d.name.clone());
-                        match self.open_display(id) {
-                            Ok(()) => {}
-                            Err(Trouble::Later) => pending.display = true,
-                            Err(Trouble::Failed(why)) => self.give_up(id, &name, &why),
-                        }
-                        break;
-                    }
-                    DeviceState::Starting | DeviceState::Restarting => pending.display = true,
-                    DeviceState::Disabled => {}
-                }
-            }
+        if self.display.is_some() {
+            return pending;
         }
-
-        let inputs: Vec<&DeviceInfo> =
-            list.iter().filter(|d| d.kind == DeviceClass::Input && self.wanted(d.id)).collect();
-        for d in inputs {
-            if self.keyboards.iter().any(|k| k.id == d.id) {
-                continue;
-            }
+        let screens: Vec<&DeviceInfo> =
+            list.iter().filter(|d| d.kind == DeviceClass::Display && self.wanted(d.id)).collect();
+        for d in screens {
             match d.state {
-                DeviceState::Running => match self.open_keyboard(d) {
-                    Ok(()) => {}
-                    Err(Trouble::Later) => pending.keyboard = true,
-                    Err(Trouble::Failed(why)) => self.give_up(d.id, &d.name, &why),
-                },
-                DeviceState::Starting | DeviceState::Restarting => pending.keyboard = true,
+                DeviceState::Running => {
+                    let (id, name) = (d.id, d.name.clone());
+                    match self.open_display(id) {
+                        Ok(()) => {}
+                        Err(Trouble::Later) => pending = true,
+                        Err(Trouble::Failed(why)) => self.give_up(id, &name, &why),
+                    }
+                    break;
+                }
+                DeviceState::Starting | DeviceState::Restarting => pending = true,
                 DeviceState::Disabled => {}
             }
         }
         pending
     }
 
-    /// Whether device `id` is one to try (not a mouse, and not one given up on).
+    /// Whether device `id` is one to try (not one given up on).
     fn wanted(&self, id: u32) -> bool {
         !self.ignored.contains(&id)
     }
@@ -487,65 +573,12 @@ impl Devices {
         self.shared.push(Event::Screen(Box::new(screen)));
         Ok(())
     }
-
-    /// Opens input device `d`, and if it is a keyboard (or one that is a mouse as well), starts
-    /// a thread to read it. A mouse or a tablet is put on the list to leave alone: nothing is
-    /// wrong, the console has no use for a pointer.
-    fn open_keyboard(&mut self, d: &DeviceInfo) -> Result<(), Trouble> {
-        let mut client = input::Client::new(self.endpoint(d.id)?);
-        client.set_timeout_ms(CALL_MS);
-        let info = client.info().map_err(|e| trouble("asking what it is", e))?;
-        if matches!(info.kind, InputKind::Mouse | InputKind::Tablet) {
-            self.ignored.push(d.id);
-            return Ok(());
-        }
-        let opened = client.open().map_err(|e| trouble("opening it", e))?;
-        let map = opened
-            .ring
-            .map(perm::READ_WRITE)
-            .map_err(|e| Trouble::Failed(format!("mapping its ring: {e}")))?;
-        // SAFETY: the mapping is readable and writable for its whole length and starts on a
-        // page, which is aligned to 64 as a ring needs. It is kept in the same struct as the
-        // consumer, so it lives as long as the consumer does.
-        let consumer = unsafe { Consumer::new(map.as_mut_ptr(), map.len() as usize) }
-            .map_err(|e| Trouble::Failed(format!("its ring is no good: {e:?}")))?;
-
-        let flags = Arc::new(Flags::default());
-        let thread = KeyboardThread {
-            name: d.name.clone(),
-            client,
-            consumer,
-            doorbell: opened.doorbell,
-            _map: map,
-            _ring: opened.ring,
-            flags: flags.clone(),
-            shared: self.shared.clone(),
-        };
-        // Counted before the thread starts, so that a `read_line` that comes at once finds it.
-        self.shared.keyboards.fetch_add(1, Ordering::AcqRel);
-        // `move ||` makes a closure (a function with no name) that takes everything it uses
-        // with it, which is how a new thread is given its keyboard.
-        match thread::spawn(move || thread.run()) {
-            Ok(handle) => {
-                granite::println!("console: using the keyboard {}.", d.name);
-                self.keyboards.push(Keyboard { id: d.id, flags, thread: handle });
-                Ok(())
-            }
-            Err(e) => {
-                self.shared.keyboards.fetch_sub(1, Ordering::AcqRel);
-                Err(Trouble::Failed(format!("starting a thread: {e}")))
-            }
-        }
-    }
 }
 
-/// Reads one keyboard's ring for as long as the keyboard is there.
-struct KeyboardThread {
-    name: String,
-    /// Used only to ask, now and then, whether the driver is still there.
-    client: input::Client,
+/// Reads the seat's ring for as long as the seat is this console's.
+struct SeatThread {
     consumer: Consumer,
-    /// Rung by the driver when the ring goes from empty to not empty.
+    /// Rung by the input service when it adds events.
     doorbell: Notification,
     /// The ring's memory, which the consumer reads: kept so that it stays mapped.
     _map: Mapping,
@@ -554,45 +587,42 @@ struct KeyboardThread {
     shared: Arc<Shared>,
 }
 
-impl KeyboardThread {
-    /// Runs until the keyboard goes or the watcher asks it to stop.
+impl SeatThread {
+    /// Runs until the watcher asks it to stop or the ring breaks.
+    ///
+    /// The input service going doesn't make the doorbell fail (this thread holds the
+    /// notification, so it goes on existing; it just never rings again): the watcher hears of
+    /// that from the kernel and sets the stop flag, which is looked at once a second.
     fn run(mut self) {
-        let mut decoder = KeyDecoder::new();
         let mut event = [0u8; EVENT_SIZE];
         loop {
             match self.consumer.pop(&mut event) {
                 Ok(_) => {
-                    if let Some(key) = decoder.feed(&event) {
+                    // An event is at most two keys (a dead key and a letter it doesn't
+                    // combine with type two characters).
+                    for key in keys(&event).into_iter().flatten() {
                         self.shared.push(Event::Key(key));
                     }
                 }
-                // Nothing to read. The driver rings the doorbell when it adds something (the
-                // `pop` that found the ring empty asked it to); until then sleep, but wake now
-                // and then to check that the keyboard is still there.
+                // Nothing to read. The input service rings the doorbell when it adds
+                // something; until then sleep, but wake now and then to see whether to stop.
                 Err(RingError::WouldBlock) => match self.doorbell.wait(time::after_ms(CHECK_MS)) {
                     Ok(_) => {}
                     Err(Error::TimedOut) => {
-                        if self.flags.stop.load(Ordering::Acquire) || self.driver_gone() {
+                        if self.flags.stop.load(Ordering::Acquire) {
                             break;
                         }
                     }
-                    // The doorbell itself stopped working: the driver is gone.
+                    // The doorbell stopped working: the seat was taken by someone else (the
+                    // input service revokes the old consumer's ring and doorbell).
                     Err(_) => break,
                 },
-                // The ring is broken (the driver wrote nonsense, or the memory is wrong).
+                // The ring is broken (the memory was taken back, or holds nonsense).
                 Err(_) => break,
             }
         }
-        granite::println!("console: the keyboard {} has gone.", self.name);
-        self.shared.keyboards.fetch_sub(1, Ordering::AcqRel);
         self.flags.done.store(true, Ordering::Release);
-        // Wake the main thread: a `read_line` may be waiting on this keyboard (nothing else
-        // is needed from it, but it is cheap and the queue may be waiting to be read).
+        // Wake the main thread: the queue may be waiting to be read.
         let _ = self.shared.wake.signal(WAKE);
-    }
-
-    /// Whether the driver has gone, by asking it something.
-    fn driver_gone(&self) -> bool {
-        matches!(self.client.info(), Err(ref e) if lost(e))
     }
 }
