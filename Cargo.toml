@@ -109,6 +109,13 @@ opt-level = 2
 [profile.dev.package.pbr-driver-virtio-gpu]
 opt-level = 2
 
+# The start-up archive's checksum covers all of it (some tens of megabytes of programs), and
+# every program that reads the archive checks it: the device manager, the users service, each
+# sandbox manager, the input service. Unoptimised and emulated, that one loop took the device
+# manager most of the 20 to 30 seconds it needed to start (found in M6, stage 4).
+[profile.dev.package.pbr-archive]
+opt-level = 2
+
 [profile.release]
 panic = "abort"
 debug = true
