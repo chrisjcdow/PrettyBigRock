@@ -52,11 +52,13 @@ use granite::sys::{perm, rights};
 use granite::time;
 use pbr_archive::Archive;
 use pbr_interfaces::pbr_file::{self as file, FileError, FileRights, NodeKind};
+use pbr_interfaces::pbr_seat::{self as seat, SeatError};
 use pbr_interfaces::pbr_storage::{self as storage, StorageError, VolumeState};
 use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
 use pbr_interfaces::pbr_terminal as terminal;
 use pbr_interfaces::pbr_users::{self as users_if, UserKind, UsersError};
 use pbr_interfaces::pbr_users_debug::{self as debug_if, DebugError};
+use pbr_manifest::settings::{self, Settings};
 use pbr_manifest::users::{self as users_txt, Kind, User};
 use pbr_manifest::{Place, is_name, volume_names};
 use pbr_supervise::{Decision, History};
@@ -93,6 +95,9 @@ const CALL_MS: u64 = 60_000;
 /// there (note 0018, section 3), and how long such a check may wait.
 const CHECK_MS: u64 = 500;
 const CHECK_TIMEOUT_MS: u64 = 5_000;
+/// The bit of `Service::ended` that the kernel signals when the input service has gone (a
+/// receiver watch, note 0019). Sessions use the bits below it.
+const INPUT_GONE: u64 = 1 << 63;
 
 /// Where the users are kept.
 struct System {
@@ -152,6 +157,12 @@ struct Service {
     /// An administrator asked for `shutdown`.
     shut_down: bool,
     selftest: bool,
+    /// The input service, through the capability that can set the keyboard layout and nothing
+    /// else (note 0021, section 5), while it is known and answering.
+    input: Option<seat::Client>,
+    /// Whether the input service has been told the layout of the user at the keyboard. It
+    /// starts with `us` every time it starts, so this is false again whenever it has gone.
+    layout_set: bool,
 }
 
 fn main(mut start: granite::Start) -> i32 {
@@ -201,6 +212,8 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         ended,
         shut_down: false,
         selftest,
+        input: None,
+        layout_set: false,
     };
     // At start, a session for the first administrator (M5 has no login yet; note 0017,
     // section 3).
@@ -483,7 +496,8 @@ impl Service {
         // Its sandbox manager: its own endpoint, this session's `pbr.users`, the archive, the
         // kernel log (without the right to take over the screen) and the tree.
         let number = self.next_session;
-        let bit = (0..64)
+        // (Bit 63 is `INPUT_GONE`.)
+        let bit = (0..63)
             .find(|b| !self.sessions.iter().any(|s| s.bit == *b))
             .ok_or("too many sessions")?;
         let ep = Endpoint::create().map_err(|e| format!("an endpoint: {e}"))?;
@@ -640,6 +654,95 @@ impl Service {
             self.restart_session(s);
         }
         self.check_console();
+        self.keep_layout();
+    }
+
+    // --------------------------------------------------------------------------------------
+    // Settings and the keyboard layout (note 0024, section 5; note 0021, section 5).
+
+    /// `name`'s settings, from `System/settings/<name>.txt`. A user who has never set
+    /// anything has no file: every default. A file that can't be read is treated as empty,
+    /// and the log says which line was wrong.
+    fn read_settings(&self, name: &str) -> Settings {
+        let path = format!("System/settings/{name}.txt");
+        match read_file(&self.system.root, &path, settings::MAX_SIZE) {
+            Ok(text) => Settings::parse(&text).unwrap_or_else(|e| {
+                granite::println!("users: {name}'s settings are ignored: {e}.");
+                Settings::new()
+            }),
+            Err(CallError::Service(FileError::NotFound)) => Settings::new(),
+            Err(e) => {
+                granite::println!("users: reading {name}'s settings: {e}");
+                Settings::new()
+            }
+        }
+    }
+
+    /// The input service, looked up through the supervisor if it isn't known. `None` while it
+    /// is starting or being started again. The capability this gets can set the layout and
+    /// ask which there are; it can't take the seat (the root program's lookup table and the
+    /// input service's check of the badge see to that).
+    fn input(&mut self) -> Option<&seat::Client> {
+        if self.input.is_none() {
+            let endpoint = match self.parent.lookup("input") {
+                Ok(h) => Endpoint(h),
+                Err(CallError::Service(SupervisorError::NotReady)) => return None,
+                Err(e) => {
+                    granite::println!("users: finding the input service: {e}");
+                    return None;
+                }
+            };
+            // Ask to be told when it goes, so that its replacement is told the layout
+            // again. (The watch belongs to this capability, which the client keeps.)
+            if let Err(e) = endpoint.watch_receiver(&self.ended, INPUT_GONE) {
+                granite::println!("users: can't watch the input service: {e}");
+            }
+            let mut client = seat::Client::new(endpoint);
+            client.set_timeout_ms(CHECK_TIMEOUT_MS);
+            self.input = Some(client);
+        }
+        self.input.as_ref()
+    }
+
+    /// The input service has gone (the kernel says so). The one that replaces it starts with
+    /// the default layout, so it will need telling.
+    fn input_gone(&mut self) {
+        self.input = None;
+        self.layout_set = false;
+    }
+
+    /// Tells the input service the layout of the user at the keyboard, if it hasn't been
+    /// told. Called at every check, so it happens as soon as there is an input service to
+    /// tell and a user to tell it about.
+    ///
+    /// There is one seat, so one user's layout applies: the user who has the terminal. (When
+    /// the desktop has a login screen, in M6's stage 6, it will be whoever logged in there.)
+    fn keep_layout(&mut self) {
+        if self.layout_set {
+            return;
+        }
+        let Some(owner) = self.console_user.clone() else { return };
+        let wanted = String::from(self.read_settings(&owner).layout());
+        let Some(input) = self.input() else { return };
+        match input.set_layout(&wanted) {
+            Ok(()) => self.layout_set = true,
+            Err(CallError::Service(SeatError::NoSuchLayout)) => {
+                // Note 0021, section 5: the default, and a line in the log.
+                granite::println!(
+                    "users: {owner}'s keyboard layout, {wanted}, isn't one there is; using {}.",
+                    settings::DEFAULT_LAYOUT
+                );
+                let _ = input.set_layout(settings::DEFAULT_LAYOUT);
+                self.layout_set = true;
+            }
+            Err(e) if lost(&e) => self.input_gone(),
+            Err(e) => {
+                // Not something trying again would mend (the root program gave this service
+                // a capability that may not set layouts, say).
+                granite::println!("users: can't set the keyboard layout: {e}");
+                self.layout_set = true;
+            }
+        }
     }
 
     /// Checks the console's terminal: if the console has gone, or has come (again), the session
@@ -764,7 +867,12 @@ fn serve(s: &mut Service) {
                     granite::interface::unknown(reply);
                 }
             }
-            Ok(Event::Signal(bits)) => s.ended(bits),
+            Ok(Event::Signal(bits)) => {
+                if bits & INPUT_GONE != 0 {
+                    s.input_gone();
+                }
+                s.ended(bits & !INPUT_GONE)
+            }
             Ok(Event::Gone(_)) | Err(granite::Error::TimedOut) => {}
             Err(e) => {
                 granite::println!("users: receive failed: {e}");
@@ -912,7 +1020,91 @@ impl Calls<'_> {
     }
 }
 
+impl Calls<'_> {
+    /// `pbr.users.settings`: the caller's settings. The ones this version knows come first,
+    /// with their defaults if never set, then whatever else the file holds.
+    fn own_settings(&self) -> Vec<users_if::Setting> {
+        let name = &self.s.sessions[self.session].user.name;
+        let set = self.s.read_settings(name);
+        let offset = set.timezone();
+        let (sign, minutes) = if offset < 0 { ('-', -offset) } else { ('+', offset) };
+        let mut list = vec![
+            users_if::Setting { key: settings::LAYOUT.into(), value: set.layout().into() },
+            users_if::Setting {
+                key: settings::TIMEZONE.into(),
+                value: format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60),
+            },
+        ];
+        for (key, value) in set.pairs() {
+            if key != settings::LAYOUT && key != settings::TIMEZONE && list.len() < 32 {
+                list.push(users_if::Setting { key: key.into(), value: value.into() });
+            }
+        }
+        list
+    }
+
+    /// `pbr.users.set`: checks, saves and applies one of the caller's settings.
+    fn change_setting(&mut self, key: &str, value: &str) -> Result<(), UsersError> {
+        if self.s.shut_down {
+            return Err(UsersError::Failed);
+        }
+        // Only the settings this version knows can be set through here. (Others in the file
+        // are kept: a later version may have put them there.)
+        if key != settings::LAYOUT && key != settings::TIMEZONE {
+            return Err(UsersError::BadSetting);
+        }
+        let name = self.s.sessions[self.session].user.name.clone();
+        let mut set = self.s.read_settings(&name);
+        set.set(key, value).map_err(|_| UsersError::BadSetting)?;
+        if key == settings::LAYOUT {
+            // It must be a layout the input service has, which only it knows.
+            let input = self.s.input().ok_or(UsersError::NotReady)?;
+            let known = match input.layouts() {
+                Ok(l) => l.available.iter().any(|l| l.name == value),
+                Err(e) if lost(&e) => {
+                    self.s.input_gone();
+                    return Err(UsersError::NotReady);
+                }
+                Err(e) => {
+                    granite::println!("users: asking for the keyboard layouts: {e}");
+                    return Err(UsersError::Failed);
+                }
+            };
+            if !known {
+                return Err(UsersError::BadSetting);
+            }
+        }
+        // Saved first, applied second: if saving fails nothing has changed.
+        let saved = folder(&self.s.system.root, "System/settings").and_then(|()| {
+            let path = format!("System/settings/{name}.txt");
+            write_file(&self.s.system.root, &path, set.to_text().as_bytes(), true)
+        });
+        if let Err(e) = saved {
+            granite::println!("users: saving {name}'s settings: {e}");
+            return Err(UsersError::Failed);
+        }
+        // A layout applies at once if this is the user at the keyboard; otherwise it waits
+        // in the file until they are.
+        if key == settings::LAYOUT && self.s.console_user.as_deref() == Some(name.as_str()) {
+            self.s.layout_set = false;
+            self.s.keep_layout();
+        }
+        Ok(())
+    }
+}
+
 impl users_if::Server for Calls<'_> {
+    fn settings(&mut self, reply: users_if::settings::Reply) {
+        answered(reply.ok(&self.own_settings()));
+    }
+
+    fn set(&mut self, key: String, value: String, reply: users_if::set::Reply) {
+        answered(match self.change_setting(&key, &value) {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.err(e),
+        });
+    }
+
     fn whoami(&mut self, reply: users_if::whoami::Reply) {
         answered(reply.ok(&to_interface(&self.s.sessions[self.session].user)));
     }

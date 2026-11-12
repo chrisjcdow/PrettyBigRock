@@ -33,6 +33,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("format VOLUME LABEL", "put RockFS on an empty volume (administrators; no questions asked)"),
     ("setup VOLUME NAME", "make a volume the system volume at the next start (administrators)"),
     ("whoami", "your user name"),
+    ("settings", "show your settings"),
+    ("set KEY VALUE", "change a setting: layout (us, gb, us-intl) or timezone (+02:00)"),
     ("users", "list the users (administrators)"),
     ("adduser NAME [admin|standard] [DISPLAY NAME...]", "add a user (administrators)"),
     ("run APP [FILE...] [-- ARGS...]", "start an app, giving it the FILEs"),

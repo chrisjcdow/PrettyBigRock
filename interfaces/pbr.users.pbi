@@ -68,6 +68,23 @@ struct VolumeInfo {
 /// Afterwards the volumes can't be used until the next start.
 @7 fn shutdown() -> () error UsersError;
 
+/// One of the user's settings (docs/design/0024-the-session-desktop.md, section 5).
+struct Setting {
+    /// `layout` (the keyboard layout, a name `pbr.seat.layouts` gives) or `timezone` (the
+    /// offset from UTC for showing times, as `+02:00`).
+    key: string<32>,
+    value: string<128>,
+}
+
+/// The caller's own settings: every one this version knows, with its default if the user has
+/// never set it, then any others their settings file holds.
+@8 fn settings() -> (settings: list<Setting, 32>) error UsersError;
+
+/// Changes one of the caller's own settings. The value is checked (a layout the input service
+/// has, a valid offset), saved, and applied at once: a layout is applied if the caller is the
+/// user at the keyboard.
+@9 fn set(key: string<32>, value: string<128>) -> () error UsersError;
+
 /// What can go wrong.
 flexible enum UsersError {
     /// Only administrators may.
@@ -85,4 +102,6 @@ flexible enum UsersError {
     Failed @7,
     /// No more users fit.
     TooMany @8,
+    /// No setting has that name, or it can't have that value.
+    BadSetting @9,
 }

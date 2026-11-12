@@ -22,6 +22,7 @@ extern crate alloc;
 pub mod app;
 pub mod lines;
 pub mod rules;
+pub mod settings;
 pub mod users;
 
 use alloc::format;

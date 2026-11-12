@@ -245,6 +245,8 @@ pub enum UsersOp {
     Setup,
     /// `shutdown`.
     Shutdown,
+    /// `settings` and `set`.
+    Settings,
 }
 
 /// Why a `pbr.users` call failed.
@@ -268,9 +270,19 @@ pub fn users_reason(op: UsersOp, e: &CallError<UsersError>) -> Reason {
             UsersOp::Setup => "that volume doesn't have RockFS on it",
             _ => "that volume isn't suitable",
         },
-        UsersError::NotReady => "that volume is still starting; try again in a moment",
+        UsersError::NotReady => match op {
+            UsersOp::Settings => "the input service isn't running; try again in a moment",
+            _ => "that volume is still starting; try again in a moment",
+        },
         UsersError::Failed => "the storage service failed (the log says why)",
-        UsersError::TooMany => "no more users fit",
+        UsersError::TooMany => match op {
+            UsersOp::Settings => "no more settings fit",
+            _ => "no more users fit",
+        },
+        UsersError::BadSetting => {
+            "the settings are layout (a keyboard layout there is, such as us, gb or us-intl) \
+             and timezone (such as +02:00)"
+        }
         UsersError::Unknown(n) => return Reason::Text(format!("the users service gave error {n}")),
     })
 }

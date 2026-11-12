@@ -325,6 +325,8 @@ impl Shell {
             }
             Command::Whoami => self.say(&format!("{}\n", self.user)),
             Command::Users => self.show_plain(name, self.list_users()),
+            Command::Settings => self.show_plain(name, self.settings()),
+            Command::Set { key, value } => self.show_plain(name, self.set(&key, &value)),
             Command::AddUser { name: user, kind, display } => {
                 self.show_plain(name, self.add_user(user, kind, display))
             }
@@ -378,6 +380,19 @@ impl Shell {
     fn list_users(&self) -> Result<String, Reason> {
         let list = self.users_service()?.list().map_err(|e| users_reason(UsersOp::List, &e))?;
         Ok(format::users(&list))
+    }
+
+    /// `settings`: the user's settings, one `key value` to a line, as their file has them.
+    fn settings(&self) -> Result<String, Reason> {
+        let list =
+            self.users_service()?.settings().map_err(|e| users_reason(UsersOp::Settings, &e))?;
+        Ok(list.iter().map(|s| format!("{} {}\n", s.key, s.value)).collect())
+    }
+
+    /// `set KEY VALUE`: the users service checks it, saves it and applies it.
+    fn set(&self, key: &str, value: &str) -> Result<String, Reason> {
+        self.users_service()?.set(key, value).map_err(|e| users_reason(UsersOp::Settings, &e))?;
+        Ok(String::new())
     }
 
     fn add_user(&self, name: String, kind: UserKind, display: String) -> Result<String, Reason> {

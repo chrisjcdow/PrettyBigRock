@@ -32,6 +32,10 @@ pub const MAX_APP: usize = 64;
 pub const MAX_APP_ARGS: usize = 3072;
 /// The longest user name `pbr.users` accepts, in bytes.
 pub const MAX_USER_NAME: usize = 32;
+/// The longest setting name `pbr.users` accepts, in bytes.
+pub const MAX_SETTING_KEY: usize = 32;
+/// The longest setting value `pbr.users` accepts, in bytes.
+pub const MAX_SETTING_VALUE: usize = 128;
 /// The longest display name `pbr.users` accepts, in bytes.
 pub const MAX_DISPLAY_NAME: usize = 128;
 /// The longest volume label `pbr.users` accepts, in bytes.
@@ -141,6 +145,15 @@ pub enum Command {
     },
     /// `whoami`
     Whoami,
+    /// `settings`
+    Settings,
+    /// `set KEY VALUE`
+    Set {
+        /// The setting's name (`layout`, `timezone`).
+        key: String,
+        /// What to set it to.
+        value: String,
+    },
     /// `users`
     Users,
     /// `adduser NAME [admin|standard] [DISPLAY NAME…]`
@@ -204,6 +217,8 @@ impl Command {
             Command::Format { .. } => "format",
             Command::Setup { .. } => "setup",
             Command::Whoami => "whoami",
+            Command::Settings => "settings",
+            Command::Set { .. } => "set",
             Command::Users => "users",
             Command::AddUser { .. } => "adduser",
             Command::Run { .. } => "run",
@@ -326,6 +341,7 @@ pub fn parse(words: &[String]) -> Result<Option<Command>, ParseError> {
         "volumes" => no_arguments("volumes", args, Command::Volumes)?,
         "df" => no_arguments("df", args, Command::Df)?,
         "whoami" => no_arguments("whoami", args, Command::Whoami)?,
+        "settings" => no_arguments("settings", args, Command::Settings)?,
         "users" => no_arguments("users", args, Command::Users)?,
         "apps" => no_arguments("apps", args, Command::Apps)?,
         "shutdown" => no_arguments("shutdown", args, Command::Shutdown)?,
@@ -384,6 +400,14 @@ pub fn parse(words: &[String]) -> Result<Option<Command>, ParseError> {
             Command::Setup {
                 volume: number("setup", "VOLUME", volume)?,
                 name: limited("setup", "NAME", user, MAX_USER_NAME)?,
+            }
+        }
+        "set" => {
+            let (_, operands) = scan("set", args, "")?;
+            let [key, value] = fixed("set", &operands, ["KEY", "VALUE"])?;
+            Command::Set {
+                key: limited("set", "KEY", key, MAX_SETTING_KEY)?,
+                value: limited("set", "VALUE", value, MAX_SETTING_VALUE)?,
             }
         }
         "adduser" => add_user(args)?,
@@ -613,6 +637,18 @@ mod tests {
         assert_eq!(ok("volumes"), Command::Volumes);
         assert_eq!(ok("df"), Command::Df);
         assert_eq!(ok("whoami"), Command::Whoami);
+        assert_eq!(ok("settings"), Command::Settings);
+        assert_eq!(
+            ok("set layout us-intl"),
+            Command::Set { key: "layout".into(), value: "us-intl".into() }
+        );
+        assert_eq!(
+            ok("set timezone +02:00"),
+            Command::Set { key: "timezone".into(), value: "+02:00".into() }
+        );
+        assert!(err("set").contains("KEY is missing"));
+        assert!(err("set layout").contains("VALUE is missing"));
+        assert!(err("set layout gb us").contains("too many"));
         assert_eq!(ok("users"), Command::Users);
         assert_eq!(ok("apps"), Command::Apps);
         assert_eq!(ok("shutdown"), Command::Shutdown);
@@ -804,6 +840,7 @@ mod tests {
             "volumes x",
             "df x",
             "whoami x",
+            "settings x",
             "users x",
             "apps x",
             "shutdown x",
@@ -910,6 +947,8 @@ mod tests {
             "format 1 a",
             "setup 1 a",
             "whoami",
+            "settings",
+            "set a b",
             "users",
             "adduser a",
             "run a",
