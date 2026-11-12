@@ -87,7 +87,9 @@ impl FbConsole {
         (font::WIDTH + 1) * self.scale
     }
     fn cell_h(&self) -> usize {
-        (font::HEIGHT + 2) * self.scale
+        // The font's 11 rows already hold the space between lines: its top two are empty
+        // except for the accents of capital letters (lib/font).
+        font::HEIGHT * self.scale
     }
     fn margin(&self) -> usize {
         8 * self.scale

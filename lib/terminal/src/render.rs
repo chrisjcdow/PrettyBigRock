@@ -50,7 +50,8 @@ pub struct Layout {
     pub scale: usize,
     /// Pixels across one character cell: the glyph and a column of space.
     pub cell_width: usize,
-    /// Pixels down one character cell: the glyph and two rows of space.
+    /// Pixels down one character cell: the glyph's rows, whose top two are the space between
+    /// lines (only the accents of capital letters reach into them).
     pub cell_height: usize,
     /// Pixels of space around the text on every side.
     pub margin: usize,
@@ -82,8 +83,7 @@ impl Layout {
         } else {
             1
         };
-        let (cell_width, cell_height, margin) =
-            ((WIDTH + 1) * scale, (HEIGHT + 2) * scale, 8 * scale);
+        let (cell_width, cell_height, margin) = ((WIDTH + 1) * scale, HEIGHT * scale, 8 * scale);
         let columns = (width as usize).checked_sub(2 * margin)? / cell_width;
         let rows = (height as usize).checked_sub(2 * margin)? / cell_height;
         if columns == 0 || rows == 0 || columns * rows > MAX_CELLS {
@@ -138,9 +138,10 @@ impl Layout {
         let glyph_row = line / self.scale;
         for (column, cell) in out.chunks_mut(self.cell_width).take(self.columns).enumerate() {
             let c = chars.get(column).copied().unwrap_or(' ');
-            // The glyph is `HEIGHT` rows; the rows after it are the space between lines.
+            // The glyph is `HEIGHT` rows, the whole height of the cell. The cursor is drawn
+            // along the last of them, joined to any tail of the letter there (g, j, y).
             let bits = if glyph_row < HEIGHT { glyph(c)[glyph_row] } else { 0 };
-            let underline = caret == Some(column) && glyph_row == HEIGHT + 1;
+            let underline = caret == Some(column) && glyph_row == HEIGHT - 1;
             for (x, pixel) in cell.iter_mut().enumerate() {
                 let dot = x / self.scale;
                 let lit = underline || (dot < WIDTH && bits & (0x10 >> dot) != 0);
@@ -236,13 +237,16 @@ mod tests {
         let l = layout(60, 60); // scale 1: 7 columns of 6 pixels
         assert_eq!(l.scale, 1);
         let rows = picture(&l, &['A'], None);
-        assert_eq!(rows.len(), HEIGHT + 2);
-        // 'A' is 0e 11 11 1f 11 11 11 in the font; its cell has a column of space after it.
-        assert_eq!(&rows[0][..6], ".###..");
-        assert_eq!(&rows[1][..6], "#...#.");
-        assert_eq!(&rows[3][..6], "#####.");
-        assert_eq!(&rows[6][..6], "#...#.");
-        assert_eq!(&rows[7][..6], "......", "the rows below the letters are blank");
+        assert_eq!(rows.len(), HEIGHT);
+        // The two rows above the capitals are blank (they are for accents), then 'A' is
+        // 0e 11 11 1f 11 11 11 in the font; its cell has a column of space after it.
+        assert_eq!(&rows[0][..6], "......");
+        assert_eq!(&rows[1][..6], "......");
+        assert_eq!(&rows[2][..6], ".###..");
+        assert_eq!(&rows[3][..6], "#...#.");
+        assert_eq!(&rows[5][..6], "#####.");
+        assert_eq!(&rows[8][..6], "#...#.");
+        assert_eq!(&rows[9][..6], "......", "the rows for tails are blank under an A");
         assert_eq!(&rows[10][..6], "......");
         // The cells after it are spaces, because the row had nothing more.
         assert!(rows.iter().all(|r| r[6..].chars().all(|c| c == '.')));
@@ -275,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn every_printable_character_is_drawn_and_the_rest_is_a_question_mark() {
+    fn every_character_of_the_font_is_drawn_and_the_rest_is_a_question_mark() {
         let l = layout(60, 60);
         for c in ' '..='~' {
             let got = picture(&l, &[c], None);
@@ -285,7 +289,10 @@ mod tests {
                 .collect();
             assert_eq!(rows[..HEIGHT], glyph(c)[..], "{c:?}");
         }
-        assert_eq!(picture(&l, &['\u{e9}'], None), picture(&l, &['?'], None));
+        // The font has the accented letters the keyboard layouts can type (note 0023).
+        assert_ne!(picture(&l, &['\u{e9}'], None), picture(&l, &['?'], None));
+        assert_ne!(picture(&l, &['\u{e9}'], None), picture(&l, &['e'], None));
+        assert_eq!(picture(&l, &['\u{4e2d}'], None), picture(&l, &['?'], None));
         assert_eq!(picture(&l, &['\n'], None), picture(&l, &['?'], None));
     }
 
@@ -295,7 +302,7 @@ mod tests {
         let plain = picture(&l, &['a', 'b', 'c'], None);
         let with = picture(&l, &['a', 'b', 'c'], Some(1));
         for line in 0..l.cell_height {
-            if line == HEIGHT + 1 {
+            if line == HEIGHT - 1 {
                 assert_eq!(&with[line][6..12], "######");
                 assert_eq!(&with[line][..6], &plain[line][..6]);
                 assert_eq!(&with[line][12..], &plain[line][12..]);
@@ -310,7 +317,7 @@ mod tests {
             (0..big.cell_height).filter(|&i| with[i].starts_with('#')).collect();
         assert_eq!(thick, [20, 21]);
         // A cursor at a column past the end of the row's text is drawn too, on a space.
-        assert!(picture(&l, &['a'], Some(3))[HEIGHT + 1].contains("######"));
+        assert!(picture(&l, &['a'], Some(3))[HEIGHT - 1].contains("######"));
         // And one past the last column of the screen is not drawn at all.
         assert_eq!(picture(&l, &[], Some(l.columns + 5)), picture(&l, &[], None));
     }

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 [package]
 name = "pbr-font"
-description = "PrettyBigRock's 5x9 bitmap font, shared by the kernel's text console and the console service (note 0018)"
+description = "PrettyBigRock's 5x11 bitmap font, shared by the kernel's text console and the console service (note 0018)"
 version.workspace = true
 edition.workspace = true
 license = "MPL-2.0"
