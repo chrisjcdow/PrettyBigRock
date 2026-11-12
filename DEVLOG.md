@@ -734,4 +734,15 @@ brief, each reviewed in full.
   to judge when the desktop is on screen.
 - `lib/draw` is also checked with Clippy for the programs' targets (it is in the build
   tool's list), since no program uses it until stage 5.
+- **A flaw in the kernel's own self-test, found by the stage's first CI run.** One ARM64 EL1
+  boot failed with "heap: 32 bytes not returned". The heap test (M2) compared the kernel
+  heap's bytes in use before and after its own work, but other kernel threads use the heap
+  meanwhile: since 9 November a thread wakes every second to watch for slow process ends, and
+  a timer tick makes a short list of the threads to wake. The test now tries up to three
+  times (a real leak shows every time). Nothing to do with drawing; the other three
+  configurations passed that run.
+- `cargo xtask ci` passed on all four configurations with that fix (about 55 minutes here);
+  GitHub's CI passed on the same commit (`8a6273d`), and Stress was started on it (run
+  43206630132), since the font's cell and the self-test both run at every boot. Last
+  session's Stress run on `2de1a6c` (43072806182) had passed.
 
