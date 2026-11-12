@@ -3,7 +3,7 @@
 
 //! The root program as supervisor (docs/design/0018-supervision-shell-and-m5-tests.md,
 //! sections 1 to 4): it starts the system services (the device manager, the storage service,
-//! the console and the users service), watches them, and starts one again when it ends, with the restart
+//! the input service, the console and the users service), watches them, and starts one again when it ends, with the restart
 //! policy every supervisor uses (`lib/supervise`).
 //!
 //! It also serves `pbr.supervisor` to them: **services find each other through it**, not
@@ -47,9 +47,11 @@ pub enum Kind {
     Storage,
     Users,
     Console,
+    /// The input service (note 0021).
+    Input,
 }
 
-const KINDS: [Kind; 4] = [Kind::Devmgr, Kind::Storage, Kind::Users, Kind::Console];
+const KINDS: [Kind; 5] = [Kind::Devmgr, Kind::Storage, Kind::Users, Kind::Console, Kind::Input];
 
 impl Kind {
     /// Its program's name in the start-up archive.
@@ -59,6 +61,7 @@ impl Kind {
             Kind::Storage => "storage",
             Kind::Users => "users",
             Kind::Console => "console",
+            Kind::Input => "input",
         }
     }
 
@@ -68,6 +71,7 @@ impl Kind {
             Kind::Storage => 1,
             Kind::Users => 2,
             Kind::Console => 3,
+            Kind::Input => 4,
         }
     }
 
@@ -77,7 +81,8 @@ impl Kind {
     /// since a driver being restarted is given its budget before the old one's is back; the
     /// storage service's its 16 MiB cache, volumes in memory and 8 MiB for each filesystem
     /// server; the users service's three sessions of 16 MiB at once. The console's holds its
-    /// text grid and its threads (the buffer it draws in is the display driver's memory).
+    /// text grid and its threads (the buffer it draws in is the display driver's memory). The
+    /// input service's holds its layouts, a thread for each device and the consumer's ring.
     fn budget(self) -> u64 {
         const MIB: u64 = 1024 * 1024;
         match self {
@@ -85,6 +90,7 @@ impl Kind {
             Kind::Storage => 128 * MIB,
             Kind::Users => 64 * MIB,
             Kind::Console => 8 * MIB,
+            Kind::Input => 8 * MIB,
         }
     }
 }
@@ -103,13 +109,28 @@ pub const STORAGE_ADMIN: u64 = 1;
 /// would let a client pass itself off as another the day such a service starts using badges.
 pub const ANY_CLIENT: u64 = 1;
 
-/// Who may look up what (note 0018, section 2): the service, and the badge the capability
-/// carries (never 0). Nobody else may look up anything. The console's endpoint serves
-/// `pbr.terminal`: the users service gives it to one session, whose shell uses it.
-fn rule(child: Kind, name: &str) -> Option<(Kind, u64)> {
+/// The badge of a consumer of the seat (`services/input`'s `CONSUMER`): what the console gets
+/// when it looks up `input`, and the display server will (note 0022). It can take the seat,
+/// which means hearing every key typed, so it is given to nobody else.
+pub const SEAT_CONSUMER: u64 = 1;
+/// The badge of the users service's capability for the input service (`services/input`'s
+/// `LAYOUT_SETTER`): it can set the keyboard layout and nothing else (note 0021, section 5).
+pub const SEAT_LAYOUT: u64 = 2;
+
+/// Who may look up what (note 0018, section 2; the input service: note 0021, section 1): the
+/// service, and the badge the capability carries (never 0). Nobody else may look up anything.
+/// The console's endpoint serves `pbr.terminal`: the users service gives it to one session,
+/// whose shell uses it.
+///
+/// This table is where "who may take the seat" is decided. The input service only checks the
+/// badge a call arrives with; which program gets which badge is here.
+pub(crate) fn rule(child: Kind, name: &str) -> Option<(Kind, u64)> {
     match (child, name) {
         (Kind::Storage, "devices") => Some((Kind::Devmgr, ANY_CLIENT)),
         (Kind::Console, "devices") => Some((Kind::Devmgr, ANY_CLIENT)),
+        (Kind::Input, "devices") => Some((Kind::Devmgr, ANY_CLIENT)),
+        (Kind::Console, "input") => Some((Kind::Input, SEAT_CONSUMER)),
+        (Kind::Users, "input") => Some((Kind::Input, SEAT_LAYOUT)),
         (Kind::Users, "storage") => Some((Kind::Storage, STORAGE_ADMIN)),
         (Kind::Users, "console") => Some((Kind::Console, ANY_CLIENT)),
         _ => None,
@@ -430,6 +451,8 @@ impl Inner {
             Kind::Users => (rights::ALL, Some(rights::READ | rights::MAP | CLIENT)),
             // The console starts no programs, so it needs no archive.
             Kind::Console => (rights::ALL, None),
+            // The input service reads its keyboard layouts from the archive.
+            Kind::Input => (rights::ALL, Some(rights::READ | rights::MAP)),
         };
         let mut caps = vec![
             (role::OWN, own.0.into_raw(), own_rights, true),

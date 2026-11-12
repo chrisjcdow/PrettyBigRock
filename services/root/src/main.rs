@@ -80,7 +80,7 @@ fn main(mut start: granite::Start) -> i32 {
         }
     };
     use supervisor::Kind;
-    for kind in [Kind::Devmgr, Kind::Storage, Kind::Console, Kind::Users] {
+    for kind in [Kind::Devmgr, Kind::Storage, Kind::Input, Kind::Console, Kind::Users] {
         if let Err(e) = sup.start(kind, "") {
             granite::println!("The root program can't start {}: {e}", kind.program());
         }

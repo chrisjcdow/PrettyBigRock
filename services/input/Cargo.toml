@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-input"
+description = "The input service: every keyboard and pointer merged, with the layout applied, served as pbr.seat (note 0021)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "input"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-archive = { path = "../../lib/archive" }
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-keymap = { path = "../../lib/keymap" }
+pbr-seat = { path = "../../lib/seat" }
+
+[lints]
+workspace = true

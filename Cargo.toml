@@ -52,6 +52,7 @@ members = [
     "services/console",
     "services/devmgr",
     "services/fat",
+    "services/input",
     "services/root",
     "services/rockfs",
     "services/sandbox",

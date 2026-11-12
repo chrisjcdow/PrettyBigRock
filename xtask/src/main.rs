@@ -74,6 +74,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-root", "root", "root"),
     ("pbr-devmgr", "devmgr", "devmgr"),
     ("pbr-storage", "storage", "storage"),
+    ("pbr-input", "input", "input"),
     ("pbr-console", "console", "console"),
     ("pbr-rockfs-server", "rockfs", "rockfs"),
     ("pbr-fat-server", "fat", "fat"),
@@ -106,6 +107,10 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("apps/sandboxed.app", "tests/programs/sandboxed/sandboxed.app"),
     ("apps/broken.app", "tests/programs/sandboxed/broken.app"),
     ("apps/shell.app", "apps/shell/shell.app"),
+    // Keyboard layouts, which the input service reads (note 0021, section 4).
+    ("layouts/us.kbd", "services/input/layouts/us.kbd"),
+    ("layouts/gb.kbd", "services/input/layouts/gb.kbd"),
+    ("layouts/us-intl.kbd", "services/input/layouts/us-intl.kbd"),
 ];
 
 /// Crates built for the programs' targets, checked with Clippy there.
@@ -128,6 +133,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-root",
     "pbr-storage",
     "pbr-console",
+    "pbr-input",
     "pbr-rockfs-server",
     "pbr-users",
     "pbr-sandbox",
