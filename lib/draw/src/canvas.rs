@@ -200,7 +200,7 @@ impl<'a> Canvas<'a> {
         if i64::from(t) * 2 >= i64::from(rect.width.min(rect.height)) {
             return self.fill_rect(rect, colour);
         }
-        let Rect { x, y, width, height } = rect;
+        let Rect { x, y, width, .. } = rect;
         // Four bars that don't overlap, so that a see-through colour isn't drawn twice at
         // the corners. The arithmetic can't overflow: `t` is less than half of each side.
         self.fill_rect(Rect::new(x, y, width, t), colour);
