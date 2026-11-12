@@ -168,6 +168,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-platform",
     "pbr-ranges",
     "pbr-rockfs",
+    "pbr-seat",
     "pbr-shell",
     "pbr-virtio",
     "rockfs-rs",

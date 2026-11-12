@@ -43,6 +43,7 @@ members = [
     "lib/platform",
     "lib/ranges",
     "lib/rockfs",
+    "lib/seat",
     "lib/shell",
     "lib/supervise",
     "lib/terminal",
