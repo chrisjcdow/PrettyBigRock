@@ -22,6 +22,8 @@ use pbr_interfaces::pbr_devices_debug as devices_debug;
 const SECTOR: usize = 512;
 /// The size of the test disk, in sectors.
 const TEST_SECTORS: u64 = 2048;
+/// How long the disks' drivers may take to start, once the device manager is answering.
+const DRIVERS_MS: u64 = 30_000;
 
 /// What byte `i` of sector `s` of the test disk is. (`xtask` writes the same.)
 pub fn pattern(s: u64, i: usize) -> u8 {
@@ -70,10 +72,20 @@ fn refused<T>(
 }
 
 /// Waits for the test disk to be served, and opens it.
+///
+/// Two waits, each with its own limit. The first `list` doesn't return until the device manager
+/// has finished starting (it serves nobody before that), which under emulation takes about as
+/// long as the 30 seconds this function used to allow for everything: a Stress boot on
+/// 12 November 2026 failed here with every driver about to report in. So the time allowed for
+/// the drivers to start is counted from the device manager's first answer, not from before it.
 pub(crate) fn find_disk(d: &Devmgr) -> Result<(u32, block::Client), String> {
-    let end = time::after_ms(30_000);
+    let asked = time::now();
+    let mut end = None;
     loop {
         let list = d.client.list().map_err(|e| format!("listing devices: {e}"))?;
+        let answered = time::now();
+        // `get_or_insert` keeps the deadline made after the first answer.
+        let end = *end.get_or_insert(answered.saturating_add(DRIVERS_MS * 1_000_000));
         let mut waiting = false;
         for dev in list.iter().filter(|x| x.kind == DeviceClass::Block) {
             match dev.state {
@@ -98,8 +110,19 @@ pub(crate) fn find_disk(d: &Devmgr) -> Result<(u32, block::Client), String> {
                 return Ok((dev.id, c));
             }
         }
-        if !waiting || time::now() > end {
-            return Err(format!("the test disk wasn't found among {} devices", list.len()));
+        if !waiting {
+            return Err(format!(
+                "the test disk isn't among the {} devices, and no disk is still starting",
+                list.len()
+            ));
+        }
+        if time::now() > end {
+            return Err(format!(
+                "the test disk wasn't found among {} devices: some disks were still starting \
+                 {} ms after this test first asked",
+                list.len(),
+                (time::now() - asked) / 1_000_000
+            ));
         }
         time::sleep_ms(50);
     }
