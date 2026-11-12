@@ -24,6 +24,7 @@ members = [
     "lib/captree",
     "lib/crc",
     "lib/devices",
+    "lib/draw",
     "lib/driver",
     "lib/elf",
     "lib/fat",
@@ -44,6 +45,7 @@ members = [
     "lib/shell",
     "lib/supervise",
     "lib/terminal",
+    "lib/testpng",
     "lib/virtio",
     "services/console",
     "services/devmgr",
@@ -86,12 +88,14 @@ panic = "abort"
 # Drawing is built optimised even in test (debug) builds: the boot tests run x86-64 emulated on
 # a busy machine, where unoptimised pixel loops make the screen far too slow to test the desktop
 # (note 0026, section 6). Debug assertions and overflow checks stay on, since they are set for
-# the whole profile, not per package. M6 adds `pbr-draw`, the display server and the display
-# drivers here as they are written.
+# the whole profile, not per package. M6 adds the display server here when it is written.
 [profile.dev.package.pbr-font]
 opt-level = 2
 
 [profile.dev.package.pbr-terminal]
+opt-level = 2
+
+[profile.dev.package.pbr-draw]
 opt-level = 2
 
 # The display rules and pixel conversion, and the framebuffer driver's copying: every pixel

@@ -146,6 +146,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-captree",
     "pbr-crc",
     "pbr-devices",
+    "pbr-draw",
     "pbr-elf",
     "pbr-fat",
     "pbr-filetree",
@@ -158,6 +159,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-manifest",
     "pbr-supervise",
     "pbr-terminal",
+    "pbr-testpng",
     "pbr-partition",
     "pbr-platform",
     "pbr-ranges",
@@ -958,6 +960,7 @@ fn licence_for(rel: &Path) -> &'static str {
         || under("lib/filetree/")
         || under("lib/files/")
         || under("lib/font/")
+        || under("lib/draw/")
         || under("targets/")
     {
         "MPL-2.0"
@@ -1029,6 +1032,8 @@ mod tests {
         assert_eq!(licence_for(Path::new("lib/granite/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/elf/Cargo.toml")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/font/src/lib.rs")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("lib/draw/src/canvas.rs")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("lib/testpng/src/lib.rs")), "GPL-3.0-or-later");
         assert_eq!(licence_for(Path::new("interfaces/echo.pbi")), "MIT");
         assert_eq!(licence_for(Path::new("lib/interfaces/build.rs")), "MIT");
         assert_eq!(licence_for(Path::new("kernel/src/main.rs")), "GPL-3.0-or-later");

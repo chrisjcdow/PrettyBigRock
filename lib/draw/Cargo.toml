@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MPL-2.0
+[package]
+name = "pbr-draw"
+description = "Drawing: pixels, shapes, text and pictures on a canvas, in whole numbers only (note 0023)"
+version.workspace = true
+edition.workspace = true
+license = "MPL-2.0"
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pbr-font = { path = "../font" }
+
+[dev-dependencies]
+pbr-testpng = { path = "../testpng" }
+
+[lints]
+workspace = true
