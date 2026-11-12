@@ -698,3 +698,40 @@ briefs, both reviewed in full: the virtio-gpu driver and tablets in the virtio-i
     first unexpected error, and the next write answered `DiskError`. It now retries anything
     but "disabled" for the 30 seconds already allowed (`5d92be4`).
   - The 17-minute hang of 10 November is still unexplained.
+
+## Session 15: 12 November 2026, M6 stage 3 (`lib/draw`)
+
+Chris asked for stage 3 as note 0026 defines it, with the same rules as before. Built by the
+session's model (Claude Fable 5.2) with four pieces by Sonnet subagents, each to a written
+brief, each reviewed in full.
+
+- **The core, written first** (`lib/draw`: `canvas.rs`, `colour.rs`, `geometry.rs`,
+  `damage.rs`): a canvas over `Bgrx` pixels with a clip, a scale and sub-canvases; colours
+  mixed with exact rounding; rectangles that can't overflow; the list of changed rectangles.
+  The subagents built on its few internal calls (a clipped row, a clipped run, "this
+  rectangle changed"), which is what keeps every drawing call inside the clip.
+- **`lib/testpng`** (subagent): reference pictures as uncompressed PNG files, read and
+  written with our own code, cross-checked against Python's `zlib`. It passed review as
+  written.
+- **The font** (subagent): the 5 × 11 cell and 239 new characters, drawn as text in
+  `lib/font/glyphs.txt`, with tests that every accented letter keeps its base letter's dots
+  and that no two characters look alike by accident. Reviewed as pictures; ten glyphs redrawn
+  (`Ð`, `Đ`, `ß`, `ð`, `ď`, `Ĳ` and the four curly quotes). The kernel's console and
+  `lib/terminal` now use the 11 rows as the whole line.
+- **Shapes, lines and flood fill** (subagent), **pictures and text** (subagent), side by
+  side in the same checkout on separate files. Each rule is written twice: in the library,
+  worked out a row at a time, and in the tests as a per-pixel model; they agree on tens of
+  thousands of generated cases. The shapes subagent found a mistake in its brief (the
+  shadow's square root must round up, or a few pixels outside each corner get full strength)
+  and a faster thin line than asked for (where Bresenham's walk is after *k* steps has a
+  closed form, so a line of any length costs only its visible part).
+- **20 reference pictures** in `tests/pictures/draw/`, each at 1× and 2×, each looked at:
+  rectangles, shapes, gradients, shadows, lines, flood fill, pictures, every glyph of the
+  font, text styles, and `look-*`: a window as 1.3 drew it, made with the new calls.
+- **What building changed in the notes** is in note 0023's Changes: a canvas is always
+  solid; no anti-aliasing; smooth scaling by area; damage joined only when cheap; the font's
+  extra punctuation; no heading font yet (sizes 2 and 3 and bold, as 1.3 had), left for Chris
+  to judge when the desktop is on screen.
+- `lib/draw` is also checked with Clippy for the programs' targets (it is in the build
+  tool's list), since no program uses it until stage 5.
+

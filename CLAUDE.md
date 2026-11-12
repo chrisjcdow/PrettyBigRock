@@ -86,6 +86,11 @@ let node = self.objects.get(badge)?;
 
 - `cargo xtask check`: formatting, Clippy for every architecture, licence lines.
 - `cargo xtask test`: host tests, including the cross-checks against the Python tools.
+  Drawing is compared with the reference pictures in `tests/pictures/` (note 0023, section 6):
+  after a change to the look that is meant, `PBR_UPDATE_PICTURES=1 cargo xtask test` writes
+  them afresh; **look at every picture that changed** (the Read tool shows PNG files) before
+  committing it. The font's drawings are `lib/font/glyphs.txt`; after changing one,
+  `PBR_UPDATE_FONT=1 cargo test -p pbr-font` writes its table again.
 - `cargo xtask qemu-test`: boots all four configurations (x86-64 UEFI and BIOS, ARM64 UEFI at
   EL1 and EL2) and runs the self-tests. `PBR_QEMU_ONLY=ARM64` (any part of a configuration's
   name) picks configurations. Don't run two boot tests side by side.

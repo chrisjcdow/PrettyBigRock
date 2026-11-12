@@ -41,28 +41,56 @@ widget toolkit, built in M6).
 
 - **A canvas** is a view of 32-bit `Bgrx` pixels (a window's frame, a screen's buffer, a
   picture in memory): its width, height and stride, a **clip rectangle** nothing is drawn
-  outside, and a **scale**. Drawing calls take logical coordinates and multiply by the scale,
-  so an app draws the same at 1× and 2×.
-- **Colours** are `0xAARRGGBB`, with alpha 0 (clear) to 255 (solid); drawing blends.
+  outside, and a **scale** (1 to 8). Drawing calls take logical coordinates and multiply by
+  the scale, so an app draws the same at 1× and 2×. `canvas.sub(area)` gives a canvas on part
+  of another, with its own (0, 0) and unable to draw outside the area: how a window is shared
+  out among its parts.
+- **A canvas is always solid.** Its pixels' fourth byte is unused (screens and window frames
+  are `Bgrx`); drawing sets it to 255. **Pictures** drawn *from* may be solid or carry alpha.
+- **Colours** are `0xAARRGGBB`, with alpha 0 (clear) to 255 (solid), not multiplied into the
+  other three; drawing blends, rounding to the nearest value, so alpha 255 gives exactly the
+  colour and alpha 0 changes nothing.
 - **What it draws:** filled and outlined rectangles, rounded rectangles (corner radius),
   vertical and horizontal gradients, soft shadows (as 1.3's windows have), lines of any width
-  (Paint's brush), circles and ellipses, filling a region of one colour (a flood fill), copying
-  and blending pictures, and scaling a picture (nearest for whole-number factors, smooth for
-  others; the compositor's windows of another scale), rotating by quarter turns.
-- **Text:** UTF-8 strings in a bitmap font, at whole-number scales (Chris's answer to Q7);
-  measuring a string's width; drawing clipped. A character the font lacks is drawn as a box.
+  with round ends (Paint's brush), circles and ellipses, filling a region of one colour (a
+  flood fill), copying and blending pictures, and scaling a picture (nearest for whole-number
+  factors, smooth for others; the compositor's windows of another scale), rotating by quarter
+  turns.
+- **No anti-aliasing.** A device pixel is in a shape if its centre is. Shapes are worked out
+  at the device's resolution (a circle at 2× is a true circle of twice the radius), and are
+  crisp like the font; pictures compare exactly and flood fill has clean edges. The thin
+  (one-pixel) line is 1.3's (Bresenham).
+- **Smooth scaling is by area**: each new pixel is the average of the picture's pixels it
+  covers, weighted by how much of each it covers (and, with alpha, by how solid each is).
+- **Text:** UTF-8 strings in a bitmap font, at whole-number sizes (Chris's answer to Q7),
+  plain or bold (1.3's bold: each dot drawn again one to the right); measuring a string's
+  width; drawing clipped. Every character takes one cell (6 dots wide, 7 in bold; lines are
+  11 dots apart). A character the font lacks is drawn as a box.
 - **Integer arithmetic only**, so the same drawing gives the same pixels on x86-64, ARM64 and
   the host: that is what lets tests compare pictures exactly.
-- **Changed areas:** a `Damage` type collects rectangles and merges overlapping and nearby ones
-  (at most 64, past which it uses their bounding box), for `present` and `commit`.
+- **Nothing a caller passes can make it misbehave**: positions and sizes may be anything
+  (negative, huge), nothing outside the clip is touched, and the work done is bounded by the
+  clip, not by the shape (a rectangle a million pixels wide on a small canvas costs what a
+  small one costs).
+- **Changed areas:** a `Damage` type collects rectangles, in device pixels, and merges two
+  when the rectangle around both holds at most 1024 pixels more than they do (so overlapping
+  and nearby ones join, and a cross does not become a big square); at most 64, past which it
+  uses their bounding box. For `present` and `commit`. A canvas can be given one, and then
+  records every rectangle it changes.
 
 ### 3. Fonts: `lib/font`
 
 - 1.x's hand-drawn 5 × 9 font stays the system's font, drawn at 1× and 2×.
 - It gains the characters the keyboard layouts can type (note 0021): Latin-1 (`£`, `é`, `ê`,
-  `ë`, `ô`, `ü`, `ß`…), `€`, and the Latin Extended-A letters, in the same style. Accents on
-  capitals need room above, so the font's cell becomes 5 × 11 (two rows above), with the line
-  height 11; the console's rows change to match.
+  `ë`, `ô`, `ü`, `ß`…), `€`, and the Latin Extended-A letters, in the same style; and the
+  punctuation apps' own text uses: curly quotes, en and em dashes, the ellipsis, a bullet, a
+  minus sign, four arrows and a check mark. 334 characters. Accents on capitals need room
+  above, so the font's cell becomes 5 × 11 (two rows above), with the line height 11; the
+  console's rows change to match.
+- **The drawings are text.** `lib/font/glyphs.txt` holds every character as 11 lines of `#`
+  and `.`, which can be read and changed by eye; the table the library uses is generated from
+  it, and a test fails if the two differ (`PBR_UPDATE_FONT=1 cargo test -p pbr-font` writes
+  the table again).
 - **A larger bitmap font for headings** is added only if the look needs one (the About window,
   the start menu's title), decided while building stage 3 with Chris.
 - Outline fonts (TrueType), fractional scales and text shaping wait for M12.
@@ -162,14 +190,19 @@ testable without a screen.
 
 ### 6. Testing
 
-- **Reference pictures.** Tests compare drawing with pictures kept in the repository as PNG
-  files, written without compression (PNG allows that), so that GitHub shows them and a small
-  host-only helper of our own (`lib/testpng`, using `lib/crc`) can write and read them with no
-  outside code. `PBR_UPDATE_PICTURES=1 cargo xtask test` writes them afresh when a change to the
-  look is meant; the change then shows in the commit's pictures. Pictures are compared exactly.
+- **Reference pictures.** Tests compare drawing with pictures kept in the repository
+  (`tests/pictures/`) as PNG files, written without compression (PNG allows that), so that
+  GitHub shows them and a small host-only helper of our own (`lib/testpng`, using `lib/crc`)
+  can write and read them with no outside code. `PBR_UPDATE_PICTURES=1 cargo xtask test` writes
+  them afresh when a change to the look is meant; the change then shows in the commit's
+  pictures. Pictures are compared exactly; when one differs, what was drawn is saved beside
+  the system's temporary files and the test says where.
 - **`lib/draw`** on the host: every operation at 1× and 2×, clipped at each edge, with alpha,
   outside the canvas, at hostile sizes (zero, huge, negative positions), against pictures; text
-  in every glyph of the font; damage merging against a model.
+  in every glyph of the font; damage merging against a model. Each operation's rule is also
+  written a second time in its tests, as the slowest and plainest per-pixel function, and the
+  two must agree on many generated cases: the pictures show a person that the look is right,
+  the models show that every pixel follows the rule.
 - **`lib/window`** on the host, against a fake display server: configure, buffers, frames,
   released and frame events, the timer queue, pings answered, the ring lost-event path, the
   display server going.
@@ -206,5 +239,48 @@ testable without a screen.
 - Drag and drop between widgets and apps.
 
 ## Changes
+- 12 November 2026, building (M6 stage 3: `lib/draw`, `lib/font`, `lib/testpng`). What
+  building settled or changed, now also in sections 2, 3 and 6 above:
+  - **A canvas is always solid; only pictures drawn from carry alpha.** Window frames and
+    screens are `Bgrx` (notes 0020 and 0022), so there is nothing for a canvas's own alpha to
+    mean, and mixing onto a see-through canvas would need a division for every pixel.
+  - **No anti-aliasing**, and the pixel-centre rule for every shape (the draft didn't say).
+    It keeps 1.3's crisp look beside the bitmap font, and Paint's flood fill needs clean
+    edges. Smooth edges can come with outline fonts (M12), as a new option, not a change.
+  - **Smooth scaling is averaging by area** (the draft said only "smooth").
+  - **Damage joins two rectangles only when that is cheap** (1024 wasted pixels at most), not
+    whenever they overlap: a window's frame is four thin bars, and joining them would show
+    the whole window again.
+  - **A soft shadow** fades as the square of the distance left (`(2B − e)² / (2B)²` of the
+    colour's alpha, `e` twice the distance outside the rounded rectangle, `B` the blur), with
+    the distance's square root rounded **up**, so that the pixels at full strength are exactly
+    the rounded rectangle's. (The brief for it said rounded down, which gave full strength to
+    a few pixels just outside each corner; the subagent writing it found that.)
+  - **Lines.** One device pixel wide: Bresenham's, as 1.3's. Wider: every pixel whose centre
+    is within half the width of the segment. An even width at an odd scale is centred half a
+    pixel up and left, so that a horizontal line is exactly as many rows thick as asked.
+  - **Flood fill** compares exact colours, spreads up, down, left and right, and only inside
+    the clip.
+  - **Text**: one cell a character, bold as 1.3's double strike, sizes 1 to 16. The console
+    still shows `?` for a character it can't draw (`pbr_font::glyph`); `lib/draw` shows a box
+    (`pbr_font::lookup`).
+  - **The font has 334 characters**: the draft's Latin-1, Latin Extended-A and `€`, plus
+    curly quotes, dashes, the ellipsis, a bullet, a minus sign, arrows and a check mark, which
+    the apps' own text needs ("Open with…", "•" for unsaved, "−" on Calculator). With five
+    dots of width the en dash, em dash and minus sign are the same bar; `Đ` and `Ð` are the
+    same letter. The drawings moved from a table of numbers to `lib/font/glyphs.txt`.
+  - **The console's lines.** The 11-row cell is the whole line: the console and the kernel's
+    screen have as many lines as before (the two rows of space that were under each line are
+    now the two rows above the capitals), with each letter two rows lower in its cell. The
+    cursor's underline is on the cell's last row, where the tails of `g` and `y` end.
+  - **The heading font: not added.** Headings are the same font at size 2 or 3, or bold, as
+    1.3's were (`tests/pictures/draw/look-2x.png` and `text-styles-2x.png` show them). The
+    question stays open for Chris until the desktop's real look is on screen (stage 6).
+  - **Reference pictures** are RGB PNG files (RGBA only when a picture has alpha) in
+    `tests/pictures/draw/`, 20 of them, about 7 MiB as files (git compresses them).
+  - `lib/draw` is MPL-2.0 as planned; `lib/testpng` is GPL (it is only ever a test's helper).
+  - Written by Sonnet subagents to four briefs (`lib/testpng`; the font's characters; shapes,
+    lines and flood fill; pictures and text) on a core written first (the canvas, colours,
+    rectangles, damage), and reviewed in full. Ten glyphs were redrawn in review.
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).

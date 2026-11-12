@@ -111,6 +111,9 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
 /// Crates built for the programs' targets, checked with Clippy there.
 const PROGRAM_CRATES: &[&str] = &[
     "pbr-devmgr",
+    // No program draws with it until the display server (M6 stage 5), so it is listed here
+    // to be checked for the programs' targets from the day it was written.
+    "pbr-draw",
     "pbr-driver",
     "pbr-driver-framebuffer",
     "pbr-driver-ps2",

@@ -37,12 +37,15 @@ PrettyBigRock/
 │   ├── crc/                CRC-32, for partition tables and RockFS
 │   ├── devices/            PCI configuration space, MSI-X, driver manifests, the device
 │   │                       record and key tables (notes 0011, 0012)
+│   ├── draw/               drawing: pixels, shapes, text and pictures on a canvas (note 0023)
 │   ├── driver/             what every driver is built on (note 0011)
 │   ├── elf/                reading kernels' and programs' ELF files (notes 0004, 0009)
 │   ├── fat/                FAT32, read and write (note 0016)
 │   ├── files/              a program's file tree, and files by path (note 0014)
 │   ├── filetree/           the file tree's format and path rules (note 0014)
-│   ├── font/               the text font the kernel's console and the console service share
+│   ├── font/               the bitmap font: its drawings (glyphs.txt) and the table made
+│   │                       from them, for the kernel's console, the console service and
+│   │                       lib/draw (note 0023)
 │   ├── fs/                 the traits every filesystem implements (notes 0014, 0016)
 │   ├── fsserve/            what every filesystem server is built on: records, rights, gone
 │   │                       notices (note 0014)
@@ -58,6 +61,8 @@ PrettyBigRock/
 │   ├── shell/              the text shell's commands, built and tested on the host (note 0018)
 │   ├── supervise/          the restart policy every supervisor uses (notes 0012, 0018)
 │   ├── terminal/           a grid of text cells drawn on a screen (note 0018)
+│   ├── testpng/            reference pictures for tests, as uncompressed PNG files; host
+│   │                       only (note 0023)
 │   └── virtio/             the virtio PCI transport, virtqueues, block and input (note 0011)
 ├── drivers/              drivers, one program each, with its manifest beside it (note 0011)
 │   ├── <name>/             the driver
@@ -80,7 +85,8 @@ PrettyBigRock/
 ├── tests/
 │   ├── programs/           test programs for the self-tests: echo, probe and the protocol
 │   │                       they share, memfs, fileprobe, sandboxed
-│   └── data/               the data disk 1.3 made, and its manifest (note 0016)
+│   ├── data/               the data disk 1.3 made, and its manifest (note 0016)
+│   └── pictures/           reference pictures the drawing tests compare with (note 0023)
 ├── ports/                software ported from elsewhere, each under its own licence (from M9)
 ├── xtask/                the build tool (`cargo xtask`)
 ├── tools/                tools for other computers, such as tools/rockfs.py and rockfs-rs,
@@ -115,7 +121,7 @@ Rules:
 - **Processor-specific code is only in `kernel/src/arch/`, `kernel/src/board/` and `boot/`.**
   Libraries, drivers, services and apps are written once for every architecture.
 - **A folder's licence is fixed** (note 0009, section 7): MPL-2.0 for `lib/granite`,
-  `lib/elf`, `lib/archive`, `lib/filetree`, `lib/files`, `lib/font` and `targets/`; MIT for
+  `lib/elf`, `lib/archive`, `lib/filetree`, `lib/files`, `lib/font`, `lib/draw` and `targets/`; MIT for
   `interfaces/` and `lib/interfaces`; GPL-3.0-or-later for everything else. `cargo xtask check`
   checks every file says so.
 - **`ports/` is separate from everything else**, because ported software isn't part of the OS
@@ -174,3 +180,4 @@ The build tool's own tests check steps 1 and 3 match.
   manifest `apps/shell/shell.app`) and `tools/check_shell_after.py`.
 - 8 November 2026, end of M5 (stage 9): the tree above brought up to date with everything M5
   added.
+- 12 November 2026, M6 stage 3: `lib/draw` (MPL-2.0), `lib/testpng` and `tests/pictures/`.
