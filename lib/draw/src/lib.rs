@@ -30,9 +30,16 @@ extern crate alloc;
 mod canvas;
 mod colour;
 mod damage;
+mod flood;
 mod geometry;
+mod line;
+mod picture;
+mod shapes;
+mod text;
 
 pub use canvas::{Canvas, MAX_SCALE, MAX_SIDE};
 pub use colour::Colour;
 pub use damage::{Damage, MAX_RECTS, MERGE_WASTE};
 pub use geometry::Rect;
+pub use picture::{Picture, Turn};
+pub use text::TextStyle;
