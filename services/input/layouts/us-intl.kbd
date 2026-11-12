@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+
+# English (US, international, with dead keys): Microsoft's "United States-International".
+# The apostrophe, quotation mark, grave accent, tilde and Shift+6 are dead keys: they type
+# nothing until the next key, which they put an accent on (a space types the accent itself).
+# AltGr types the accented letters and the symbols of that layout. Good for Afrikaans.
+title "English (US, international, with dead keys)"
+altgr
+
+# The number row.
+key GRAVE dead:grave dead:tilde
+key 1 1 ! ¡ ¹
+key 2 2 @ ²
+key 3 3 # ³
+key 4 4 $ ¤ £
+key 5 5 % €
+key 6 6 dead:circumflex ¼
+key 7 7 & ½
+key 8 8 * ¾
+key 9 9 ( ‘
+key 0 0 ) ’
+key MINUS - _ ¥
+key EQUALS = + × ÷
+
+# The top letter row.
+key Q q Q ä Ä
+key W w W å Å
+key E e E é É
+key R r R ®
+key T t T þ Þ
+key Y y Y ü Ü
+key U u U ú Ú
+key I i I í Í
+key O o O ó Ó
+key P p P ö Ö
+key LEFT_BRACKET [ { «
+key RIGHT_BRACKET ] } »
+key BACKSLASH \ | ¬ ¦
+
+# The home row.
+key A a A á Á
+key S s S ß §
+key D d D ð Ð
+key F f F
+key G g G
+key H h H
+key J j J
+key K k K
+key L l L ø Ø
+key SEMICOLON ; : ¶ °
+key APOSTROPHE dead:acute dead:diaeresis ´ ¨
+
+# The bottom row. The key beside the left Shift, which US keyboards mostly lack, types what
+# US keyboards that have it type.
+key 102ND \ |
+key Z z Z æ Æ
+key X x X
+key C c C © ¢
+key V v V
+key B b B
+key N n N ñ Ñ
+key M m M µ
+key COMMA , < ç Ç
+key PERIOD . >
+key SLASH / ? ¿
+
+# The space bar.
+key SPACE space
+
+# What each dead key does to the letter after it.
+dead acute a á A Á e é E É i í I Í o ó O Ó u ú U Ú y ý Y Ý c ç C Ç space '
+dead grave a à A À e è E È i ì I Ì o ò O Ò u ù U Ù space `
+dead circumflex a â A Â e ê E Ê i î I Î o ô O Ô u û U Û space ^
+dead diaeresis a ä A Ä e ë E Ë i ï I Ï o ö O Ö u ü U Ü y ÿ Y Ÿ space "
+dead tilde a ã A Ã n ñ N Ñ o õ O Õ space ~
+
+# The keypad (digits only while Num Lock is on).
+key KP_DIVIDE / /
+key KP_MULTIPLY * *
+key KP_MINUS - -
+key KP_7 7 7
+key KP_8 8 8
+key KP_9 9 9
+key KP_PLUS + +
+key KP_4 4 4
+key KP_5 5 5
+key KP_6 6 6
+key KP_1 1 1
+key KP_2 2 2
+key KP_3 3 3
+key KP_0 0 0
+key KP_PERIOD . .
+

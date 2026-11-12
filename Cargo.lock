@@ -217,6 +217,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-input"
+version = "0.0.0"
+dependencies = [
+ "pbr-archive",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-keymap",
+ "pbr-seat",
+]
+
+[[package]]
 name = "pbr-interface-compiler"
 version = "0.0.0"
 
@@ -239,6 +250,14 @@ dependencies = [
  "pbr-font",
  "pbr-platform",
  "pbr-ranges",
+]
+
+[[package]]
+name = "pbr-keymap"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-font",
 ]
 
 [[package]]
@@ -314,6 +333,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-seat"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-keymap",
+]
+
+[[package]]
 name = "pbr-shell"
 version = "0.0.0"
 dependencies = [
@@ -354,6 +381,7 @@ version = "0.0.0"
 dependencies = [
  "pbr-devices",
  "pbr-font",
+ "pbr-seat",
 ]
 
 [[package]]

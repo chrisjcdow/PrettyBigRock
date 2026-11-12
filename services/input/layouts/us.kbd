@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Cameron-Dow
+
+# English (US): the layout M5 had built into lib/devices, as a file.
+title "English (US)"
+
+# The number row.
+key GRAVE ` ~
+key 1 1 !
+key 2 2 @
+key 3 3 #
+key 4 4 $
+key 5 5 %
+key 6 6 ^
+key 7 7 &
+key 8 8 *
+key 9 9 (
+key 0 0 )
+key MINUS - _
+key EQUALS = +
+
+# The top letter row.
+key Q q Q
+key W w W
+key E e E
+key R r R
+key T t T
+key Y y Y
+key U u U
+key I i I
+key O o O
+key P p P
+key LEFT_BRACKET [ {
+key RIGHT_BRACKET ] }
+key BACKSLASH \ |
+
+# The home row.
+key A a A
+key S s S
+key D d D
+key F f F
+key G g G
+key H h H
+key J j J
+key K k K
+key L l L
+key SEMICOLON ; :
+key APOSTROPHE ' "
+
+# The bottom row. The key beside the left Shift, which US keyboards mostly lack, types what
+# US keyboards that have it type.
+key 102ND \ |
+key Z z Z
+key X x X
+key C c C
+key V v V
+key B b B
+key N n N
+key M m M
+key COMMA , <
+key PERIOD . >
+key SLASH / ?
+
+# The space bar.
+key SPACE space
+
+# The keypad (digits only while Num Lock is on).
+key KP_DIVIDE / /
+key KP_MULTIPLY * *
+key KP_MINUS - -
+key KP_7 7 7
+key KP_8 8 8
+key KP_9 9 9
+key KP_PLUS + +
+key KP_4 4 4
+key KP_5 5 5
+key KP_6 6 6
+key KP_1 1 1
+key KP_2 2 2
+key KP_3 3 3
+key KP_0 0 0
+key KP_PERIOD . .
+
