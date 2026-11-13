@@ -243,8 +243,9 @@ enum Edge { Top @1, Bottom @2, Left @3, Right @4, TopLeft @5, TopRight @6,
             BottomLeft @7, BottomRight @8 }
 enum ClipForm { Text @1, Picture @2 }
 
-/// The ring of 32-byte events (section 10) and its doorbell (bit 0). Asked once.
-@1 fn events() -> (ring: handle<memory>, doorbell: handle<notification>) error WindowError;
+/// The ring of 32-byte events (section 10), asked once; bit 0 of the app's `doorbell` is
+/// signalled when events are added.
+@1 fn events(doorbell: handle<notification>) -> (ring: handle<memory>) error WindowError;
 
 /// A new window. `parent` is 0 or one of this client's windows; `at` places a popup
 /// relative to its parent; `serial` is an input event's, for popups. Its first configure
@@ -310,9 +311,10 @@ flexible enum WindowError {
 /// Sessions, for the users service.
 interface pbr.display.sessions version 1;
 /// A capability for a new session, for its sandbox manager (derived, watched).
-@1 fn start(user: string<32>) -> (session: handle<pbr.display.session>) error SessionsError;
-/// Shows this session and gives it the input (one at a time).
-@2 fn activate(session: handle<pbr.display.session>) -> () error SessionsError;
+@1 fn start(user: string<32>) -> (session: handle<pbr.display.session>, number: u32)
+    error SessionsError;
+/// Shows session `number` and gives it the input (one at a time).
+@2 fn activate(number: u32) -> () error SessionsError;
 /// Shows the shutting-down screen on every screen (note 0024, section 7) and stops showing
 /// windows. Nothing else is drawn until the display server starts again.
 @3 fn farewell(restarting: bool) -> () error SessionsError;
@@ -358,7 +360,7 @@ A client's events come through its ring, 32 bytes each, little-endian:
 | 3 | Released (a frame is the app's again) | the frame |
 | 4 | Frame (a good time to draw) | |
 | 5 | Ping | |
-| 6 | Key | `pbr.seat`'s code (low 16) and modifiers (high 16), the value, then the first character; a second character, if any, follows as a key event of value 3 |
+| 6 | Key | `pbr.seat`'s code (low 16) and modifiers (high 16), the value, then the first character; a second character, if any, follows as a key event of value 4 |
 | 7 | Pointer moved, or entered the window | x and y in 1/256 logical pixels from the window's content corner, then the buttons held (bits) |
 | 8 | Pointer left the window | |
 | 9 | Button | the button, the value (0 released, 1 pressed), the buttons held |
@@ -460,5 +462,72 @@ descriptors (the front end turns them into capabilities).
 - Accessibility: a screen reader needs a way to read windows' contents that the sandbox allows.
 
 ## Changes
+- 13 November 2026, building (M6 stage 5). The design held; what building settled or changed:
+  - **The rules live in `lib/compositor`** (host-tested, like `lib/shell`): the space of
+    screens, sessions, clients and windows with every check on what a client asks, input
+    routing, the clipboard, decorations' geometry, drawing and composing, and the
+    description lines. `services/display` is the program around it.
+  - **`events` takes the app's own notification as the doorbell** and answers only the ring.
+    Note 0023's event loop waits on one notification for everything (the doorbell bit 0, the
+    receiver watch bit 1, the app's own bits 8 to 63), which only works if the app makes it.
+    Signalling a notification never waits and fails cleanly if the app took it back, so the
+    display server still never waits for an app.
+  - **A key's second character comes with the value 4 (`VALUE_SECOND`)**, not 3: 3 is
+    `pbr.seat`'s "still held" (note 0021, Changes), which a key event can also carry.
+  - **`pbr.display.sessions.start` answers with the session's number too, and `activate`
+    takes the number.** A service can't tell which of its own capabilities it has been passed
+    back (the kernel doesn't say a received capability's badge), and only the users service
+    can call `pbr.display.sessions` at all.
+  - **Capabilities' rights.** A session's capability is derived with send, transfer, copy and
+    revoke: the sandbox manager can make a copy for each app and ask for the app's client
+    capability through it, so that revoking that copy takes exactly that app's windows (stage
+    6). A client's capability is derived with send and transfer only: it can't be copied, so
+    its watched badge goes when the app is done with it, and the app's windows go then.
+  - **Backgrounds and panels name their screen with `at.x`**, and a panel its edge with
+    `at.y` (an `Edge`: top, bottom, left, right); a panel's thickness is its height (or width
+    at the left or right), at most a quarter of the screen. One background per screen and one
+    panel per edge, per session; one whose screen went isn't shown.
+  - **Where windows open**: a normal window cascades across the main screen's work area,
+    24 pixels further down and right than the one before (eight steps, then round again); a
+    dialog is centred on its parent; a system window is centred on the main screen, and one
+    from `create_over` on the window it is over.
+  - **Copying needs a press's serial from the last second too**, as pasting does (section 5
+    asked only for the focus): an app with the focus could otherwise copy on a timer. A copy
+    with the same serial as the last one from the same client adds its form to the same item.
+  - **`Stale` and `BadSerial` for `buffers`**: `Stale` for one of the window's own last eight
+    configure serials, `BadSerial` for anything else. A configure that changed only the state
+    gets the same memory again (a copy of the same capability), not new buffers.
+  - **The size limits on buffers are per side**: no wider than the widest screen and no
+    taller than the tallest (1920 x 1200 while there are no screens).
+  - **A decorated window is at least 160 logical pixels wide**, so its title bar's parts
+    always fit: the icon, some of the title, the "trusted" mark and three buttons.
+  - **A dismissed popup** (its parent lost the focus, or the user clicked outside it) is
+    hidden at once and its app gets a close request; it stays until the app destroys it.
+  - **Keys**: a key's release goes where its press went, even if the focus moved meanwhile,
+    so no app thinks a key is still held. Alt+Tab goes through the focused window, then the
+    others from the top down, then minimised ones, for as long as Alt is held.
+  - **"Covered entirely"** (no frame events) is worked out by taking the windows above out of
+    the window's rectangle, giving up (and sending frames) past 64 pieces.
+  - **The window menu** is drawn by the display server over everything; "Move to screen…" is
+    a row for each other screen.
+  - **A tablet's screen**: tablets in the seat's order are tied to screens in the space's
+    order when there are as many of each.
+  - **The description** is a block from `view N` to `view N done`: a line per screen, a
+    line per window of the active session back to front (with its kind, `drawn` once it has
+    committed a frame, and `focused`, `maximised`, `minimised`, `dismissed`, `attention`,
+    `not-responding`), the clipboard, the pointer (whose moves count as changes), and the
+    window menu.
+  - **The display server calls its display drivers from its main thread** (setting screens
+    up, presenting), so a slow driver delays its answers to apps: on the emulated BIOS
+    machine the framebuffer's set-up took about ten seconds. Drivers are system programs, so
+    this is waiting on the trusted side, not on an app; moving screen set-up to the watcher
+    thread is left for when it matters on real hardware.
+  - **The display server checks its displays' drivers once a second** (a driver that crashed
+    while nothing was being drawn would otherwise go unnoticed until the next picture), and
+    a screen whose present hasn't said it is done within two seconds is drawn again.
+  - **Testing**: the host tests are as section 13 lists (`lib/compositor/tests/rules.rs`
+    and `draw.rs`, ten reference pictures). In QEMU, stage 5 runs the desktop boot with the
+    root program standing in for the users service and the sandbox manager (note 0026,
+    Changes).
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).

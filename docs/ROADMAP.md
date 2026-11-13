@@ -154,9 +154,10 @@ the tests and the stages), drafted from Chris's answers to the M6 plan and accep
 
 **Status:** in progress on branch `m6`. Stages 0 (set-ups), 1 (kernel interface 1.3), 2
 (screens: `pbr.display` version 2, the framebuffer and virtio-gpu drivers, tablets), 3
-(`lib/draw`, the font's new characters, reference pictures) and 4 (the input service,
-keyboard layouts and the layout setting) are built; stage 5 (the display server) is next.
-The stages are in note 0026, section 9.
+(`lib/draw`, the font's new characters, reference pictures), 4 (the input service, keyboard
+layouts and the layout setting) and 5 (the display server, `lib/window`, and the desktop boot
+with test programs) are built; stage 6 (the session's desktop) is next. The stages are in
+note 0026, section 9.
 
 ## M7: Real hardware I, Roxy
 - AHCI; USB 2 (EHCI) with keyboard, mouse and storage; Roxy's onboard Ethernet chip.

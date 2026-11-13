@@ -239,6 +239,34 @@ testable without a screen.
 - Drag and drop between widgets and apps.
 
 ## Changes
+- 13 November 2026, building `lib/window` (M6 stage 5, written by a Sonnet subagent to a brief
+  and reviewed). Section 4 held; what building settled:
+  - **One notification really does carry everything**: `pbr.window.events` now takes the
+    app's own notification as its doorbell (note 0022, Changes), so the ring (bit 0), the
+    display server going (bit 1, a receiver watch) and the app's own bits (8 to 63) wake the
+    same wait.
+  - **`draw(window, |canvas| damage)`**: the closure returns the rectangles it changed (a
+    `pbr_draw::Damage`, logical pixels; empty means all). The two frames take turns, so the
+    frame drawn in is one commit behind: before the closure runs, the rectangles of the last
+    commit are copied into it from the other frame. That is what lets an app redraw only what
+    changed.
+  - **Waiting for a frame**: if both frames are with the display server, `draw` reads the ring
+    (queueing other events, in order) for up to thirty seconds for a released event, then
+    gives up with `TimedOut`. Calls to the display server wait thirty seconds too: it answers
+    at once unless it is busy with a display driver itself, which on an emulated machine has
+    taken ten seconds (the BIOS framebuffer's set-up, in the desktop boot).
+  - **After a lost event** every window's frames are taken as the app's again: released events
+    may have been among those lost, and an app waiting for one would wait for ever. At worst a
+    commit is refused once as `Stale`.
+  - **Buttons, scrolling and leaving carry no position on the wire**: `lib/window` fills in the
+    last position the window was sent.
+  - Configure events are handled inside (buffers asked for only when the size or scale
+    changed) and still given to the app, so it knows to redraw.
+  - **Tests**: the plain parts on the host (decoding every event, garbage included; the timer
+    queue; which frame is held after commits and releases, and what is copied before drawing).
+    The connection itself is tested in QEMU by the desktop boot, where `tests/programs/wintest`
+    and `windowprobe` use it, rather than against a fake display server on the host as section
+    6 planned: the system calls are the part a fake would leave out.
 - 12 November 2026, building (M6 stage 3: `lib/draw`, `lib/font`, `lib/testpng`). What
   building settled or changed, now also in sections 2, 3 and 6 above:
   - **A canvas is always solid; only pictures drawn from carry alpha.** Window frames and

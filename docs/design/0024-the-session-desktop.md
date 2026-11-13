@@ -295,6 +295,10 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 13 November 2026, built ahead of the rest (M6 stage 5): section 1's lookup table rows for the
+  display server (`devices`, and `input` as a consumer of the seat) and for the users service
+  (`display`, badged for `pbr.display.sessions`). The users service doesn't use its row until
+  stage 6; until then the desktop boot's root program stands in for it (note 0026, Changes).
 - 12 November 2026, built ahead of the rest (M6 stage 4): section 5's settings, because the
   input service needs the layout. As written, with these points settled: `set` accepts only
   the keys this version knows (`layout`, `timezone`) and answers the new error `BadSetting`

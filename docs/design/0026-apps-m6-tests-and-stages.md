@@ -243,6 +243,29 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 13 November 2026 (stage 5): **the desktop boot runs from stage 5**, with test programs:
+  - The build tool makes a third disk image, `prettybigrock-desktoptest.img`, with
+    `desktoptest` on the kernel's command line. `cargo xtask qemu-test` boots each
+    configuration twice, the self-test and then the desktop boot (`PBR_QEMU_BOOT=selftest` or
+    `desktop` runs only one).
+  - Until stage 6 builds the users service's and sandbox manager's parts, **the root program
+    stands in for both** (`services/root/src/desktoptest.rs`): it asks the display server for
+    a session and, for each test program, a window capability, which it gives the program at
+    role 1003. The test programs are `tests/programs/wintest` (a well-behaved window that
+    logs what it is sent; with `desktop`, the session's desktop arranging the screens) and
+    `tests/programs/windowprobe` (the hostile app of section 8, as far as stage 5 can test
+    it: no picker or file grants yet).
+  - **The steps are code, not a list** (`xtask/src/desktop.rs`, not a `DESKTOP_STEPS` table):
+    each waits for what the last one should have shown (a description, a program's log line)
+    and works out where to click from it. The root program and the runner keep in step through
+    the programs: the runner closes a window when it is done with it, the program ends, and
+    the root program starts the next step.
+  - **Screenshots check colours at points**, not whole pictures: a window's colour in its
+    corner and middle, on the screen the description says it is on, at that screen's scale.
+    Stage 6's wallpaper and empty desktop are where whole reference pictures start.
+  - The runner waits until the input service uses the virtio keyboard and mouse and the display
+    server knows the tablets before it sends anything: QEMU drops input sent to a virtio device
+    whose driver isn't listening yet.
 - 11 November 2026 (stage 2): the test machines have 1 GiB of memory, not 512 MiB. The
   services' budgets are fixed shares (note 0006, section 9); with a display driver's buffers
   added, 512 MiB no longer left room to restart the storage service, which needs its budget

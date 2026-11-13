@@ -789,3 +789,60 @@ brief, each reviewed in full.
 - `cargo xtask ci` passed on all four configurations here; GitHub's CI passed on `7cac756` and
   `dbddfbf`, and Stress on `7cac756` (run 43375338616) passed all 120 boots.
 
+## Session 17: 13 November 2026, M6 stage 5 (the display server)
+
+Chris asked for stage 5 as note 0026 defines it, with the same rules. Built by the session's
+model (Claude Opus 5.5), with two pieces by Sonnet subagents, each to a written brief, each
+reviewed in full.
+
+- **The interfaces** (`pbr.window`, `pbr.display.sessions`, `pbr.display.session`), as note
+  0022 has them, with three changes found while building (note 0022, Changes): `events` takes
+  the app's own notification as its doorbell; a key's second character has the value 4, since
+  3 is the seat's "still held"; and sessions are activated by number, since a service can't
+  tell which of its own capabilities it has been passed back.
+- **`lib/compositor`**, the display server's rules as a host-tested library, written first:
+  the space of screens (default arrangement, 2x from 180 dots per inch, a screen going and
+  coming back to its remembered place, mirroring, rotation, a tablet's surface mapped onto its
+  screen); sessions, clients and windows with every check on what a client asks (which kinds
+  each flag allows, parents of its own, serials and their one-second life, configure and
+  buffer exchanges, frames held and released, 32 windows and 96 MiB); stacking and the focus
+  (who may take it, modal dialogs and system windows over others blocking input, minimising,
+  Alt+Tab); input routing (keys only to the focused window, releases where presses went, the
+  keys the server keeps, the pointer to the window under it or the one pressed in, moving and
+  resizing by the decorations, the window menu); pings and "not responding"; the clipboard;
+  and the description lines. 28 rules tests, a hostile client among them.
+- **Drawing** (Sonnet subagent): decorations in 1.3's style (focused, unfocused, system,
+  trusted, maximised, pressed), the pointer's shapes, the window menu, the farewell, and
+  composing a screen straight, turned or mirroring, only where it changed. Ten reference
+  pictures in `tests/pictures/compositor`, each looked at. Review moved the menu's shadow into
+  `decor` (closing a menu left its shadow behind) and raised the narrowest decorated window to
+  160 pixels, so the "trusted" mark always fits.
+- **`services/display`**: one endpoint serving all three interfaces by badge; derived, watched
+  capabilities for sessions and apps; window buffers made in its own budget and lent; a ring
+  of events per client; each screen composed at most 60 times a second where it changed; a
+  watcher thread for displays and the seat, a seat thread and a done thread per display.
+- **`lib/window`, `wintest` and `windowprobe`** (Sonnet subagent): the client half, a
+  well-behaved test window that logs what it is sent (and a test desktop), and the hostile app,
+  which tries 31 things and is refused each.
+- **The desktop boot** runs from this stage: a third disk image with `desktoptest`; the root
+  program stands in for the users service and the sandbox manager until stage 6; the runner
+  (`xtask/src/desktop.rs`) drives the machine through QEMU's control socket and reads the
+  display server's description. It checks the windows' colours on the screens, the focus,
+  typing, the clipboard between two apps, a window dragged onto the 2x screen and redrawn at
+  2x, the second screen unplugged and plugged in again, mirroring and the start menu key, the
+  close button, a hung app marked not responding while another carries on, the hostile app,
+  Ctrl+W, and the display server crashed and started again.
+- **Found on the way**, by the desktop boot:
+  - the display server's watcher counted "not ready yet" as a failure, so a framebuffer driver
+    that took more than five seconds to start (BIOS, emulated: about ten) was given up on;
+  - the display server calls its drivers from its main thread, so while the BIOS framebuffer
+    was being set up an app's call waited longer than `lib/window`'s five seconds; apps now
+    wait thirty (note 0022, Changes, says why that is acceptable for now);
+  - QEMU drops input sent to a virtio device whose driver isn't listening yet: the runner now
+    waits until the input service uses the keyboard and mouse and the display server knows the
+    tablets;
+  - a window opened more than two seconds after its launch rightly doesn't take the focus,
+    and on the slow BIOS machine Beta didn't: the runner doesn't rely on it (the host tests
+    check the rule).
+- `cargo xtask ci` passed on all four configurations, both boots each, in about 30 minutes
+  here; GitHub's CI passed on `6ebaed1`. Stress was started on the stage's last commit.

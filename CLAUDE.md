@@ -92,8 +92,10 @@ let node = self.objects.get(badge)?;
   committing it. The font's drawings are `lib/font/glyphs.txt`; after changing one,
   `PBR_UPDATE_FONT=1 cargo test -p pbr-font` writes its table again.
 - `cargo xtask qemu-test`: boots all four configurations (x86-64 UEFI and BIOS, ARM64 UEFI at
-  EL1 and EL2) and runs the self-tests. `PBR_QEMU_ONLY=ARM64` (any part of a configuration's
-  name) picks configurations. Don't run two boot tests side by side.
+  EL1 and EL2) twice each: the self-test boot, then the desktop boot (note 0026, section 6),
+  which `xtask/src/desktop.rs` drives from outside. `PBR_QEMU_ONLY=ARM64` (any part of a
+  configuration's name) picks configurations, and `PBR_QEMU_BOOT=selftest` or `desktop` one
+  kind of boot. Don't run two boot tests side by side.
 - `cargo xtask ci`: all of it. A change isn't finished until it passes.
 
 ### Setting up Claude's workspace
@@ -112,6 +114,8 @@ The workspace can't reach `static.rust-lang.org`, so:
 
 The workspace has only 2 CPUs: since M5 a full `cargo xtask ci` takes about 25 to 55 minutes
 (each boot test 4 to 11, depending on how busy the machine is), so run it in the background with
-a long timeout. M6's desktop boots (note 0026, section 6) will add to that. When a boot fails,
+a long timeout. Since M6 stage 5 each configuration also has the desktop boot (note 0026,
+section 6), two to four minutes each here; the whole of `cargo xtask ci` took about 30 minutes
+in session 17. When a boot fails,
 the runner saves every core's registers and stack in `build/qemu/serial-*.registers.txt`;
 resolve addresses with `llvm-addr2line -f -C -e build/<arch>/debug/kernel.elf ADDR`.
