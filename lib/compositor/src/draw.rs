@@ -27,7 +27,7 @@
 mod pointer;
 mod window;
 
-use crate::desk::{Shown, WindowId};
+use crate::desk::{Farewell, Shown, WindowId};
 use crate::scene::Scene;
 use crate::space::{Screen, Space};
 use alloc::vec::Vec;
@@ -263,15 +263,26 @@ fn draw_scene(
     seen: Rect,
     frames: &dyn Frames,
 ) {
-    if let Some(restarting) = scene.farewell {
+    if let Some(farewell) = scene.farewell {
         c.fill(FAREWELL);
-        let text = if restarting { "Restarting\u{2026}" } else { "Shutting down\u{2026}" };
+        let lines: &[&str] = match farewell {
+            Farewell::Restarting => &["Restarting\u{2026}"],
+            Farewell::ShuttingDown => &["Shutting down\u{2026}"],
+            Farewell::Halted => {
+                &["PrettyBigRock has shut down.", "You can turn the computer off now."]
+            }
+        };
         let style = TextStyle::PLAIN.sized(2);
         let area = o.rect(screen);
-        let x = area.x.saturating_add((area.width - style.width(text)) / 2);
-        // Size 2 doubles the 7-row capitals, so the centring is done on twice the height.
-        let y = area.y.saturating_add((area.height - 14) / 2 - 2 * pbr_font::ABOVE as i32);
-        c.text(x, y, text, Colour::WHITE, style);
+        // Size 2 doubles the 7-row capitals, so the centring is done on twice the height;
+        // lines are a line height apart.
+        let n = lines.len() as i32;
+        let block = 14 + (n - 1) * style.line_height();
+        let top = area.y.saturating_add((area.height - block) / 2 - 2 * pbr_font::ABOVE as i32);
+        for (i, text) in lines.iter().enumerate() {
+            let x = area.x.saturating_add((area.width - style.width(text)) / 2);
+            c.text(x, top + i as i32 * style.line_height(), text, Colour::WHITE, style);
+        }
         return;
     }
     c.fill(DESKTOP);

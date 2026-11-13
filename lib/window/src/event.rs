@@ -146,8 +146,12 @@ pub enum Event {
     Disconnected,
     /// To the desktop: the windows changed.
     Windows,
-    /// To the desktop: the start menu key.
-    StartMenu,
+    /// To the desktop: the start menu key, with a serial that lets it open the start menu as a
+    /// popup of its panel.
+    StartMenu {
+        /// Quote it to `create_child`.
+        serial: u32,
+    },
     /// To the desktop: a window menu choice (`pbr_window::CHOICE_*`).
     WindowMenu {
         /// The client's number (high 32 bits) and the window's (low 32), as `WindowInfo`.
@@ -265,7 +269,7 @@ pub fn decode(b: &[u8; 32]) -> Option<Incoming> {
             picture: a & wire::FORM_PICTURE != 0,
         }),
         wire::EVENT_WINDOWS => Incoming::App(Event::Windows),
-        wire::EVENT_START_MENU => Incoming::App(Event::StartMenu),
+        wire::EVENT_START_MENU => Incoming::App(Event::StartMenu { serial }),
         wire::EVENT_WINDOW_MENU => Incoming::App(Event::WindowMenu {
             window: u64::from(a) | u64::from(bb) << 32,
             choice: c,
@@ -329,7 +333,7 @@ mod tests {
         assert_eq!(app(raw(11, 0, 0, [3, 0, 0])), Event::Clipboard { text: true, picture: true });
         assert_eq!(app(raw(11, 0, 0, [2, 0, 0])), Event::Clipboard { text: false, picture: true });
         assert_eq!(app(raw(100, 0, 0, [0; 3])), Event::Windows);
-        assert_eq!(app(raw(101, 0, 0, [0; 3])), Event::StartMenu);
+        assert_eq!(app(raw(101, 0, 7, [0; 3])), Event::StartMenu { serial: 7 });
         assert_eq!(app(raw(103, 0, 0, [0; 3])), Event::Screens);
         assert_eq!(
             app(raw(102, 0, 0, [0x1234, 0x5, 2])),

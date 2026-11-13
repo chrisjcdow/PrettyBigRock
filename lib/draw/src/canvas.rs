@@ -102,6 +102,19 @@ impl<'a> Canvas<'a> {
         self
     }
 
+    /// Every pixel at once, for code that works each one out itself (the desktop's wallpaper):
+    /// the pixels, the width and height in device pixels, and the stride. It ignores the clip
+    /// and the origin, so it is only for a whole canvas of one's own; the whole canvas counts as
+    /// changed.
+    pub fn whole(&mut self) -> (&mut [u32], u32, u32, u32) {
+        let all = Rect::new(0, 0, self.width, self.height);
+        if let Some(d) = self.damage.as_deref_mut() {
+            d.add(all);
+        }
+        let stride = u32::try_from(self.stride).unwrap_or(u32::MAX);
+        (&mut *self.pixels, self.width as u32, self.height as u32, stride)
+    }
+
     /// The same canvas, recording every rectangle it changes into `damage`, in device pixels.
     pub fn with_damage(mut self, damage: &'a mut Damage) -> Canvas<'a> {
         self.damage = Some(damage);

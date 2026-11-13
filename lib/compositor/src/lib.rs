@@ -29,7 +29,8 @@ pub mod scene;
 pub mod space;
 
 pub use desk::{
-    Answer, Buffers, ClientId, Desk, Made, Menu, MenuItem, Out, Shown, Tablet, WindowId, WindowInfo,
+    Answer, Buffers, ClientId, Desk, Farewell, Made, Menu, MenuItem, Out, Shown, Tablet, WindowId,
+    WindowInfo,
 };
 pub use scene::{Scene, SceneWindow};
 pub use space::{Output, Place, Screen, Space};

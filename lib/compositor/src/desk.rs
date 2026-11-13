@@ -80,6 +80,18 @@ pub mod act {
     pub const CLOSE: u32 = 5;
 }
 
+/// What the farewell screen says (note 0024, section 7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Farewell {
+    /// "Shutting down..."
+    ShuttingDown,
+    /// "Restarting..."
+    Restarting,
+    /// The computer couldn't be turned off by software: "PrettyBigRock has shut down. You can
+    /// turn the computer off now." (1.3's last screen.)
+    Halted,
+}
+
 /// The most windows one client may have.
 pub const MAX_WINDOWS: u32 = 32;
 /// The most clients in a session.
@@ -436,8 +448,8 @@ pub struct Desk {
     pub(crate) kept_keys: Vec<u16>,
     /// The windows Alt+Tab goes through while Alt is held, and how far it has gone.
     pub(crate) switching: Option<(Vec<WindowId>, usize)>,
-    /// Shutting down (`farewell`): restarting or not.
-    pub(crate) farewell: Option<bool>,
+    /// Shutting down (`farewell`, `halted`).
+    pub(crate) farewell: Option<Farewell>,
     damage: Damage,
     full_damage: bool,
     out: Vec<Out>,
@@ -812,6 +824,36 @@ impl Desk {
         }
     }
 
+    /// Sends the session's desktop client the start menu key (note 0022, section 4), with a
+    /// serial recorded as a press on its panel, so that it may open the start menu as a popup
+    /// of the panel (a popup needs a press's serial, and the desktop's own windows never have
+    /// the keyboard).
+    pub(crate) fn tell_desktop_start_menu(&mut self, session: u32, now: u64) {
+        let Some(d) = self
+            .clients
+            .iter()
+            .find(|(_, c)| c.session == session && c.flags & flags::DESKTOP != 0)
+            .map(|(id, _)| *id)
+        else {
+            return;
+        };
+        let panel = self
+            .windows
+            .values()
+            .filter(|w| w.id.client == d && w.kind == WindowKind::Panel)
+            .map(|w| w.id)
+            .min_by_key(|id| id.number);
+        let serial = match panel {
+            Some(p) => {
+                let serial = self.serial();
+                self.record_press(p, serial, now);
+                serial
+            }
+            None => 0,
+        };
+        self.send(d, Event::new(kind::START_MENU, 0, [0; 3], now).with_serial(serial));
+    }
+
     fn desktop_only(&self, client: ClientId) -> Answer<&Client> {
         let c = self.clients.get(&client).ok_or(WindowError::NotAllowed)?;
         if c.flags & flags::DESKTOP == 0 {
@@ -980,10 +1022,14 @@ impl Desk {
                 if p.outline().inset(-1).intersect(&r).is_empty() {
                     return Err(WindowError::BadArgument);
                 }
-                // At most half its screen each way.
+                // At most half its screen each way, except the desktop's start menu (a popup of
+                // its panel), which may be as tall as the screen: on a small or 2x screen half
+                // would cut it short (note 0024, section 6).
                 let screen = self.space.holding_most(r).and_then(|n| self.space.screen(n));
                 let (sw, sh) = screen.map_or(NO_SCREEN, Screen::logical_size);
-                if w > sw / 2 || h > sh / 2 {
+                let of_panel = p.kind == WindowKind::Panel;
+                let (most_w, most_h) = if of_panel { (sw, sh) } else { (sw / 2, sh / 2) };
+                if w > most_w || h > most_h {
                     return Err(WindowError::BadArgument);
                 }
                 window.place = place;
@@ -2271,7 +2317,17 @@ impl Desk {
 
     /// `farewell`: the shutting-down screen on every screen, and nothing else from now on.
     pub fn farewell(&mut self, restarting: bool) {
-        self.farewell = Some(restarting);
+        self.set_farewell(if restarting { Farewell::Restarting } else { Farewell::ShuttingDown });
+    }
+
+    /// `halted`: after `farewell`, when the computer couldn't be turned off by software: says
+    /// it can be turned off by hand now (note 0024, section 7).
+    pub fn halted(&mut self) {
+        self.set_farewell(Farewell::Halted);
+    }
+
+    fn set_farewell(&mut self, f: Farewell) {
+        self.farewell = Some(f);
         self.menu = None;
         self.end_grab();
         self.damage_all();

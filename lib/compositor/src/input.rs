@@ -245,7 +245,7 @@ impl Desk {
 
     fn start_menu(&mut self, now: u64) {
         if let Some(a) = self.active {
-            self.tell_desktop(a, Event::new(kind::START_MENU, 0, [0; 3], now));
+            self.tell_desktop_start_menu(a, now);
         }
     }
 

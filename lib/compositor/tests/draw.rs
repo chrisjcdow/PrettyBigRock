@@ -11,7 +11,9 @@ mod common;
 use common::{Patterns, Rig, Sheet, output};
 use pbr_compositor::decor::Button;
 use pbr_compositor::draw::{Frames, Target, compose};
-use pbr_compositor::{Buffers, Desk, Menu, MenuItem, Place, Scene, SceneWindow, Shown, WindowId};
+use pbr_compositor::{
+    Buffers, Desk, Farewell, Menu, MenuItem, Place, Scene, SceneWindow, Shown, WindowId,
+};
 use pbr_draw::{Picture, Rect};
 use pbr_interfaces::pbr_window::{Cursor, WindowKind};
 
@@ -284,18 +286,22 @@ fn every_pointer_shape_at_1x_and_2x() {
 
 #[test]
 fn the_farewell_is_all_there_is() {
-    let mut rig = Rig::new(&[output(0, 320, 100, 340)]);
+    let mut rig = Rig::new(&[output(0, 480, 100, 500)]);
     let c = rig.client("Notepad", 0);
     rig.open(c, WindowKind::Normal, "letter.txt", (150, 40));
     rig.desk.farewell(true);
     let restarting = rig.render(1);
     rig.desk.farewell(false);
     let shutting = rig.render(1);
-    let mut both = Sheet::new(320, 200, 0);
-    both.paste(&restarting, 0, 0);
-    both.paste(&shutting, 0, 100);
+    // The computer couldn't be turned off: it says so, on two lines.
+    rig.desk.halted();
+    let halted = rig.render(1);
+    let mut all = Sheet::new(480, 300, 0);
+    all.paste(&restarting, 0, 0);
+    all.paste(&shutting, 0, 100);
+    all.paste(&halted, 0, 200);
     assert_eq!(restarting.at(0, 0), 0xFF10_1418);
-    both.check("farewell");
+    all.check("farewell");
 }
 
 #[test]
@@ -511,7 +517,9 @@ fn a_hostile_scene_draws_what_is_inside_and_never_panics() {
             ];
             rig.arrange(&arrangement);
             for screen in [1, 2] {
-                for scene in [&scene, &other, &Scene { farewell: Some(true), ..scene.clone() }] {
+                let farewell = Scene { farewell: Some(Farewell::Restarting), ..scene.clone() };
+                let halted = Scene { farewell: Some(Farewell::Halted), ..scene.clone() };
+                for scene in [&scene, &other, &farewell, &halted] {
                     for areas in [None, Some(&huge_areas[..]), Some(&many[..])] {
                         for f in frames {
                             let o = &rig.desk.space().screen(screen).unwrap().output;

@@ -20,7 +20,7 @@
 //! A test reads the last block that has its `done` line.
 
 use crate::decor::Button;
-use crate::desk::{Desk, Grab, Menu, Shown, WindowId, flags};
+use crate::desk::{Desk, Farewell, Grab, Menu, Shown, WindowId, flags};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -63,8 +63,8 @@ pub struct Scene {
     pub pointer: Option<(i32, i32, Cursor)>,
     /// The window menu, if it is open.
     pub menu: Option<Menu>,
-    /// Shutting down (`Some(true)`: restarting): only the farewell is drawn.
-    pub farewell: Option<bool>,
+    /// Shutting down: only the farewell is drawn.
+    pub farewell: Option<Farewell>,
 }
 
 impl Desk {
@@ -199,14 +199,26 @@ impl Desk {
             lines.push(format!("pointer at {x},{y} screen {screen}"));
         }
         if let Some(m) = &self.menu {
+            // Where it is and its rows, so that a test can click one (row `i` is 2 pixels plus
+            // `i` rows down from its top).
+            let rows: Vec<String> = m.items.iter().map(|i| i.label()).collect();
             lines.push(format!(
-                "menu for window {} of app {}",
+                "menu for window {} of app {} at {},{} size {}x{}: {}",
                 m.window.number,
-                self.app_of(m.window)
+                self.app_of(m.window),
+                m.rect.x,
+                m.rect.y,
+                m.rect.width,
+                m.rect.height,
+                rows.join("|")
             ));
         }
-        if let Some(r) = self.farewell {
-            lines.push(String::from(if r { "farewell restarting" } else { "farewell" }));
+        if let Some(f) = self.farewell {
+            lines.push(String::from(match f {
+                Farewell::ShuttingDown => "farewell",
+                Farewell::Restarting => "farewell restarting",
+                Farewell::Halted => "farewell halted",
+            }));
         }
         lines.push(format!("view {view} done"));
         lines

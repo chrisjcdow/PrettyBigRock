@@ -350,6 +350,11 @@ impl sessions_if::Server for SessionsCalls<'_> {
         }
     }
 
+    fn halted(&mut self, reply: sessions_if::halted::Reply) {
+        self.0.desk.halted();
+        answered(reply.ok());
+    }
+
     fn farewell(&mut self, restarting: bool, reply: sessions_if::farewell::Reply) {
         self.0.desk.farewell(restarting);
         answered(reply.ok());

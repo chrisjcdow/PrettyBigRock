@@ -550,6 +550,60 @@ fn the_keys_the_display_server_keeps() {
 }
 
 #[test]
+fn the_start_menu_key_lets_the_desktop_open_its_menu_over_its_panel() {
+    let mut h = H::one();
+    let desk = h.client(1, "Desktop", flags::DESKTOP, false);
+    let panel =
+        h.d.create(desk, WindowKind::Panel, 0, "", (1280, 38), WindowFlags(0), (1, 2), 0, h.now)
+            .unwrap();
+    let a = h.client(7, "A", 0, true);
+    let wa = h.window(a, (200, 200));
+    h.events(desk);
+    h.press_key(key::LEFT_META, mods::META, '\0');
+    let start = h.events(desk).into_iter().find(|e| e.kind == kind::START_MENU).unwrap();
+    assert_ne!(start.serial, 0, "the start menu key comes with a serial");
+    // With it, the desktop may open a popup of its panel taller than half the screen (the
+    // start menu); a made-up serial may not.
+    let menu = |h: &mut H, serial: u32| {
+        h.d.create(
+            desk,
+            WindowKind::Popup,
+            panel,
+            "",
+            (236, 500),
+            WindowFlags(0),
+            (4, -500),
+            serial,
+            h.now,
+        )
+    };
+    assert_eq!(menu(&mut h, start.serial + 1000), Err(WindowError::BadSerial));
+    assert!(menu(&mut h, start.serial).is_ok());
+    // An app's serial is its own: the desktop's serial is no good to it, and its own popups
+    // stay within half the screen.
+    let pa = |h: &mut H, serial: u32, height: u32| {
+        h.d.create(
+            a,
+            WindowKind::Popup,
+            wa,
+            "",
+            (100, height),
+            WindowFlags(0),
+            (0, 0),
+            serial,
+            h.now,
+        )
+    };
+    assert_eq!(pa(&mut h, start.serial, 100), Err(WindowError::BadSerial));
+    let (x, y, _, _) = h.place(7, wa);
+    h.click(x + 5, y + 5);
+    let events = h.events(a);
+    let press = events.iter().find(|e| e.kind == kind::BUTTON && e.b == 1).unwrap().serial;
+    assert_eq!(pa(&mut h, press, 500), Err(WindowError::BadArgument));
+    assert!(pa(&mut h, press, 100).is_ok());
+}
+
+#[test]
 fn a_dead_key_and_a_letter_that_dont_combine_type_two_characters() {
     let mut h = H::one();
     let a = h.client(7, "A", 0, true);
