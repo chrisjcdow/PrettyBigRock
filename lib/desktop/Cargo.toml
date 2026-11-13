@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-desktop"
+description = "The session's desktop, as host-tested code: its drawing (wallpaper, taskbar, start menu, icons) and its settings files (note 0024, section 6)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pbr-draw = { path = "../draw" }
+pbr-font = { path = "../font" }
+pbr-interfaces = { path = "../interfaces" }
+pbr-manifest = { path = "../manifest" }
+
+[dev-dependencies]
+pbr-testpng = { path = "../testpng" }
+
+[lints]
+workspace = true
