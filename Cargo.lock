@@ -44,6 +44,19 @@ name = "pbr-captree"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-compositor"
+version = "0.0.0"
+dependencies = [
+ "pbr-devices",
+ "pbr-draw",
+ "pbr-font",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-seat",
+ "pbr-testpng",
+]
+
+[[package]]
 name = "pbr-console"
 version = "0.0.0"
 dependencies = [
@@ -74,6 +87,17 @@ dependencies = [
  "pbr-interfaces",
  "pbr-platform",
  "pbr-supervise",
+]
+
+[[package]]
+name = "pbr-display-server"
+version = "0.0.0"
+dependencies = [
+ "pbr-compositor",
+ "pbr-draw",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-seat",
 ]
 
 [[package]]
@@ -432,6 +456,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-test-windowprobe"
+version = "0.0.0"
+dependencies = [
+ "pbr-draw",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-window",
+]
+
+[[package]]
+name = "pbr-test-wintest"
+version = "0.0.0"
+dependencies = [
+ "pbr-draw",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-testpng"
 version = "0.0.0"
 dependencies = [
@@ -454,6 +498,15 @@ name = "pbr-virtio"
 version = "0.0.0"
 dependencies = [
  "pbr-devices",
+]
+
+[[package]]
+name = "pbr-window"
+version = "0.0.0"
+dependencies = [
+ "pbr-draw",
+ "pbr-granite",
+ "pbr-interfaces",
 ]
 
 [[package]]

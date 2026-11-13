@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-display-server"
+description = "The display server: windows, composing every screen, and where input goes (note 0022)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "display"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-compositor = { path = "../../lib/compositor" }
+pbr-draw = { path = "../../lib/draw" }
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-seat = { path = "../../lib/seat" }
+
+[lints]
+workspace = true

@@ -325,6 +325,8 @@ impl Desk {
             self.pointer.x = x;
             self.pointer.y = y;
             self.damage_pointer();
+            // The description says where the pointer is (the boot tests move it from there).
+            self.changed();
         } else {
             self.pointer.x = x;
             self.pointer.y = y;

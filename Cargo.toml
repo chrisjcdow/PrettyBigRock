@@ -53,6 +53,7 @@ members = [
     "lib/window",
     "services/console",
     "services/devmgr",
+    "services/display",
     "services/fat",
     "services/input",
     "services/root",
