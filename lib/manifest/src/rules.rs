@@ -7,8 +7,12 @@
 //! ```text
 //! deny paint pictures
 //! allow notes documents read
+//! deny snake data
 //! trust backup
 //! ```
+//!
+//! A rule names one of the user's places, or `data`: the app's own folder (note 0024,
+//! section 4), which every app whose manifest asks for it gets unless a rule denies it.
 //!
 //! Rules that contradict each other (`allow` and `deny` of one place for one app, `trust` and
 //! `distrust` of one app) or say the same thing twice refuse the whole file, as anything else
@@ -20,6 +24,7 @@ use crate::lines::{self, Limits, ReadError};
 use crate::{Place, Rights, is_name};
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt;
 
 /// The largest rules file.
 pub const MAX_SIZE: usize = 16384;
@@ -30,13 +35,45 @@ pub const MAX_RULES: usize = 512;
 
 const LIMITS: Limits = Limits { max_size: MAX_SIZE, max_line: MAX_LINE, quotes: false };
 
+/// What an `allow` or `deny` rule is about: one of the user's places, or the app's own folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Target {
+    /// `documents`, `pictures`...
+    Place(Place),
+    /// `data`: the app's own folder, `/Home/Apps/<app>` (note 0024, section 4).
+    Data,
+}
+
+impl Target {
+    /// The target a word in a rule names.
+    pub fn from_word(w: &str) -> Option<Target> {
+        if w == "data" { Some(Target::Data) } else { Place::from_word(w).map(Target::Place) }
+    }
+}
+
+impl fmt::Display for Target {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Target::Place(p) => f.write_str(p.word()),
+            Target::Data => f.write_str("data"),
+        }
+    }
+}
+
+impl From<Place> for Target {
+    fn from(p: Place) -> Target {
+        Target::Place(p)
+    }
+}
+
 /// One rule.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Rule {
-    /// `allow APP PLACE read [write]`: the app may have the place, with at most these rights.
-    Allow(String, Place, Rights),
+    /// `allow APP PLACE read [write]`: the app may have the place (or `data`), with at most
+    /// these rights.
+    Allow(String, Target, Rights),
     /// `deny APP PLACE`: it may never have it.
-    Deny(String, Place),
+    Deny(String, Target),
     /// `trust APP`: it may be trusted, if its manifest asks.
     Trust(String),
     /// `distrust APP`: it may not.
@@ -52,7 +89,7 @@ impl Rule {
     }
 
     /// The place it is about (`None` for trust), so two rules that collide can be found.
-    fn place(&self) -> Option<Place> {
+    fn place(&self) -> Option<Target> {
         match self {
             Rule::Allow(_, p, _) | Rule::Deny(_, p) => Some(*p),
             Rule::Trust(_) | Rule::Distrust(_) => None,
@@ -104,7 +141,7 @@ impl Rules {
             let w = line.plain_words().map_err(|e| at(Error::Read(e)))?;
             let app =
                 |s: &str| if is_name(s) { Ok(String::from(s)) } else { Err(at(Error::BadValue)) };
-            let place = |s: &str| Place::from_word(s).ok_or(at(Error::BadValue));
+            let place = |s: &str| Target::from_word(s).ok_or(at(Error::BadValue));
             let rule = match (line.key, w.as_slice()) {
                 ("allow", [a, p, rights @ ..]) => Rule::Allow(
                     app(a)?,
@@ -133,16 +170,19 @@ impl Rules {
         &self.0
     }
 
-    /// The rights an `allow` rule gives `app` for `place`, if there is one.
-    pub fn allows(&self, app: &str, place: Place) -> Option<Rights> {
+    /// The rights an `allow` rule gives `app` for `place` (a [`Place`] or [`Target::Data`]),
+    /// if there is one.
+    pub fn allows(&self, app: &str, place: impl Into<Target>) -> Option<Rights> {
+        let place = place.into();
         self.0.iter().find_map(|r| match r {
             Rule::Allow(a, p, rights) if a == app && *p == place => Some(*rights),
             _ => None,
         })
     }
 
-    /// Whether a rule denies `app` the `place`.
-    pub fn denies(&self, app: &str, place: Place) -> bool {
+    /// Whether a rule denies `app` the `place` (a [`Place`] or [`Target::Data`]).
+    pub fn denies(&self, app: &str, place: impl Into<Target>) -> bool {
+        let place = place.into();
         self.0.iter().any(|r| matches!(r, Rule::Deny(a, p) if a == app && *p == place))
     }
 
@@ -175,6 +215,12 @@ mod tests {
         assert_eq!(r.allows("paint", Place::Documents), None);
         assert!(r.trusts("backup") && !r.trusts("shell") && r.distrusts("shell"));
         assert_eq!(Rules::parse(b""), Ok(Rules::none()));
+        // The app's own folder.
+        let r = Rules::parse(b"deny snake data\nallow paint data read").unwrap();
+        assert!(r.denies("snake", Target::Data) && !r.denies("paint", Target::Data));
+        assert_eq!(r.allows("paint", Target::Data), Some(Rights::Read));
+        assert_eq!(r.allows("snake", Target::Data), None);
+        assert!(!r.denies("snake", Place::Documents));
     }
 
     #[test]
@@ -198,6 +244,10 @@ mod tests {
         assert!(p("trust a\ndeny a music\nallow a pictures read\ntrust b").is_ok());
         let many: String = (0..513).map(|i| format!("trust a{i}\n")).collect();
         assert_eq!(p(&many), Err((Error::TooMany, 513)));
+        assert_eq!(p("deny a data\nallow a data read"), Err((Error::Conflict, 2)));
+        assert!(p("deny a data\ndeny a documents").is_ok());
+        assert_eq!(p("deny a Data"), Err((Error::BadValue, 1)));
+        assert_eq!(p("deny a data read"), Err((Error::BadValue, 1)));
         assert_eq!(p("deny a music \u{e9}"), Err((Error::Read(ReadError::NotText), 0)));
     }
 

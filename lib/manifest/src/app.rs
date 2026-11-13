@@ -14,9 +14,13 @@
 //!
 //! A manifest only *asks*; what the app gets is decided by [`crate::decide`], with the user's
 //! rules. Anything unexpected refuses the whole manifest, and the app can't be launched.
+//!
+//! M6 adds the desktop's keys (note 0024, section 3): `windows`, `data`, `picker`, `sysinfo`,
+//! `system`, `desktop` and `sandbox view` ask for something; `hidden`, `icon NAME` and
+//! `opens EXT...` are hints for the desktop and Files, which grant nothing.
 
 use crate::lines::{self, Limits, ReadError};
-use crate::{Place, Rights, size};
+use crate::{Place, Rights, is_name, size};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -29,6 +33,11 @@ pub const MAX_TITLE: usize = 64;
 /// The longest `args` value. The sandbox manager adds the launch's own arguments after it, and
 /// a program can be given at most 3 KiB.
 pub const MAX_ARGS: usize = 1024;
+/// The most kinds of file one app may say it opens, and the longest such extension.
+pub const MAX_OPENS: usize = 16;
+/// See [`MAX_OPENS`].
+pub const MAX_EXTENSION: usize = 8;
+
 /// The smallest and largest budgets.
 pub const MIN_BUDGET: u64 = 64 << 10;
 /// See [`MIN_BUDGET`].
@@ -51,6 +60,27 @@ pub struct App {
     pub terminal: bool,
     /// Arguments to start it with.
     pub args: String,
+    /// `windows`: a `pbr.window` capability (note 0022).
+    pub windows: bool,
+    /// `data`: its own folder, `/Home/Apps/<app>` (note 0024, section 4).
+    pub data: bool,
+    /// `picker`: the file picker (note 0025).
+    pub picker: bool,
+    /// `sysinfo`: read-only system information (note 0026, section 3).
+    pub sysinfo: bool,
+    /// `system`: its windows may be system windows (note 0022, section 6).
+    pub system: bool,
+    /// `desktop`: it is the session's desktop.
+    pub desktop: bool,
+    /// `sandbox view`: a `pbr.sandbox` capability that may look at apps and take grants back
+    /// (the permissions viewer).
+    pub sandbox_view: bool,
+    /// `hidden`: not listed in the start menu or on the desktop.
+    pub hidden: bool,
+    /// `icon NAME`: which of the system's icons to show for it.
+    pub icon: Option<String>,
+    /// `opens EXT...`: the kinds of file it opens (`txt`, `md`), for "Open with...".
+    pub opens: Vec<String>,
 }
 
 /// What was wrong with a manifest.
@@ -90,6 +120,10 @@ impl App {
     pub fn parse(text: &[u8]) -> Result<App, Error> {
         let (mut title, mut budget, mut args) = (None, None, None);
         let (mut trusted, mut terminal) = (None, None);
+        // The keys that are just a word: each at most once.
+        let (mut windows, mut data, mut picker, mut sysinfo) = (None, None, None, None);
+        let (mut system, mut desktop, mut hidden, mut sandbox_view) = (None, None, None, None);
+        let (mut icon, mut opens) = (None, None);
         let mut places: Vec<(Place, Rights)> = Vec::new();
         for line in lines::read(text, LIMITS)? {
             match line.key {
@@ -123,11 +157,63 @@ impl App {
                     }
                     places.push((place, rights));
                 }
-                "trusted" | "terminal" => {
+                "trusted" | "terminal" | "windows" | "data" | "picker" | "sysinfo" | "system"
+                | "desktop" | "hidden" => {
                     if !line.rest.is_empty() {
                         return Err(Error::BadValue);
                     }
-                    once(if line.key == "trusted" { &mut trusted } else { &mut terminal }, ())?;
+                    let slot = match line.key {
+                        "trusted" => &mut trusted,
+                        "terminal" => &mut terminal,
+                        "windows" => &mut windows,
+                        "data" => &mut data,
+                        "picker" => &mut picker,
+                        "sysinfo" => &mut sysinfo,
+                        "system" => &mut system,
+                        "desktop" => &mut desktop,
+                        _ => &mut hidden,
+                    };
+                    once(slot, ())?;
+                }
+                // `sandbox view` is the only `sandbox` there is; later versions may add others
+                // (launching only, say), so the word after it is required.
+                "sandbox" => {
+                    let w = line.plain_words()?;
+                    if w.as_slice() != ["view"] {
+                        return Err(Error::BadValue);
+                    }
+                    once(&mut sandbox_view, ())?;
+                }
+                "icon" => {
+                    let w = line.plain_words()?;
+                    let [name] = w.as_slice() else { return Err(Error::BadValue) };
+                    if !is_name(name) {
+                        return Err(Error::BadValue);
+                    }
+                    once(&mut icon, String::from(*name))?;
+                }
+                "opens" => {
+                    let w = line.plain_words()?;
+                    if w.is_empty() {
+                        return Err(Error::BadValue);
+                    }
+                    if w.len() > MAX_OPENS {
+                        return Err(Error::OutOfRange);
+                    }
+                    let mut exts: Vec<String> = Vec::new();
+                    for e in w {
+                        // Lowercase letters and digits only: what follows the last `.` of a
+                        // file's name, as Files compares it.
+                        let plain = e.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+                        if e.is_empty() || e.len() > MAX_EXTENSION || !plain {
+                            return Err(Error::BadValue);
+                        }
+                        if exts.iter().any(|x| x == e) {
+                            return Err(Error::Repeated);
+                        }
+                        exts.push(String::from(e));
+                    }
+                    once(&mut opens, exts)?;
                 }
                 "args" => {
                     // The arguments are passed as they are written: quotes in them are just
@@ -151,6 +237,16 @@ impl App {
                 trusted: trusted.is_some(),
                 terminal: terminal.is_some(),
                 args: args.unwrap_or_default(),
+                windows: windows.is_some(),
+                data: data.is_some(),
+                picker: picker.is_some(),
+                sysinfo: sysinfo.is_some(),
+                system: system.is_some(),
+                desktop: desktop.is_some(),
+                sandbox_view: sandbox_view.is_some(),
+                hidden: hidden.is_some(),
+                icon,
+                opens: opens.unwrap_or_default(),
             }),
             _ => Err(Error::Missing),
         }
@@ -179,6 +275,17 @@ mod tests {
         let s = App::parse(b"title \"Shell\"\r\nbudget 512K\r\ntrusted\r\nterminal\r\n").unwrap();
         assert!(s.trusted && s.terminal && s.places.is_empty() && s.args.is_empty());
         assert_eq!(s.budget, 512 << 10);
+        assert!(!s.windows && !s.data && !s.hidden && s.icon.is_none() && s.opens.is_empty());
+    }
+
+    #[test]
+    fn reads_the_desktop_keys() {
+        let text = "title \"Desktop\"\nbudget 8M\nwindows\ndesktop\ndata\nhidden\nsystem\npicker\nsysinfo\nsandbox view\nicon notepad\nopens txt md\n";
+        let a = App::parse(text.as_bytes()).unwrap();
+        assert!(a.windows && a.desktop && a.data && a.hidden && a.system && a.picker);
+        assert!(a.sysinfo && a.sandbox_view && !a.trusted);
+        assert_eq!(a.icon.as_deref(), Some("notepad"));
+        assert_eq!(a.opens, vec![String::from("txt"), String::from("md")]);
     }
 
     #[test]
@@ -219,6 +326,28 @@ mod tests {
         assert_eq!(with("files home read"), Err(Error::BadValue));
         assert_eq!(with("files ../secret read"), Err(Error::BadValue));
         assert_eq!(with("trusted yes"), Err(Error::BadValue));
+        for key in ["windows", "data", "picker", "sysinfo", "system", "desktop", "hidden"] {
+            assert_eq!(with(&format!("{key}\n{key}")), Err(Error::Repeated), "{key}");
+            assert_eq!(with(&format!("{key} yes")), Err(Error::BadValue), "{key}");
+        }
+        assert_eq!(with("sandbox"), Err(Error::BadValue));
+        assert_eq!(with("sandbox all"), Err(Error::BadValue));
+        assert_eq!(with("sandbox view view"), Err(Error::BadValue));
+        assert_eq!(with("sandbox view\nsandbox view"), Err(Error::Repeated));
+        assert_eq!(with("Windows"), Err(Error::UnknownKey));
+        assert_eq!(with("icon"), Err(Error::BadValue));
+        assert_eq!(with("icon Notepad"), Err(Error::BadValue));
+        assert_eq!(with("icon a b"), Err(Error::BadValue));
+        assert_eq!(with("icon ../x"), Err(Error::BadValue));
+        assert_eq!(with("icon a\nicon b"), Err(Error::Repeated));
+        assert_eq!(with("opens"), Err(Error::BadValue));
+        assert_eq!(with("opens .txt"), Err(Error::BadValue));
+        assert_eq!(with("opens TXT"), Err(Error::BadValue));
+        assert_eq!(with("opens toolongext"), Err(Error::BadValue));
+        assert_eq!(with("opens txt txt"), Err(Error::Repeated));
+        assert_eq!(with("opens txt\nopens md"), Err(Error::Repeated));
+        let many: Vec<String> = (0..17).map(|i| format!("e{i}")).collect();
+        assert_eq!(with(&format!("opens {}", many.join(" "))), Err(Error::OutOfRange));
         assert_eq!(with("args"), Err(Error::BadValue));
         assert_eq!(
             with(&format!("args {}", "x".repeat(MAX_LINE))),
@@ -236,6 +365,8 @@ mod tests {
                 assert!((MIN_BUDGET..=MAX_BUDGET).contains(&a.budget));
                 assert!(a.title.len() <= MAX_TITLE && a.args.len() <= MAX_ARGS);
                 assert!(a.places.len() <= Place::ALL.len());
+                assert!(a.opens.len() <= MAX_OPENS);
+                assert!(a.icon.as_deref().is_none_or(is_name));
             }
         });
     }

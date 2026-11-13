@@ -153,6 +153,30 @@ pub struct Decision {
     pub trusted: bool,
     /// Whether it gets the session's terminal.
     pub terminal: bool,
+    /// Whether it gets a window capability (if the session has the display; note 0024,
+    /// section 3).
+    pub windows: bool,
+    /// Its own folder, if granted: with what rights, and why.
+    pub data: Option<(Rights, Reason)>,
+    /// The file picker (only with windows).
+    pub picker: bool,
+    /// Read-only system information.
+    pub sysinfo: bool,
+    /// Its windows may be system windows.
+    pub system: bool,
+    /// It is the session's desktop.
+    pub desktop: bool,
+    /// A `pbr.sandbox` capability for the permissions viewer.
+    pub sandbox_view: bool,
+}
+
+/// Why an app may not be launched at all, whatever the rules say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// It isn't a system app, and asks for something only system apps may have (`system`,
+    /// `desktop`, `sandbox view`): an app installed later that asks to be the desktop is either
+    /// broken or up to something.
+    SystemOnly,
 }
 
 /// What the app called `name`, with manifest `app`, is granted under `rules` (note 0017,
@@ -165,10 +189,25 @@ pub struct Decision {
 /// - `trusted` is granted only if the manifest asks, and the app is a system app no rule
 ///   distrusts, or a rule trusts it.
 /// - `terminal` is granted only if the manifest asks and the app is trusted.
+/// - `windows` is granted whenever the manifest asks (the sandbox manager gives it only if the
+///   session has the display); `picker` only with `windows`.
+/// - `data`, the app's own folder, read and write, is granted like a place: if a rule allows
+///   it (with the rights it allows), or the app is a system app and no rule denies it.
+/// - `sysinfo` only to system apps; `system`, `desktop` and `sandbox view` only to system
+///   apps, and an app that isn't one but asks for them is refused altogether
+///   ([`Refused::SystemOnly`]). No rule can give them: rules can't name them.
 ///
 /// Nothing is granted that the manifest didn't ask for: rules only ever take away, or let an
 /// app that isn't a system app have what it asked for.
-pub fn decide(name: &str, app: &app::App, rules: &rules::Rules, system: bool) -> Decision {
+pub fn decide(
+    name: &str,
+    app: &app::App,
+    rules: &rules::Rules,
+    system: bool,
+) -> Result<Decision, Refused> {
+    if !system && (app.system || app.desktop || app.sandbox_view) {
+        return Err(Refused::SystemOnly);
+    }
     let mut places = Vec::new();
     for &(place, asked) in &app.places {
         if rules.denies(name, place) {
@@ -181,7 +220,27 @@ pub fn decide(name: &str, app: &app::App, rules: &rules::Rules, system: bool) ->
         }
     }
     let trusted = app.trusted && (rules.trusts(name) || (system && !rules.distrusts(name)));
-    Decision { places, trusted, terminal: app.terminal && trusted }
+    let data = if !app.data || rules.denies(name, rules::Target::Data) {
+        None
+    } else if let Some(allowed) = rules.allows(name, rules::Target::Data) {
+        Some((Rights::ReadWrite.min(allowed), Reason::Rule))
+    } else if system {
+        Some((Rights::ReadWrite, Reason::Manifest))
+    } else {
+        None
+    };
+    Ok(Decision {
+        places,
+        trusted,
+        terminal: app.terminal && trusted,
+        windows: app.windows,
+        data,
+        picker: app.picker && app.windows,
+        sysinfo: app.sysinfo && system,
+        system: app.system,
+        desktop: app.desktop,
+        sandbox_view: app.sandbox_view,
+    })
 }
 
 /// The names an administrator's volumes have under `/Volumes`, one for each label in `labels`
@@ -257,6 +316,9 @@ mod tests {
     }
     fn rules(text: &str) -> rules::Rules {
         rules::Rules::parse(text.as_bytes()).unwrap()
+    }
+    fn decide(name: &str, app: &app::App, rules: &rules::Rules, system: bool) -> Decision {
+        super::decide(name, app, rules, system).unwrap()
     }
     fn g(place: Place, rights: Rights, reason: Reason) -> Granted {
         Granted { place, rights, reason }
@@ -334,6 +396,42 @@ mod tests {
         // A terminal only with trust.
         let t = app("title \"T\"\nbudget 1M\nterminal\n");
         assert!(!decide("t", &t, &rules(""), true).terminal);
+    }
+
+    #[test]
+    fn the_desktop_keys() {
+        let desk =
+            app("title \"Desktop\"\nbudget 1M\nwindows\ndesktop\ndata\nhidden\nsysinfo\npicker\n");
+        let d = decide("desktop", &desk, &rules(""), true);
+        assert!(d.windows && d.desktop && d.picker && d.sysinfo && !d.system && !d.trusted);
+        assert_eq!(d.data, Some((Rights::ReadWrite, Reason::Manifest)));
+        // The app's own folder can be denied, or cut down to reading, by a rule.
+        let d = decide("desktop", &desk, &rules("deny desktop data\n"), true);
+        assert_eq!(d.data, None);
+        let d = decide("desktop", &desk, &rules("allow desktop data read\n"), true);
+        assert_eq!(d.data, Some((Rights::Read, Reason::Rule)));
+        // `picker` comes only with `windows`.
+        let p = app("title \"P\"\nbudget 1M\npicker\ndata\nsysinfo\n");
+        let d = decide("p", &p, &rules(""), true);
+        assert!(!d.picker && !d.windows);
+        // An app that isn't a system app: `data` only by a rule, `sysinfo` never.
+        let d = decide("p", &p, &rules(""), false);
+        assert!(d.data.is_none() && !d.sysinfo);
+        let d = decide("p", &p, &rules("allow p data read write\n"), false);
+        assert_eq!(d.data, Some((Rights::ReadWrite, Reason::Rule)));
+        // `system`, `desktop` and `sandbox view` refuse an app that isn't a system app, whatever
+        // the rules say (no rule can name them; `trust` doesn't give them).
+        for key in ["system", "desktop", "sandbox view"] {
+            let a = app(&alloc::format!("title \"X\"\nbudget 1M\nwindows\ntrusted\n{key}\n"));
+            let r = rules("trust x\nallow x data read write\n");
+            assert_eq!(super::decide("x", &a, &r, false), Err(Refused::SystemOnly), "{key}");
+            assert!(super::decide("x", &a, &r, true).is_ok());
+        }
+        assert!(rules::Rules::parse(b"allow x system read").is_err());
+        assert!(rules::Rules::parse(b"allow x desktop").is_err());
+        let v = app("title \"V\"\nbudget 1M\nwindows\nsystem\nsandbox view\n");
+        let d = decide("v", &v, &rules(""), true);
+        assert!(d.system && d.sandbox_view && !d.desktop);
     }
 
     #[test]
