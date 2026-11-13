@@ -88,6 +88,11 @@ pub const SYSTEM: &[(&str, Option<&str>)] = &[
     ("Users/chris/Notes/todo.txt", Some("write M5")),
     ("Users/chris/Secret", None),
     ("Users/chris/Secret/s.txt", Some("nobody else may read this")),
+    // The desktop's own folder (note 0024, section 4), with its screen arrangement: the desktop
+    // boot's second screen at 2x, right of the first (note 0026, section 6).
+    ("Users/chris/Apps", None),
+    ("Users/chris/Apps/desktop", None),
+    ("Users/chris/Apps/desktop/screens.txt", Some(SCREENS)),
     ("Users/alice", None),
     ("Users/alice/Documents", None),
     ("Users/alice/Documents/diary.txt", Some("Alice's diary")),
@@ -97,6 +102,11 @@ pub const SYSTEM: &[(&str, Option<&str>)] = &[
     ("Users/alice/Videos", None),
     ("Users/alice/Downloads", None),
 ];
+
+/// The desktop's `screens.txt` on the test system volume: for the two virtio-gpu machines, the
+/// first screen (1280 x 800) main, the second at 2x beside it. Other machines' screens aren't
+/// named, so it changes nothing for them.
+pub const SCREENS: &str = "# The desktop boot's screens (xtask/src/testdisks.rs)\nscreen \"Virtual-1\" at 0,0 scale 100 main\nscreen \"Virtual-2\" at 1280,0 scale 200\n";
 
 /// Puts [`SYSTEM`] on the RockFS volume in `path` (a disk with one), with `tools/rockfs.py`.
 fn system_volume(path: &Path) -> Result<(), String> {
@@ -182,13 +192,18 @@ pub fn gpt_disk(path: &Path) -> Result<(), String> {
     system_volume(path)
 }
 
-/// Writes every storage test disk into `work`, and returns their paths.
+/// The test disks [`make`] made in `work`, as they are now.
+pub fn paths(work: &Path) -> Vec<PathBuf> {
+    vec![work.join(MBR_DISK), work.join(GPT_DISK), work.join("test-empty.img")]
+}
+
 /// The MBR disk's file name (the boot tests attach it writable and check it afterwards).
 pub const MBR_DISK: &str = "test-mbr.img";
 /// The GPT disk's file name (attached writable too: its `Home` volume is the system volume,
 /// which the shell test changes and the runner checks afterwards).
 pub const GPT_DISK: &str = "test-gpt.img";
 
+/// Writes every storage test disk into `work`, and returns their paths.
 pub fn make(work: &Path) -> Result<Vec<PathBuf>, String> {
     let (mbr, gpt, empty) = (work.join(MBR_DISK), work.join(GPT_DISK), work.join("test-empty.img"));
     mbr_disk(&mbr)?;

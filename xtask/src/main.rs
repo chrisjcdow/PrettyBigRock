@@ -76,6 +76,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-devmgr", "devmgr", "devmgr"),
     ("pbr-storage", "storage", "storage"),
     ("pbr-input", "input", "input"),
+    ("pbr-power", "power", "power"),
     ("pbr-console", "console", "console"),
     ("pbr-display-server", "display", "display"),
     ("pbr-rockfs-server", "rockfs", "rockfs"),
@@ -94,8 +95,9 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-test-fileprobe", "fileprobe", "fileprobe"),
     ("pbr-test-sandboxed", "sandboxed", "apps/sandboxed"),
     ("pbr-shell-app", "shell", "apps/shell"),
-    ("pbr-test-wintest", "wintest", "wintest"),
-    ("pbr-test-windowprobe", "windowprobe", "windowprobe"),
+    ("pbr-desktop-app", "desktop", "apps/desktop"),
+    ("pbr-test-wintest", "wintest", "apps/wintest"),
+    ("pbr-test-windowprobe", "windowprobe", "apps/windowprobe"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -111,6 +113,9 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("apps/sandboxed.app", "tests/programs/sandboxed/sandboxed.app"),
     ("apps/broken.app", "tests/programs/sandboxed/broken.app"),
     ("apps/shell.app", "apps/shell/shell.app"),
+    ("apps/desktop.app", "apps/desktop/desktop.app"),
+    ("apps/wintest.app", "tests/programs/wintest/wintest.app"),
+    ("apps/windowprobe.app", "tests/programs/windowprobe/windowprobe.app"),
     // Keyboard layouts, which the input service reads (note 0021, section 4).
     ("layouts/us.kbd", "services/input/layouts/us.kbd"),
     ("layouts/gb.kbd", "services/input/layouts/gb.kbd"),
@@ -120,6 +125,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
 /// Crates built for the programs' targets, checked with Clippy there.
 const PROGRAM_CRATES: &[&str] = &[
     "pbr-compositor",
+    "pbr-desktop",
     "pbr-devmgr",
     "pbr-display-server",
     "pbr-draw",
@@ -138,10 +144,12 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-storage",
     "pbr-console",
     "pbr-input",
+    "pbr-power",
     "pbr-rockfs-server",
     "pbr-users",
     "pbr-sandbox",
     "pbr-shell-app",
+    "pbr-desktop-app",
     "pbr-test-echo",
     "pbr-test-fileprobe",
     "pbr-test-memfs",
@@ -162,6 +170,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-captree",
     "pbr-compositor",
     "pbr-crc",
+    "pbr-desktop",
     "pbr-devices",
     "pbr-draw",
     "pbr-elf",
@@ -612,13 +621,15 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         kernels.push(k);
         loaders.push(l);
     }
-    // Three images: the ordinary one, and two whose command lines ask for the boot tests: the
-    // self-test, and the desktop test (note 0026, section 6).
+    // Four images: the ordinary one, and three whose command lines ask for the boot tests: the
+    // self-test, the desktop test (note 0026, section 6), and the desktop test in text mode
+    // (note 0024, section 11).
     let mut paths = Vec::new();
     for (name, cmdline) in [
         ("prettybigrock.img", &b""[..]),
         ("prettybigrock-selftest.img", &b"selftest"[..]),
         ("prettybigrock-desktoptest.img", &b"desktoptest"[..]),
+        ("prettybigrock-texttest.img", &b"text desktoptest"[..]),
     ] {
         let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], &archives[0], cmdline)?;
         let mut files: Vec<(String, &[u8])> = Vec::new();
@@ -636,7 +647,12 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         })?;
         paths.push(write_out(root, &format!("build/{profile}/{name}"), &img)?);
     }
-    Ok(Images { normal: paths.remove(0), selftest: paths.remove(0), desktop: paths.remove(0) })
+    Ok(Images {
+        normal: paths.remove(0),
+        selftest: paths.remove(0),
+        desktop: paths.remove(0),
+        text: paths.remove(0),
+    })
 }
 
 /// The boot disk images [`build_all`] makes.
@@ -647,6 +663,8 @@ struct Images {
     selftest: PathBuf,
     /// The same, with `desktoptest`.
     desktop: PathBuf,
+    /// The same, with `text desktoptest`.
+    text: PathBuf,
 }
 
 /// Compiler flags that keep the folder the repository is in out of what's built, so the same
@@ -751,7 +769,7 @@ fn qemu_test(root: &Path, imgs: &Images) -> Result {
     let boot = std::env::var("PBR_QEMU_BOOT").unwrap_or_default();
     for cfg in qemu::TESTS.iter().filter(|c| c.name.contains(&only)) {
         if boot == "desktop" {
-            desktop_boot(cfg, &imgs.desktop, &work, &mut failed);
+            desktop_boot(cfg, imgs, &work, &mut failed);
             continue;
         }
         print!("boot test: {} ... ", cfg.name);
@@ -770,7 +788,7 @@ fn qemu_test(root: &Path, imgs: &Images) -> Result {
             }
         }
         if boot != "selftest" {
-            desktop_boot(cfg, &imgs.desktop, &work, &mut failed);
+            desktop_boot(cfg, imgs, &work, &mut failed);
         }
     }
     if failed.is_empty() {
@@ -782,11 +800,11 @@ fn qemu_test(root: &Path, imgs: &Images) -> Result {
 }
 
 /// The desktop boot of one configuration (note 0026, section 6), noting a failure.
-fn desktop_boot(cfg: &qemu::Config, img: &Path, work: &Path, failed: &mut Vec<String>) {
+fn desktop_boot(cfg: &qemu::Config, imgs: &Images, work: &Path, failed: &mut Vec<String>) {
     use std::io::Write as _;
     print!("desktop test: {} ... ", cfg.name);
     let _ = std::io::stdout().flush();
-    match desktop::test(cfg, img, work, BOOT_TEST_LIMIT) {
+    match desktop::test(cfg, &imgs.desktop, &imgs.text, work, BOOT_TEST_LIMIT) {
         Ok(_) => println!("ok"),
         Err(e) => {
             println!("FAILED");

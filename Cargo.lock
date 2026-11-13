@@ -70,6 +70,30 @@ name = "pbr-crc"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-desktop"
+version = "0.0.0"
+dependencies = [
+ "pbr-draw",
+ "pbr-font",
+ "pbr-interfaces",
+ "pbr-manifest",
+ "pbr-testpng",
+]
+
+[[package]]
+name = "pbr-desktop-app"
+version = "0.0.0"
+dependencies = [
+ "pbr-desktop",
+ "pbr-draw",
+ "pbr-files",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-manifest",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-devices"
 version = "0.0.0"
 dependencies = [
@@ -306,6 +330,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-power"
+version = "0.0.0"
+dependencies = [
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-platform",
+]
+
+[[package]]
 name = "pbr-ranges"
 version = "0.0.0"
 
@@ -339,6 +372,7 @@ dependencies = [
  "pbr-interfaces",
  "pbr-manifest",
  "pbr-partition",
+ "pbr-platform",
  "pbr-supervise",
  "pbr-test-protocol",
 ]
@@ -470,6 +504,7 @@ name = "pbr-test-wintest"
 version = "0.0.0"
 dependencies = [
  "pbr-draw",
+ "pbr-files",
  "pbr-granite",
  "pbr-interfaces",
  "pbr-window",

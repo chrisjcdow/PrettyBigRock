@@ -306,6 +306,18 @@ pub(crate) fn command(
     work: &Path,
     headless: bool,
 ) -> Result<Command, String> {
+    command_on(cfg, image, work, headless, true)
+}
+
+/// [`command`], on the disks the last boot left if `fresh` is false (the desktop boot starts
+/// the same disks again after a restart, note 0026, section 6).
+pub(crate) fn command_on(
+    cfg: &Config,
+    image: &Path,
+    work: &Path,
+    headless: bool,
+    fresh: bool,
+) -> Result<Command, String> {
     let firmware_screen = !matches!(cfg.screens, Screens::TwoVirtioGpu);
     let drive = format!("format=raw,file={},snapshot=on", image.display());
     let mut cmd;
@@ -366,7 +378,7 @@ pub(crate) fn command(
         cmd.arg("-drive").arg(format!("if=none,id=disk,{drive}"));
         cmd.args(["-device", "virtio-blk-pci,drive=disk", "-device", "virtio-rng-pci"]);
     }
-    let disk = test_disk(work)?;
+    let disk = if fresh { test_disk(work)? } else { work.join("test-disk.img") };
     cmd.arg("-drive")
         .arg(format!("if=none,id=testdisk,format=raw,file={},snapshot=on", disk.display()));
     cmd.args(["-device", "virtio-blk-pci,drive=testdisk"]);
@@ -374,7 +386,8 @@ pub(crate) fn command(
     // The MBR and GPT disks are attached writable, so their FAT32 volume and system volume
     // can be checked after the boot ([`check_fat`], [`check_shell`]); `make` remakes them for
     // each boot.
-    for (i, disk) in crate::testdisks::make(work)?.iter().enumerate() {
+    let disks = if fresh { crate::testdisks::make(work)? } else { crate::testdisks::paths(work) };
+    for (i, disk) in disks.iter().enumerate() {
         let writable = disk.ends_with(crate::testdisks::MBR_DISK)
             || disk.ends_with(crate::testdisks::GPT_DISK);
         let snapshot = if writable { "" } else { ",snapshot=on" };
@@ -382,7 +395,11 @@ pub(crate) fn command(
             .arg(format!("if=none,id=storage{i},format=raw,file={}{snapshot}", disk.display()));
         cmd.arg("-device").arg(format!("virtio-blk-pci,drive=storage{i}"));
     }
-    let classic = classic_copy(cfg, work)?;
+    let classic = if fresh {
+        classic_copy(cfg, work)?
+    } else {
+        work.join(format!("classic-{}.img", tag(cfg)))
+    };
     cmd.arg("-drive").arg(format!("if=none,id=classic,format=raw,file={}", classic.display()));
     cmd.args(["-device", "virtio-blk-pci,drive=classic"]);
     // The virtio keyboard and mouse are tied to a screen, so that the runner can send them
@@ -1143,7 +1160,7 @@ impl Qmp {
     /// `G-` for AltGr (the right Alt key): `{S-3}` is Shift and 3, whatever that types on the
     /// guest's layout. That is how the layout tests press keys that don't type what a US
     /// keyboard would.
-    fn type_line(&mut self, line: &str) -> Result<(), String> {
+    pub(crate) fn type_line(&mut self, line: &str) -> Result<(), String> {
         self.connect()?;
         let key = |name: &str, down: bool| {
             format!(

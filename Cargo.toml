@@ -7,6 +7,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "apps/desktop",
     "apps/shell",
     "boot/bios",
     "boot/common",
@@ -24,6 +25,7 @@ members = [
     "lib/captree",
     "lib/compositor",
     "lib/crc",
+    "lib/desktop",
     "lib/devices",
     "lib/draw",
     "lib/driver",
@@ -56,6 +58,7 @@ members = [
     "services/display",
     "services/fat",
     "services/input",
+    "services/power",
     "services/root",
     "services/rockfs",
     "services/sandbox",
@@ -108,6 +111,10 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.pbr-compositor]
+opt-level = 2
+
+# The desktop's wallpaper is worked out pixel by pixel, at each screen's full size.
+[profile.dev.package.pbr-desktop]
 opt-level = 2
 
 # The display rules and pixel conversion, and the framebuffer driver's copying: every pixel

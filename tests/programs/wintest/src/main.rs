@@ -10,6 +10,10 @@
 //! pings after the first picture), `desktop` (act as the session's desktop: no window, arrange
 //! the screens, at the start and whenever they change and aren't arranged yet) and
 //! `resizable`. Every line starts `wintest NAME: `.
+//!
+//! Two more flags test its own folder (note 0024, section 4), across a restart: `save` writes
+//! a note there and ends (status 0); `load` reads it and ends with status 10 if it is there,
+//! 0 if not. Neither opens a window.
 
 #![no_std]
 #![no_main]
@@ -37,6 +41,8 @@ struct Config {
     hang: bool,
     desktop: bool,
     resizable: bool,
+    save: bool,
+    load: bool,
 }
 
 impl Config {
@@ -48,6 +54,8 @@ impl Config {
             hang: false,
             desktop: false,
             resizable: false,
+            save: false,
+            load: false,
         };
         for word in args.split_whitespace() {
             if let Some(n) = word.strip_prefix("name=") {
@@ -67,6 +75,8 @@ impl Config {
                     "hang" => c.hang = true,
                     "desktop" => c.desktop = true,
                     "resizable" => c.resizable = true,
+                    "save" => c.save = true,
+                    "load" => c.load = true,
                     _ => {}
                 }
             }
@@ -82,8 +92,14 @@ macro_rules! say {
     };
 }
 
+/// What `save` writes, and `load` looks for.
+const NOTE: &[u8] = b"saved before restarting";
+
 fn main(mut start: granite::Start) -> i32 {
     let config = Config::parse(start.args());
+    if config.save || config.load {
+        return own_folder(&mut start, &config);
+    }
     let mut conn = match Connection::from_start(&mut start) {
         Ok(c) => c,
         Err(e) => {
@@ -92,6 +108,45 @@ fn main(mut start: granite::Start) -> i32 {
         }
     };
     if config.desktop { run_desktop(&mut conn, &config) } else { run_window(&mut conn, &config) }
+}
+
+// ---- its own folder ----
+
+fn own_folder(start: &mut granite::Start, config: &Config) -> i32 {
+    let name = config.name.as_str();
+    let files = pbr_files::Files::from_start(start);
+    let path = alloc::format!("{}/note.txt", pbr_files::Files::data_folder("wintest"));
+    if config.save {
+        let rw = pbr_files::FileRights(pbr_files::READ.0 | pbr_files::FileRights::WRITE.0);
+        let saved = files
+            .open(&path, rw)
+            .or_else(|_| files.create(&path, false, rw))
+            .and_then(|f| f.save(NOTE));
+        return match saved {
+            Ok(()) => {
+                say!(name, "saved");
+                0
+            }
+            Err(e) => {
+                say!(name, "saving: {e}");
+                2
+            }
+        };
+    }
+    match files.open(&path, pbr_files::READ).and_then(|f| f.read_all()) {
+        Ok(text) if text == NOTE => {
+            say!(name, "found what was saved");
+            10
+        }
+        Ok(_) => {
+            say!(name, "found something else");
+            2
+        }
+        Err(e) => {
+            say!(name, "nothing saved ({e})");
+            0
+        }
+    }
 }
 
 // ---- an ordinary window ----
@@ -281,7 +336,7 @@ fn run_desktop(conn: &mut Connection, config: &Config) -> i32 {
     let mut code = 0;
     conn.run(|conn, event| {
         match event {
-            Event::StartMenu => {
+            Event::StartMenu { .. } => {
                 say!(name, "start menu");
                 if let Some(mut list) = screens(conn, name)
                     && list.len() >= 2

@@ -72,20 +72,44 @@ impl WindowLine {
     }
 }
 
+/// The window menu, as the description gives it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MenuLine {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    /// Its rows' words, top to bottom.
+    pub rows: Vec<String>,
+}
+
+impl MenuLine {
+    /// The middle of the row that says `row`: rows are 22 pixels high, from 2 below the top
+    /// (`lib/compositor`'s `MENU_ROW`).
+    #[allow(dead_code)] // used by stage 6's steps, still to be written
+    fn row(&self, row: &str) -> Option<(i32, i32)> {
+        let i = self.rows.iter().position(|r| r == row)? as i32;
+        Some((self.x + self.width / 2, self.y + 2 + i * 22 + 11))
+    }
+}
+
 /// The last whole description.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct View {
     pub screens: Vec<ScreenLine>,
     pub windows: Vec<WindowLine>,
     pub pointer: Option<(i32, i32)>,
+    pub menu: Option<MenuLine>,
 }
 
 impl View {
-    /// The window whose title bar starts with `app`'s title (the manifest's; the app's own
-    /// part follows after a dash).
-    fn window(&self, app: &str) -> Option<&WindowLine> {
+    /// The window whose title bar says `name`: as the whole title, the manifest's part (the
+    /// app's own part follows after a dash), or the app's own part (`Test window — Alpha` is
+    /// found as `Alpha`).
+    fn window(&self, name: &str) -> Option<&WindowLine> {
         self.windows.iter().find(|w| {
-            w.title == app || w.title.strip_prefix(app).is_some_and(|r| r.starts_with(" \u{2014}"))
+            w.title == name
+                || w.title.strip_prefix(name).is_some_and(|r| r.starts_with(" \u{2014}"))
+                || w.title.strip_suffix(name).is_some_and(|r| r.ends_with("\u{2014} "))
         })
     }
 
@@ -118,6 +142,8 @@ pub fn last_view(text: &str) -> Option<View> {
     for l in &lines[start + 1..end] {
         if let Some(rest) = l.strip_prefix("pointer at ") {
             view.pointer = pair(rest.split_whitespace().next()?, ',');
+        } else if l.starts_with("menu for window ") {
+            view.menu = menu_line(l);
         } else if l.starts_with("screen ") && l.contains(" window ") {
             view.windows.push(window_line(l)?);
         } else if l.starts_with("screen ") {
@@ -125,6 +151,16 @@ pub fn last_view(text: &str) -> Option<View> {
         }
     }
     Some(view)
+}
+
+/// `menu for window W of app A at X,Y size WxH: Row|Row|...`
+fn menu_line(l: &str) -> Option<MenuLine> {
+    let (head, rows) = l.split_once(": ")?;
+    let words: Vec<&str> = head.split_whitespace().collect();
+    let at = words.iter().position(|w| *w == "at")?;
+    let (x, y) = pair(words.get(at + 1)?, ',')?;
+    let (width, _) = pair(words.get(at + 3)?, 'x')?;
+    Some(MenuLine { x, y, width, rows: rows.split('|').map(String::from).collect() })
 }
 
 /// `screen 1 "Virtual-1" 1280x800 at 0,0 scale 100 [rotation R] [mirrors M] [main]`
@@ -186,7 +222,17 @@ struct Run<'a> {
 
 /// Boots `cfg` from `image` (made with `desktoptest` on its command line) and runs the desktop
 /// test. Returns what the machine wrote to its serial port.
-pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<String, String> {
+// WORK IN PROGRESS (M6 stage 6, session 18): the steps below are still stage 5's. The new
+// ones (the real desktop, the start menu, Stop from the window menu, a second boot on the same
+// disks, falling back to the shell, and a third boot from `text_image`) are planned in
+// `claude/status.md`, and `qemu::command_on` can already start the same disks again.
+pub fn test(
+    cfg: &Config,
+    image: &Path,
+    _text_image: &Path,
+    work: &Path,
+    limit: Duration,
+) -> Result<String, String> {
     let tag = qemu::tag(cfg);
     let log = work.join(format!("desktop-{tag}.txt"));
     let _ = fs::remove_file(&log);

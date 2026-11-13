@@ -25,6 +25,7 @@ pbr-interfaces = { path = "../../lib/interfaces" }
 pbr-manifest = { path = "../../lib/manifest" }
 pbr-supervise = { path = "../../lib/supervise" }
 pbr-partition = { path = "../../lib/partition" }
+pbr-platform = { path = "../../lib/platform" }
 
 [lints]
 workspace = true

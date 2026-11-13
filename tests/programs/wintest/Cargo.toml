@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 pbr-draw = { path = "../../../lib/draw" }
+pbr-files = { path = "../../../lib/files" }
 pbr-granite = { path = "../../../lib/granite" }
 pbr-interfaces = { path = "../../../lib/interfaces" }
 pbr-window = { path = "../../../lib/window" }

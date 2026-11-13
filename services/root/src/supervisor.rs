@@ -3,9 +3,14 @@
 
 //! The root program as supervisor (docs/design/0018-supervision-shell-and-m5-tests.md,
 //! sections 1 to 4): it starts the system services (the device manager, the storage service,
-//! the input service, the console or the display server, and the users service), watches them,
-//! and starts one again when it ends, with the restart policy every supervisor uses
-//! (`lib/supervise`).
+//! the input service, the console or the display server, the power service and the users
+//! service), watches them, and starts one again when it ends, with the restart policy every
+//! supervisor uses (`lib/supervise`).
+//!
+//! **Falling back to text** (docs/design/0024-the-session-desktop.md, section 8): if the
+//! display server ends too often and is given up on, the console is started in its place, so
+//! that the user still gets the shell. The display server isn't tried again until the next
+//! start.
 //!
 //! It also serves `pbr.supervisor` to them: **services find each other through it**, not
 //! through capabilities fixed when they start. A fixed table, [`rule`], says who may look up
@@ -52,10 +57,19 @@ pub enum Kind {
     Input,
     /// The display server (note 0022).
     Display,
+    /// The power service (note 0024, section 7).
+    Power,
 }
 
-const KINDS: [Kind; 6] =
-    [Kind::Devmgr, Kind::Storage, Kind::Users, Kind::Console, Kind::Input, Kind::Display];
+const KINDS: [Kind; 7] = [
+    Kind::Devmgr,
+    Kind::Storage,
+    Kind::Users,
+    Kind::Console,
+    Kind::Input,
+    Kind::Display,
+    Kind::Power,
+];
 
 impl Kind {
     /// Its program's name in the start-up archive.
@@ -67,6 +81,7 @@ impl Kind {
             Kind::Console => "console",
             Kind::Input => "input",
             Kind::Display => "display",
+            Kind::Power => "power",
         }
     }
 
@@ -78,6 +93,7 @@ impl Kind {
             Kind::Console => 3,
             Kind::Input => 4,
             Kind::Display => 5,
+            Kind::Power => 6,
         }
     }
 
@@ -86,20 +102,22 @@ impl Kind {
     /// virtio-gpu, or the framebuffer driver's allowance of 40 MiB; note 0020) twice over,
     /// since a driver being restarted is given its budget before the old one's is back; the
     /// storage service's its 16 MiB cache, volumes in memory and 8 MiB for each filesystem
-    /// server; the users service's three sessions of 16 MiB at once. The console's holds its
+    /// server; the users service's three sessions of 32 MiB at once. The console's holds its
     /// text grid and its threads (the buffer it draws in is the display driver's memory). The
     /// input service's holds its layouts, a thread for each device and the consumer's ring. The
     /// display server's holds every window's buffers (96 MiB a session, note 0022, section 3),
-    /// the clipboard (16 MiB) and its own; a screen's buffers are its driver's.
+    /// the clipboard (16 MiB) and its own; a screen's buffers are its driver's. The power
+    /// service's is next to nothing.
     fn budget(self) -> u64 {
         const MIB: u64 = 1024 * 1024;
         match self {
             Kind::Devmgr => 192 * MIB,
             Kind::Storage => 128 * MIB,
-            Kind::Users => 64 * MIB,
+            Kind::Users => 112 * MIB,
             Kind::Console => 8 * MIB,
             Kind::Input => 8 * MIB,
             Kind::Display => 160 * MIB,
+            Kind::Power => MIB,
         }
     }
 }
@@ -129,6 +147,9 @@ pub const SEAT_LAYOUT: u64 = 2;
 /// `SESSIONS`): `pbr.display.sessions`, which starts sessions and decides which one the screens
 /// show (note 0022, section 1). The capabilities apps get are derived from what it hands out.
 pub const DISPLAY_SESSIONS: u64 = 1;
+/// The badge of the users service's capability for the power service (`services/power`'s
+/// `USERS`): the only one there is (note 0024, section 7).
+pub const POWER_USERS: u64 = 1;
 
 /// Who may look up what (note 0018, section 2; the input service: note 0021, section 1; the
 /// display server: note 0024, section 1): the service, and the badge the capability carries
@@ -152,6 +173,7 @@ pub(crate) fn rule(child: Kind, name: &str) -> Option<(Kind, u64)> {
         (Kind::Display, "devices") => Some((Kind::Devmgr, ANY_CLIENT)),
         (Kind::Display, "input") => Some((Kind::Input, SEAT_CONSUMER)),
         (Kind::Users, "display") => Some((Kind::Display, DISPLAY_SESSIONS)),
+        (Kind::Users, "power") => Some((Kind::Power, POWER_USERS)),
         _ => None,
     }
 }
@@ -201,6 +223,15 @@ struct Inner {
     archive_mem: u32,
     /// The root program's own copies of the device capabilities, for each device manager.
     devices: Vec<(u32, Handle)>,
+    /// What the power service is started with: (role, capability, rights), and its arguments
+    /// (`power::caps`).
+    power: Vec<(u32, Handle, u32)>,
+    power_args: String,
+    /// Whether the console is started when the display server is given up on (note 0024,
+    /// section 8): in every boot but the self-test, which tests supervision on its own terms.
+    fallback: bool,
+    /// The console's arguments then.
+    fallback_args: String,
     selftest: bool,
     /// The endpoint children's `pbr.supervisor` capabilities are minted from.
     endpoint: Endpoint,
@@ -250,6 +281,10 @@ impl Supervisor {
             archive,
             archive_mem,
             devices,
+            power: Vec::new(),
+            power_args: String::new(),
+            fallback: !selftest,
+            fallback_args: String::new(),
             selftest,
             endpoint,
             ended,
@@ -263,30 +298,20 @@ impl Supervisor {
 
     /// Starts `kind` with `args`: for the first time, or again after it was retired.
     pub fn start(&self, kind: Kind, args: &str) -> Result<(), String> {
+        self.0.lock().start_child(kind, args)
+    }
+
+    /// The console's arguments if it is started in the display server's place (the desktop
+    /// boot's test has it mirror the screen to the serial port, as the self-test does).
+    pub fn set_fallback_args(&self, args: &str) {
+        self.0.lock().fallback_args = String::from(args);
+    }
+
+    /// What the power service is to be started with (from `power::caps`).
+    pub fn set_power(&self, caps: Vec<(u32, Handle, u32)>, args: String) {
         let mut g = self.0.lock();
-        if !g.children.iter().any(|c| c.kind == kind) {
-            g.children.push(Child {
-                kind,
-                args: String::new(),
-                generation: 0,
-                running: None,
-                endpoint: None,
-                history: History::new(),
-                due: None,
-                restarts: 0,
-                retired: false,
-                kept: Vec::new(),
-                released: None,
-            });
-        }
-        let i = g.children.iter().position(|c| c.kind == kind).ok_or("no child")?;
-        if g.children[i].running.is_some() {
-            return Err(format!("{} is already running", kind.program()));
-        }
-        g.children[i].args = String::from(args);
-        g.children[i].retired = false;
-        g.children[i].history = History::new();
-        g.spawn(i)
+        g.power = caps;
+        g.power_args = args;
     }
 
     /// The thread: serves `pbr.supervisor`, notices children ending, and restarts them.
@@ -474,6 +499,8 @@ impl Inner {
             Kind::Input => (rights::ALL, Some(rights::READ | rights::MAP)),
             // The display server starts no programs and reads nothing from the archive.
             Kind::Display => (rights::ALL, None),
+            // Nor does the power service.
+            Kind::Power => (rights::ALL, None),
         };
         let mut caps = vec![
             (role::OWN, own.0.into_raw(), own_rights, true),
@@ -496,8 +523,20 @@ impl Inner {
                 caps.push((DEVMGR_LOG_CONTROL, granite::log::handle(), mask, false));
             }
         }
+        if kind == Kind::Power {
+            for (r, h, mask) in &self.power {
+                caps.push((*r, h.raw(), *mask, false));
+            }
+        }
         let c = &mut self.children[i];
         let mut args = c.args.clone();
+        if kind == Kind::Power && !self.power_args.is_empty() {
+            args = if args.is_empty() {
+                self.power_args.clone()
+            } else {
+                format!("{args} {}", self.power_args)
+            };
+        }
         if self.selftest && !args.split_whitespace().any(|w| w == "selftest") {
             args =
                 if args.is_empty() { String::from("selftest") } else { format!("selftest {args}") };
@@ -539,6 +578,7 @@ impl Inner {
 
     /// Children whose bit is in `bits` may have ended.
     fn ended(&mut self, bits: u64) {
+        let mut fall_back = false;
         for c in &mut self.children {
             if bits & (1 << c.kind.index()) == 0 {
                 continue;
@@ -566,9 +606,52 @@ impl Inner {
                         "supervisor: {} ended too often; it is left stopped.",
                         c.kind.program()
                     );
+                    if c.kind == Kind::Display && self.fallback {
+                        fall_back = true;
+                    }
                 }
             }
         }
+        // Without the display server, the console, so that the user gets the shell (note
+        // 0024, section 8). The users service hears that the display server has gone, finds
+        // the console instead, and starts the session again on its terminal.
+        if fall_back {
+            granite::println!(
+                "supervisor: the display server was given up on, so the console is started \
+                 in its place: the shell instead of the desktop until the next start."
+            );
+            let args = self.fallback_args.clone();
+            if let Err(e) = self.start_child(Kind::Console, &args) {
+                granite::println!("supervisor: can't start the console: {e}");
+            }
+        }
+    }
+
+    /// Starts `kind`: for the first time, or again after it was retired.
+    fn start_child(&mut self, kind: Kind, args: &str) -> Result<(), String> {
+        if !self.children.iter().any(|c| c.kind == kind) {
+            self.children.push(Child {
+                kind,
+                args: String::new(),
+                generation: 0,
+                running: None,
+                endpoint: None,
+                history: History::new(),
+                due: None,
+                restarts: 0,
+                retired: false,
+                kept: Vec::new(),
+                released: None,
+            });
+        }
+        let i = self.children.iter().position(|c| c.kind == kind).ok_or("no child")?;
+        if self.children[i].running.is_some() {
+            return Err(format!("{} is already running", kind.program()));
+        }
+        self.children[i].args = String::from(args);
+        self.children[i].retired = false;
+        self.children[i].history = History::new();
+        self.spawn(i)
     }
 
     /// Starts the children whose restart is due.
@@ -611,9 +694,14 @@ impl supervisor::Server for Calls<'_> {
             let g = self.0.0.lock();
             match caller(&g, reply.badge()).and_then(|i| rule(g.children[i].kind, &name)) {
                 None => Err(SupervisorError::NotAllowed),
-                Some((target, badge)) => match g.child(target).and_then(|c| c.endpoint.as_ref()) {
-                    None => Err(SupervisorError::NotReady),
-                    Some(ep) => ep.mint(badge, CLIENT).map_err(|_| SupervisorError::NotReady),
+                Some((target, badge)) => match g.child(target) {
+                    // Never started in this boot, or given up on: asking again won't help.
+                    None => Err(SupervisorError::Stopped),
+                    Some(c) if c.retired && c.running.is_none() => Err(SupervisorError::Stopped),
+                    Some(c) => match &c.endpoint {
+                        None => Err(SupervisorError::NotReady),
+                        Some(ep) => ep.mint(badge, CLIENT).map_err(|_| SupervisorError::NotReady),
+                    },
                 },
             }
         };
