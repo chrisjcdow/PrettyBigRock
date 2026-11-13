@@ -786,4 +786,6 @@ brief, each reviewed in full.
   typed with US-international dead keys. The runner can now name keys (`{S-3}`, `{G-e}`).
 - What building changed in the notes: note 0021's Changes (dead keys exactly, `VALUE_HELD`,
   who may call what, which user's layout), note 0024's and note 0018's.
+- `cargo xtask ci` passed on all four configurations here; GitHub's CI passed on `7cac756` and
+  `dbddfbf`, and Stress on `7cac756` (run 43375338616) passed all 120 boots.
 
