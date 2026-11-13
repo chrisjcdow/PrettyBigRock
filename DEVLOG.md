@@ -864,7 +864,7 @@ reviewed in full.
   boots on all four configurations; no hangs (four in the run before the fix). The two
   failures:
   - QEMU itself crashed (SIGSEGV) on x86-64 UEFI while the firmware was still looking for the
-    disk, before the loader ran, as in sessions 11 and 15.
+    disk, before the loader ran, as in sessions 11 and 14.
   - ARM64 EL2 self-test: after the device self-test crashed `virtio-gpu` on purpose, the new
     driver took 11.4 seconds to tell the device manager it was ready (1.4 s on its first
     start, under a second after a crash in every other run), past the test's 5-second limit.
