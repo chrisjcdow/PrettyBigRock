@@ -521,9 +521,10 @@ impl Run<'_> {
     /// `screens.txt` says, on two screens): QEMU drops input sent to a device whose driver
     /// isn't listening yet.
     fn desktop_ready(&mut self, times: usize) -> Result<(), String> {
-        self.qmp.connect()?;
         self.line("input: using QEMU Virtio Keyboard")?;
         self.line("input: using QEMU Virtio Mouse")?;
+        // (Only now: QEMU makes its control socket a moment after it starts.)
+        self.qmp.connect()?;
         match self.cfg.screens {
             Screens::TwoVirtioGpu => self.lines("display: 2 tablets.", times)?,
             Screens::FirmwareWithTablet => self.lines("display: 1 tablets.", times)?,
