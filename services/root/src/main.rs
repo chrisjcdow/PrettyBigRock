@@ -3,8 +3,9 @@
 
 //! The root program (docs/design/0009-programs-and-granite.md, sections 3 and 4): the first
 //! program, which the kernel starts with every capability there is. It starts the system
-//! services and supervises them (`supervisor`, note 0018), and with `selftest` on the kernel's
-//! command line it runs the program self-test and exits.
+//! services and supervises them (`supervisor`, note 0018). With `selftest` on the kernel's
+//! command line it runs the program self-test and exits; with `desktoptest` it runs the
+//! desktop boot's test (`desktoptest`, note 0026, section 6).
 
 #![no_std]
 #![no_main]
@@ -14,6 +15,7 @@ extern crate alloc;
 mod blocktest;
 mod classictest;
 mod crashtest;
+mod desktoptest;
 mod devtest;
 mod displaytest;
 mod drivertest;
@@ -66,6 +68,9 @@ fn main(mut start: granite::Start) -> i32 {
     };
     if start.args().split_whitespace().any(|w| w == "selftest") {
         return selftest::run(&archive, archive_mem.0.raw(), &mut start);
+    }
+    if start.args().split_whitespace().any(|w| w == "desktoptest") {
+        return desktoptest::run(&archive, archive_mem.0.raw(), &mut start);
     }
     granite::println!(
         "The root program is running, with {} files in the start-up archive.",

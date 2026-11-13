@@ -24,6 +24,7 @@ use std::process::{Command, ExitCode};
 use std::time::Duration;
 
 mod classicdisk;
+mod desktop;
 mod elf;
 mod image;
 mod pictures;
@@ -248,7 +249,7 @@ fn run(args: &[String]) -> Result {
         }
         "qemu-test" => {
             let imgs = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
-            qemu_test(&root, &imgs.selftest)
+            qemu_test(&root, &imgs)
         }
         "check" => check(&root, &Toolchain::find(&root)?),
         "test" => test(&root),
@@ -258,7 +259,7 @@ fn run(args: &[String]) -> Result {
             test(&root)?;
             build_all(&root, &tc, true)?;
             let imgs = build_all(&root, &tc, false)?;
-            qemu_test(&root, &imgs.selftest)?;
+            qemu_test(&root, &imgs)?;
             println!("ci: all passed");
             Ok(())
         }
@@ -611,12 +612,14 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         kernels.push(k);
         loaders.push(l);
     }
-    // Two images: the ordinary one, and one whose command line asks for the self-test, which
-    // the boot tests use.
+    // Three images: the ordinary one, and two whose command lines ask for the boot tests: the
+    // self-test, and the desktop test (note 0026, section 6).
     let mut paths = Vec::new();
-    for (name, cmdline) in
-        [("prettybigrock.img", &b""[..]), ("prettybigrock-selftest.img", &b"selftest"[..])]
-    {
+    for (name, cmdline) in [
+        ("prettybigrock.img", &b""[..]),
+        ("prettybigrock-selftest.img", &b"selftest"[..]),
+        ("prettybigrock-desktoptest.img", &b"desktoptest"[..]),
+    ] {
         let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], &archives[0], cmdline)?;
         let mut files: Vec<(String, &[u8])> = Vec::new();
         for (i, arch) in ARCHES.iter().enumerate() {
@@ -633,7 +636,7 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         })?;
         paths.push(write_out(root, &format!("build/{profile}/{name}"), &img)?);
     }
-    Ok(Images { normal: paths.remove(0), selftest: paths.remove(0) })
+    Ok(Images { normal: paths.remove(0), selftest: paths.remove(0), desktop: paths.remove(0) })
 }
 
 /// The boot disk images [`build_all`] makes.
@@ -642,6 +645,8 @@ struct Images {
     normal: PathBuf,
     /// The same, with `selftest` on the kernel's command line.
     selftest: PathBuf,
+    /// The same, with `desktoptest`.
+    desktop: PathBuf,
 }
 
 /// Compiler flags that keep the folder the repository is in out of what's built, so the same
@@ -727,7 +732,7 @@ fn payload(files: &[(&str, &[u8])]) -> Vec<u8> {
     out
 }
 
-fn qemu_test(root: &Path, img: &Path) -> Result {
+fn qemu_test(root: &Path, imgs: &Images) -> Result {
     let work = work_dir(root)?;
     let mut failed = Vec::new();
     // PBR_QEMU_ONLY=<text> runs only the configurations whose name contains it (to save time
@@ -742,11 +747,17 @@ fn qemu_test(root: &Path, img: &Path) -> Result {
             None
         }
     };
+    // PBR_QEMU_BOOT=selftest or =desktop runs only that boot of each configuration.
+    let boot = std::env::var("PBR_QEMU_BOOT").unwrap_or_default();
     for cfg in qemu::TESTS.iter().filter(|c| c.name.contains(&only)) {
+        if boot == "desktop" {
+            desktop_boot(cfg, &imgs.desktop, &work, &mut failed);
+            continue;
+        }
         print!("boot test: {} ... ", cfg.name);
         use std::io::Write as _;
         let _ = std::io::stdout().flush();
-        match qemu::test(cfg, img, &work, BOOT_TEST_LIMIT)
+        match qemu::test(cfg, &imgs.selftest, &work, BOOT_TEST_LIMIT)
             .and_then(|_| qemu::check_classic(cfg, &work, host.as_deref()))
             .and_then(|_| qemu::check_fat(&work))
             .and_then(|_| qemu::check_shell(&work))
@@ -755,15 +766,33 @@ fn qemu_test(root: &Path, img: &Path) -> Result {
             Err(e) => {
                 println!("FAILED");
                 eprintln!("{e}");
-                failed.push(cfg.name);
+                failed.push(format!("{} (self-test)", cfg.name));
             }
+        }
+        if boot != "selftest" {
+            desktop_boot(cfg, &imgs.desktop, &work, &mut failed);
         }
     }
     if failed.is_empty() {
-        println!("qemu-test: all {} configurations started", qemu::TESTS.len());
+        println!("qemu-test: all {} configurations started, twice each", qemu::TESTS.len());
         Ok(())
     } else {
         Err(format!("boot tests failed: {}", failed.join(", ")))
+    }
+}
+
+/// The desktop boot of one configuration (note 0026, section 6), noting a failure.
+fn desktop_boot(cfg: &qemu::Config, img: &Path, work: &Path, failed: &mut Vec<String>) {
+    use std::io::Write as _;
+    print!("desktop test: {} ... ", cfg.name);
+    let _ = std::io::stdout().flush();
+    match desktop::test(cfg, img, work, BOOT_TEST_LIMIT) {
+        Ok(_) => println!("ok"),
+        Err(e) => {
+            println!("FAILED");
+            eprintln!("{e}");
+            failed.push(format!("{} (desktop)", cfg.name));
+        }
     }
 }
 

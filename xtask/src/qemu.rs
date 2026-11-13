@@ -204,7 +204,7 @@ fn test_disk(work: &Path) -> Result<PathBuf, String> {
 }
 
 /// A short name for a configuration, for its files: `x86_64-uefi`, `aarch64-uefi-el2`.
-fn tag(cfg: &Config) -> String {
+pub(crate) fn tag(cfg: &Config) -> String {
     format!(
         "{}-{}{}",
         cfg.arch,
@@ -300,7 +300,12 @@ pub fn check_shell(work: &Path) -> Result<(), String> {
 ///
 /// `headless` is a boot test: nobody is looking, so on the configurations with a virtio-gpu
 /// the test runner stands in for the viewer (see [`Screens::TwoVirtioGpu`]).
-fn command(cfg: &Config, image: &Path, work: &Path, headless: bool) -> Result<Command, String> {
+pub(crate) fn command(
+    cfg: &Config,
+    image: &Path,
+    work: &Path,
+    headless: bool,
+) -> Result<Command, String> {
     let firmware_screen = !matches!(cfg.screens, Screens::TwoVirtioGpu);
     let drive = format!("format=raw,file={},snapshot=on", image.display());
     let mut cmd;
@@ -424,7 +429,7 @@ fn command(cfg: &Config, image: &Path, work: &Path, headless: bool) -> Result<Co
 
 /// The QEMU screen the virtio keyboard and mouse are tied to, and through which the runner
 /// reaches them: its device's name and which of its outputs.
-fn input_screen(cfg: &Config, headless: bool) -> (&'static str, u32) {
+pub(crate) fn input_screen(cfg: &Config, headless: bool) -> (&'static str, u32) {
     match cfg.screens {
         Screens::TwoVirtioGpu if headless => ("gpu2", 2),
         Screens::TwoVirtioGpu => ("gpu2", 0),
@@ -862,11 +867,11 @@ const STAGES: [Stage; 4] = [
 
 /// The size the runner gives the second screen of a virtio-gpu (the first is QEMU's own
 /// choice, 1280 by 800): different, so that a picture sent to the wrong screen doesn't fit.
-const SECOND_SCREEN: (u16, u16) = (1024, 768);
+pub(crate) const SECOND_SCREEN: (u16, u16) = (1024, 768);
 
 /// Connects to QEMU's VNC server at `path` (waiting for QEMU to make it) and plugs the screen
 /// it is for in.
-fn plug(path: &Path) -> Result<crate::vnc::Vnc, String> {
+pub(crate) fn plug(path: &Path) -> Result<crate::vnc::Vnc, String> {
     let end = Instant::now() + Duration::from_secs(20);
     loop {
         match crate::vnc::Vnc::connect(path) {
@@ -938,7 +943,7 @@ fn look(qmp: &mut Qmp, text: &str, number: u32, device: &str, log: &Path) -> Res
 /// them that is inside one (see [`crate::symbols`]). The kernel that was booted is beside the
 /// disk image: `build/debug/x.img` goes with `build/<architecture>/debug/kernel.elf`. If it
 /// can't be read, the dump is returned as it was.
-fn name_addresses(dump: String, cfg: &Config, image: &Path) -> String {
+pub(crate) fn name_addresses(dump: String, cfg: &Config, image: &Path) -> String {
     let kernel = image.parent().and_then(|profile| {
         let build = profile.parent()?;
         Some(build.join(cfg.arch).join(profile.file_name()?).join("kernel.elf"))
@@ -967,7 +972,7 @@ fn reset_by_guest(qmp: &mut Qmp, text: String) -> Result<String, String> {
     }
 }
 
-struct Qmp {
+pub(crate) struct Qmp {
     path: PathBuf,
     conn: Option<(
         std::os::unix::net::UnixStream,
@@ -980,11 +985,11 @@ struct Qmp {
 }
 
 impl Qmp {
-    fn new(path: PathBuf, input: (&'static str, u32)) -> Qmp {
+    pub(crate) fn new(path: PathBuf, input: (&'static str, u32)) -> Qmp {
         Qmp { path, conn: None, events: Vec::new(), input }
     }
 
-    fn connect(&mut self) -> Result<(), String> {
+    pub(crate) fn connect(&mut self) -> Result<(), String> {
         use std::io::BufRead;
         if self.conn.is_some() {
             return Ok(());
@@ -1000,7 +1005,7 @@ impl Qmp {
     }
 
     /// Sends one command and waits for its answer (skipping events).
-    fn command(&mut self, json: &str) -> Result<(), String> {
+    pub(crate) fn command(&mut self, json: &str) -> Result<(), String> {
         self.query(json).map(|_| ())
     }
 
@@ -1030,7 +1035,7 @@ impl Qmp {
     /// Why QEMU shut down, once it has: the `reason` of its `SHUTDOWN` event, which is
     /// `guest-reset` when the guest restarted the machine (and QEMU was told `-no-reboot`) and
     /// `guest-shutdown` when it turned it off. Reads whatever QEMU sent before it went.
-    fn shutdown_reason(&mut self) -> Option<String> {
+    pub(crate) fn shutdown_reason(&mut self) -> Option<String> {
         use std::io::BufRead;
         if let Some((_, r)) = self.conn.as_mut() {
             let mut line = String::new();
@@ -1050,7 +1055,7 @@ impl Qmp {
     /// What every core was doing, for a run that failed: QEMU's own view of each virtual
     /// processor's registers, which works even when the kernel can no longer print. (A kernel
     /// that faults on a broken stack often stops halfway through its own report.)
-    fn registers(&mut self, cores: u32) -> String {
+    pub(crate) fn registers(&mut self, cores: u32) -> String {
         if let Err(e) = self.connect() {
             return format!("(couldn't ask QEMU for the registers: {e})");
         }
@@ -1091,7 +1096,7 @@ impl Qmp {
         }
     }
 
-    fn send(&mut self, virtio: bool, events: &[String]) -> Result<(), String> {
+    pub(crate) fn send(&mut self, virtio: bool, events: &[String]) -> Result<(), String> {
         let (device, head) = self.input;
         let target =
             if virtio { format!(r#""device":"{device}","head":{head},"#) } else { String::new() };
@@ -1103,7 +1108,12 @@ impl Qmp {
     }
 
     /// Has QEMU write a picture of what screen `head` of its device `device` shows to `file`.
-    fn screendump(&mut self, device: &str, head: u32, file: &Path) -> Result<(), String> {
+    pub(crate) fn screendump(
+        &mut self,
+        device: &str,
+        head: u32,
+        file: &Path,
+    ) -> Result<(), String> {
         self.connect()?;
         self.command(&format!(
             r#"{{"execute":"screendump","arguments":{{"filename":"{}","device":"{device}","head":{head}}}}}"#,
