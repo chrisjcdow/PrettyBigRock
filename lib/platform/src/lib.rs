@@ -10,6 +10,7 @@
 pub mod acpi;
 pub mod fdt;
 pub mod paging;
+pub mod s5;
 
 use pbr_bootinfo::{MemoryKind, MemoryRegion, PhysRange};
 

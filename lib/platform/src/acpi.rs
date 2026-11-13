@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Christopher Cameron-Dow
 
 //! The little of ACPI a loader needs: checking the root pointer, finding a table, and reading
-//! the serial console table (SPCR).
+//! the serial console table (SPCR); and what the root program needs to give the power service
+//! (docs/design/0024-the-session-desktop.md, section 7): the FADT's power management control
+//! ports, and where the DSDT and SSDTs are.
 
 use crate::PhysMemory;
 use pbr_bootinfo::EarlyConsole;
@@ -65,6 +67,83 @@ pub fn find_table(mem: &impl PhysMemory, rsdp: u64, sig: &[u8; 4]) -> Option<u64
         a += entry;
     }
     None
+}
+
+/// Calls `f` with the address of every table with this signature (there can be several
+/// SSDTs), in the order the XSDT (or RSDT) lists them. Returns how many there were. Looks at
+/// most at 256 entries.
+pub fn each_table(
+    mem: &impl PhysMemory,
+    rsdp: u64,
+    sig: &[u8; 4],
+    mut f: impl FnMut(u64),
+) -> usize {
+    let mut b = [0u8; 36];
+    if !mem.read(rsdp, &mut b[..20]) {
+        return 0;
+    }
+    let (root, entry) = if b[15] >= 2 && mem.read(rsdp, &mut b) {
+        (u64::from_le_bytes(b[24..32].try_into().unwrap_or_default()), 8)
+    } else {
+        (u64::from(u32::from_le_bytes(b[16..20].try_into().unwrap_or_default())), 4)
+    };
+    let Some(len) = root.checked_add(4).and_then(|a| mem.read_u32(a)) else { return 0 };
+    let end = root.saturating_add(u64::from(len));
+    let mut count = 0;
+    let mut a = root.saturating_add(36);
+    for _ in 0..256 {
+        if a.saturating_add(entry) > end {
+            break;
+        }
+        let t = if entry == 8 { mem.read_u64(a) } else { mem.read_u32(a).map(u64::from) };
+        let mut s = [0u8; 4];
+        if let Some(t) = t
+            && mem.read(t, &mut s)
+            && &s == sig
+        {
+            f(t);
+            count += 1;
+        }
+        a += entry;
+    }
+    count
+}
+
+/// A table's length in bytes, from its header.
+pub fn table_length(mem: &impl PhysMemory, table: u64) -> Option<u32> {
+    mem.read_u32(table.checked_add(4)?)
+}
+
+/// From the FADT on x86: the I/O ports of the PM1a and PM1b control registers (0 for PM1b if
+/// there is none), where the sleep type is written to turn the computer off. `None` if there
+/// is no PM1a, or it is past the I/O port space.
+pub fn fadt_pm1_control(mem: &impl PhysMemory, fadt: u64) -> Option<(u16, u16)> {
+    let len = table_length(mem, fadt)?;
+    if len < 72 {
+        return None;
+    }
+    let a = mem.read_u32(fadt + 64)?;
+    let b = mem.read_u32(fadt + 68)?;
+    let port = |p: u32| u16::try_from(p).ok();
+    let a = port(a).filter(|&p| p != 0)?;
+    Some((a, port(b).unwrap_or(0)))
+}
+
+/// From the FADT: the DSDT's physical address (the 64-bit `X_DSDT` if the table has a non-zero
+/// one, otherwise the 32-bit `DSDT`).
+pub fn fadt_dsdt(mem: &impl PhysMemory, fadt: u64) -> Option<u64> {
+    let len = table_length(mem, fadt)?;
+    if len >= 148 {
+        let x = mem.read_u64(fadt + 140)?;
+        if x != 0 {
+            return Some(x);
+        }
+    }
+    if len < 44 {
+        return None;
+    }
+    let d = mem.read_u32(fadt + 40)?;
+    (d != 0).then_some(u64::from(d))
 }
 
 /// Reads the serial port description from the SPCR table, if it's one the kernel can use.
@@ -395,6 +474,49 @@ pub(crate) mod tests {
             spcr_console(&mem, spcr),
             Some(EarlyConsole { kind: 3, register_width: 4, address: 0x0900_0000 })
         );
+    }
+
+    #[test]
+    fn finds_the_power_parts() {
+        let mut mem = FakeMem::default();
+        // A FADT (ACPI 2.0 length) with PM1a at 0x604, no PM1b, and the DSDT at 0x7000 (both
+        // the 32-bit and 64-bit fields), and two SSDTs.
+        let mut fadt = vec![0u8; 276 - 36];
+        fadt[40 - 36..44 - 36].copy_from_slice(&0x7000u32.to_le_bytes());
+        fadt[64 - 36..68 - 36].copy_from_slice(&0x604u32.to_le_bytes());
+        fadt[140 - 36..148 - 36].copy_from_slice(&0x7000u64.to_le_bytes());
+        mem.put(0x6000, &table(b"FACP", &fadt));
+        mem.put(0x7000, &table(b"DSDT", &[1, 2, 3]));
+        mem.put(0x8000, &table(b"SSDT", &[4]));
+        mem.put(0x9000, &table(b"SSDT", &[5, 6]));
+        let mut list = vec![];
+        for t in [0x6000u64, 0x8000, 0x9000] {
+            list.extend_from_slice(&t.to_le_bytes());
+        }
+        mem.put(0x4000, &table(b"XSDT", &list));
+        let mut r = vec![0u8; 36];
+        r[..8].copy_from_slice(b"RSD PTR ");
+        r[15] = 2;
+        r[20..24].copy_from_slice(&36u32.to_le_bytes());
+        r[24..32].copy_from_slice(&0x4000u64.to_le_bytes());
+        fix_checksum(&mut r[..20], 8);
+        fix_checksum(&mut r, 32);
+        mem.put(0xE_0000, &r);
+        let fadt = find_table(&mem, 0xE_0000, b"FACP").unwrap();
+        assert_eq!(fadt_pm1_control(&mem, fadt), Some((0x604, 0)));
+        assert_eq!(fadt_dsdt(&mem, fadt), Some(0x7000));
+        assert_eq!(table_length(&mem, 0x7000), Some(39));
+        let mut ssdts = vec![];
+        assert_eq!(each_table(&mem, 0xE_0000, b"SSDT", |t| ssdts.push(t)), 2);
+        assert_eq!(ssdts, vec![0x8000, 0x9000]);
+        assert_eq!(each_table(&mem, 0xE_0000, b"APIC", |_| {}), 0);
+        // Too short to have the ports; a port past the I/O space.
+        mem.put(0xA000, &table(b"FACP", &[0; 20]));
+        assert_eq!(fadt_pm1_control(&mem, 0xA000), None);
+        let mut far = vec![0u8; 40];
+        far[64 - 36..68 - 36].copy_from_slice(&0x1_0000u32.to_le_bytes());
+        mem.put(0xB000, &table(b"FACP", &far));
+        assert_eq!(fadt_pm1_control(&mem, 0xB000), None);
     }
 
     #[test]
