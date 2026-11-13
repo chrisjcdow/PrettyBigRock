@@ -141,8 +141,10 @@ enum Edge { Top @1, Bottom @2, Left @3, Right @4, TopLeft @5, TopRight @6, Botto
 /// What the clipboard holds.
 enum ClipForm { Text @1, Picture @2 }
 
-/// The ring of events and its doorbell (bit 0, signalled when events are added). Asked once.
-@1 fn events() -> (ring: handle<memory>, doorbell: handle<notification>) error WindowError;
+/// The ring of events, asked for once. The display server signals bit 0 of `doorbell` (a
+/// notification of the app's own, so that one notification can carry everything the app waits
+/// for) whenever it adds events. Map the ring to read and write.
+@1 fn events(doorbell: handle<notification>) -> (ring: handle<memory>) error WindowError;
 
 /// A new window, numbered for this client. `parent` is 0 or one of this client's windows;
 /// `at` places a popup relative to its parent's content (and names a background's or panel's
