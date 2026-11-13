@@ -279,5 +279,5 @@ Every process has a **budget** in bytes, and a count of how much of it is used.
   capability in a message told the object it had left the sender's table while that table's
   lock was still held. An endpoint call looks in the caller's table under the endpoint's lock,
   so a thread calling an endpoint and another thread of the same process sending a capability
-  for it away could deadlock two cores. Stress found it once in 30 x86-64
-  BIOS self-test boots (run 43415528657).
+  for it away could deadlock two cores. Stress found it four times in 30 runs, on x86-64 and
+  ARM64 (run 43415528657); none in 30 runs after the fix (run 43425586508).
