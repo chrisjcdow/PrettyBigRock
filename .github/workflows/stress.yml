@@ -2,7 +2,8 @@
 # Boots every configuration many times, to catch problems that only show up now and then (a
 # race between cores, a restart that is sometimes too slow). Run by hand from the Actions tab:
 # each of the parallel jobs runs `cargo xtask qemu-test` the number of times asked for, so the
-# total is jobs × runs boots of each of the four configurations.
+# total is jobs × runs boots of each kind (the self-test and the desktop boot) of each of the
+# four configurations.
 name: Stress
 
 on:
@@ -45,4 +46,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stress-logs-${{ matrix.job }}
-          path: build/qemu/serial-*.txt
+          path: |
+            build/qemu/serial-*.txt
+            build/qemu/desktop-*.txt
