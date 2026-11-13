@@ -79,6 +79,10 @@ impl Probe {
 }
 
 fn main(mut start: granite::Start) -> i32 {
+    // Its windows must not have the focus for the clipboard checks below (7). It is launched as
+    // the user would launch it, and an app's first window takes the focus if it opens within 2
+    // seconds of the launch (note 0022, section 4), so it waits longer than that first.
+    granite::time::sleep_ms(2_500);
     let mut conn = match Connection::from_start(&mut start) {
         Ok(c) => c,
         Err(e) => {

@@ -109,7 +109,7 @@ const SANDBOX_DESKTOP_USERS: u32 = 1006;
 const SANDBOX_KIND_SHIFT: u32 = 56;
 const SANDBOX_TRUSTED: u64 = 1 << SANDBOX_KIND_SHIFT;
 /// A session's budget: the sandbox manager and every app it starts are paid from it.
-const SESSION_BUDGET: u64 = 32 << 20;
+const SESSION_BUDGET: u64 = 48 << 20;
 /// Sandbox managers run at the priority of services.
 const SESSION_PRIORITY: u8 = 2;
 /// The volume in memory used when there is no system volume.
@@ -886,8 +886,24 @@ impl Service {
     /// Stops a session's sandbox manager and starts the session afresh, keeping its history.
     fn restart_session(&mut self, s: Session) {
         let _ = s.sandbox.process.stop(0);
-        if let Err(e) = self.start_session(&s.user, s.history) {
-            granite::println!("users: can't start {}'s session again: {e}", s.user.name);
+        // Its memory comes back to this service's budget only once it has ended, which takes
+        // a moment (its apps end with it): wait for that, up to two seconds, so that the new
+        // session's budget fits.
+        let end = time::after_ms(2_000);
+        while matches!(
+            s.sandbox.process.info().map(|i| i.state),
+            Ok(State::Running | State::Ending)
+        ) && time::now() < end
+        {
+            time::sleep_ms(20);
+        }
+        let (user, history) = (s.user.clone(), s.history);
+        drop(s);
+        if let Err(e) = self.start_session(&user, history) {
+            // Not the session's fault, so its restart policy isn't charged: it is tried again in
+            // a moment.
+            granite::println!("users: can't start {}'s session again yet: {e}", user.name);
+            self.pending.push(Pending { user, history, due: now_ms() + 500 });
         }
     }
 

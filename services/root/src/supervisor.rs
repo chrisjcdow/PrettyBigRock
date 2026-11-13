@@ -102,7 +102,7 @@ impl Kind {
     /// virtio-gpu, or the framebuffer driver's allowance of 40 MiB; note 0020) twice over,
     /// since a driver being restarted is given its budget before the old one's is back; the
     /// storage service's its 16 MiB cache, volumes in memory and 8 MiB for each filesystem
-    /// server; the users service's three sessions of 32 MiB at once. The console's holds its
+    /// server; the users service's three sessions of 48 MiB at once. The console's holds its
     /// text grid and its threads (the buffer it draws in is the display driver's memory). The
     /// input service's holds its layouts, a thread for each device and the consumer's ring. The
     /// display server's holds every window's buffers (96 MiB a session, note 0022, section 3),
@@ -113,7 +113,7 @@ impl Kind {
         match self {
             Kind::Devmgr => 192 * MIB,
             Kind::Storage => 128 * MIB,
-            Kind::Users => 112 * MIB,
+            Kind::Users => 160 * MIB,
             Kind::Console => 8 * MIB,
             Kind::Input => 8 * MIB,
             Kind::Display => 160 * MIB,

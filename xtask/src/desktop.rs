@@ -85,7 +85,6 @@ pub struct MenuLine {
 impl MenuLine {
     /// The middle of the row that says `row`: rows are 22 pixels high, from 2 below the top
     /// (`lib/compositor`'s `MENU_ROW`).
-    #[allow(dead_code)] // used by stage 6's steps, still to be written
     fn row(&self, row: &str) -> Option<(i32, i32)> {
         let i = self.rows.iter().position(|r| r == row)? as i32;
         Some((self.x + self.width / 2, self.y + 2 + i * 22 + 11))
@@ -107,9 +106,11 @@ impl View {
     /// found as `Alpha`).
     fn window(&self, name: &str) -> Option<&WindowLine> {
         self.windows.iter().find(|w| {
-            w.title == name
-                || w.title.strip_prefix(name).is_some_and(|r| r.starts_with(" \u{2014}"))
-                || w.title.strip_suffix(name).is_some_and(|r| r.ends_with("\u{2014} "))
+            // (The display server adds this to a hung app's title.)
+            let title = w.title.strip_suffix(" (not responding)").unwrap_or(&w.title);
+            title == name
+                || title.strip_prefix(name).is_some_and(|r| r.starts_with(" \u{2014}"))
+                || title.strip_suffix(name).is_some_and(|r| r.ends_with("\u{2014} "))
         })
     }
 
@@ -220,64 +221,97 @@ struct Run<'a> {
     limit: Duration,
 }
 
-/// Boots `cfg` from `image` (made with `desktoptest` on its command line) and runs the desktop
-/// test. Returns what the machine wrote to its serial port.
-// WORK IN PROGRESS (M6 stage 6, session 18): the steps below are still stage 5's. The new
-// ones (the real desktop, the start menu, Stop from the window menu, a second boot on the same
-// disks, falling back to the shell, and a third boot from `text_image`) are planned in
-// `claude/status.md`, and `qemu::command_on` can already start the same disks again.
+/// Which of the desktop boot's three boots (note 0024, section 11).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Boot {
+    /// On fresh disks: the desktop, its windows and menu, ending in falling back to the shell,
+    /// which restarts the machine.
+    First,
+    /// The same disks again: what was saved is there; the start menu shuts the machine down.
+    Second,
+    /// From the `text desktoptest` image: the shell, which turns the machine off.
+    Text,
+}
+
+/// Boots `cfg` three times (note 0024, section 11): from `image` (made with `desktoptest` on
+/// its command line) on fresh disks, then on the same disks again, then from `text_image`
+/// (`text desktoptest`). Returns what the machines wrote to their serial ports.
 pub fn test(
     cfg: &Config,
     image: &Path,
-    _text_image: &Path,
+    text_image: &Path,
     work: &Path,
     limit: Duration,
 ) -> Result<String, String> {
-    let tag = qemu::tag(cfg);
-    let log = work.join(format!("desktop-{tag}.txt"));
-    let _ = fs::remove_file(&log);
-    let mut cmd = qemu::command(cfg, image, work, true)?;
-    cmd.args(["-display", "none", "-monitor", "none"]);
-    let two = cfg.screens == Screens::TwoVirtioGpu;
-    let vnc_path = work.join(format!("vnc-desktop-{tag}.sock"));
-    let _ = fs::remove_file(&vnc_path);
-    if two {
-        cmd.arg("-vnc").arg(format!("unix:{},display=gpu2,head=1", vnc_path.display()));
-    }
-    cmd.arg("-serial").arg(format!("file:{}", log.display()));
-    if cfg.arch == "x86_64" {
-        cmd.args(["-serial", "null"]);
-    }
-    let qmp_path = work.join(format!("qmp-desktop-{tag}.sock"));
-    let _ = fs::remove_file(&qmp_path);
-    cmd.arg("-qmp").arg(format!("unix:{},server=on,wait=off", qmp_path.display()));
-    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
-    let child = cmd.spawn().map_err(|e| format!("couldn't start QEMU: {e}"))?;
-    let mut run = Run {
-        cfg,
-        image,
-        log,
-        child,
-        qmp: Qmp::new(qmp_path, qemu::input_screen(cfg, true)),
-        vnc: None,
-        started: Instant::now(),
-        limit,
-    };
-    if two {
-        match qemu::plug(&vnc_path) {
-            Ok(v) => run.vnc = Some(v),
-            Err(e) => {
-                run.stop();
-                return Err(format!("plugging in the second screen: {e}"));
-            }
+    let mut all = String::new();
+    for (boot, img, name) in [
+        (Boot::First, image, "desktop"),
+        (Boot::Second, image, "desktop-again"),
+        (Boot::Text, text_image, "desktop-text"),
+    ] {
+        eprintln!("  ({name})");
+        let mut run = Run::start(cfg, img, work, limit, boot, name)?;
+        let result = run.steps(boot);
+        let text = run.text();
+        run.stop();
+        all.push_str(&text);
+        if let Err(e) = result {
+            return Err(format!("{name}: {e}\n--- serial output ---\n{text}"));
         }
     }
-    let result = run.steps();
-    let text = run.text();
-    run.stop();
-    match result {
-        Ok(()) => Ok(text),
-        Err(e) => Err(format!("{e}\n--- serial output ---\n{text}")),
+    Ok(all)
+}
+
+impl<'a> Run<'a> {
+    /// Starts QEMU for one boot, on fresh disks unless it is the second.
+    fn start(
+        cfg: &'a Config,
+        image: &'a Path,
+        work: &Path,
+        limit: Duration,
+        boot: Boot,
+        name: &str,
+    ) -> Result<Run<'a>, String> {
+        let tag = qemu::tag(cfg);
+        let log = work.join(format!("{name}-{tag}.txt"));
+        let _ = fs::remove_file(&log);
+        let mut cmd = qemu::command_on(cfg, image, work, true, boot != Boot::Second)?;
+        cmd.args(["-display", "none", "-monitor", "none"]);
+        let two = cfg.screens == Screens::TwoVirtioGpu;
+        let vnc_path = work.join(format!("vnc-desktop-{tag}.sock"));
+        let _ = fs::remove_file(&vnc_path);
+        if two {
+            cmd.arg("-vnc").arg(format!("unix:{},display=gpu2,head=1", vnc_path.display()));
+        }
+        cmd.arg("-serial").arg(format!("file:{}", log.display()));
+        if cfg.arch == "x86_64" {
+            cmd.args(["-serial", "null"]);
+        }
+        let qmp_path = work.join(format!("qmp-desktop-{tag}.sock"));
+        let _ = fs::remove_file(&qmp_path);
+        cmd.arg("-qmp").arg(format!("unix:{},server=on,wait=off", qmp_path.display()));
+        cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+        let child = cmd.spawn().map_err(|e| format!("couldn't start QEMU: {e}"))?;
+        let mut run = Run {
+            cfg,
+            image,
+            log,
+            child,
+            qmp: Qmp::new(qmp_path, qemu::input_screen(cfg, true)),
+            vnc: None,
+            started: Instant::now(),
+            limit,
+        };
+        if two {
+            match qemu::plug(&vnc_path) {
+                Ok(v) => run.vnc = Some(v),
+                Err(e) => {
+                    run.stop();
+                    return Err(format!("plugging in the second screen: {e}"));
+                }
+            }
+        }
+        Ok(run)
     }
 }
 
@@ -475,27 +509,120 @@ impl Run<'_> {
         self.vnc.as_mut().ok_or("no second screen")?.set_size(w, h)
     }
 
-    fn steps(&mut self) -> Result<(), String> {
+    fn steps(&mut self, boot: Boot) -> Result<(), String> {
+        match boot {
+            Boot::First => self.first(),
+            Boot::Second => self.second(),
+            Boot::Text => self.text_mode(),
+        }
+    }
+
+    /// Waits for the input devices, and the desktop drawn (with the screens arranged as its
+    /// `screens.txt` says, on two screens): QEMU drops input sent to a device whose driver
+    /// isn't listening yet.
+    fn desktop_ready(&mut self, times: usize) -> Result<(), String> {
+        self.qmp.connect()?;
+        self.line("input: using QEMU Virtio Keyboard")?;
+        self.line("input: using QEMU Virtio Mouse")?;
+        match self.cfg.screens {
+            Screens::TwoVirtioGpu => self.lines("display: 2 tablets.", times)?,
+            Screens::FirmwareWithTablet => self.lines("display: 1 tablets.", times)?,
+            Screens::Firmware => {}
+        }
+        self.lines("desktop: ready", times)?;
+        if self.cfg.screens == Screens::TwoVirtioGpu {
+            self.lines("desktop: arranged 2 screens from screens.txt", times)?;
+            self.view("the second screen at 2x", |v| v.screens.iter().any(|s| s.scale == 200))?;
+        }
+        Ok(())
+    }
+
+    /// Keeps a screenshot of every screen beside the log, as `NAME-<what>-<screen>.ppm`: what
+    /// the desktop looks like, for people (they aren't compared with anything).
+    fn keep_screens(&mut self, what: &str) -> Result<(), String> {
+        std::thread::sleep(Duration::from_secs(2));
+        let heads = if self.cfg.screens == Screens::TwoVirtioGpu { 2 } else { 1 };
+        let device = if self.cfg.screens == Screens::TwoVirtioGpu { "gpu2" } else { "gpu" };
+        for head in 0..heads {
+            let file = self.log.with_extension(format!("{what}-{head}.ppm"));
+            self.qmp.screendump(device, head, &file)?;
+        }
+        Ok(())
+    }
+
+    /// Opens the start menu with the Windows key and clicks `item` in it (the desktop says
+    /// where each is).
+    fn from_start_menu(&mut self, item: &str, times: usize) -> Result<(), String> {
+        self.chord(&["meta_l"])?;
+        self.lines("desktop: start menu open", times)?;
+        if times == 2 {
+            self.keep_screens("start-menu")?;
+        }
+        let text = self.text();
+        let want = format!("desktop: menu {item} at ");
+        let at = text
+            .lines()
+            .rev()
+            .find_map(|l| l.split_once(want.as_str()).map(|(_, r)| r.trim().to_string()))
+            .ok_or(format!("the start menu has no {item}"))?;
+        let (x, y) = pair(&at, ',').ok_or(format!("the start menu's {item} at {at}"))?;
+        self.click_at(x, y)
+    }
+
+    /// Waits for QEMU to stop by itself, for `reason` (`guest-reset`: told not to restart, it
+    /// stops; `guest-shutdown`: turned off).
+    fn stopped(&mut self, reason: &str) -> Result<(), String> {
+        let end = Instant::now() + Duration::from_secs(120);
+        while !matches!(self.child.try_wait(), Ok(Some(_))) {
+            if Instant::now() > end {
+                return Err(format!("the machine didn't stop ({reason}) in 2 minutes"));
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        match self.qmp.shutdown_reason().as_deref() {
+            Some(r) if r == reason => Ok(()),
+            other => Err(format!("QEMU stopped for the reason {other:?}, not {reason}")),
+        }
+    }
+
+    /// Waits for the shell's prompt (the console mirrors what it shows to the serial port),
+    /// then types `line` into it.
+    fn shell(&mut self, line: &str) -> Result<(), String> {
+        self.line("[console] [console:read] ")?;
+        self.qmp.connect()?;
+        std::thread::sleep(Duration::from_millis(500));
+        self.qmp.type_line(line)
+    }
+
+    /// The second boot, on the same disks: the note saved in the first is found, the screens are
+    /// where `screens.txt` says, and the start menu's Shut down turns the machine off.
+    fn second(&mut self) -> Result<(), String> {
+        self.desktop_ready(1)?;
+        self.line("Desktop test: after restarting")?;
+        self.line("Desktop test passed")?;
+        self.from_start_menu("Shut down", 1)?;
+        self.line("users: chris asked to turn the computer off")?;
+        self.stopped("guest-shutdown")
+    }
+
+    /// The text-mode boot: the console instead of the display server, and the shell on it.
+    fn text_mode(&mut self) -> Result<(), String> {
+        self.line("Desktop test: text mode")?;
+        self.shell("poweroff")?;
+        self.line("users: chris asked to turn the computer off")?;
+        self.stopped("guest-shutdown")
+    }
+
+    /// The first boot: the desktop, two windows the runner drives, a hung and a hostile app,
+    /// the display server's crash, the start menu, and falling back to the shell.
+    fn first(&mut self) -> Result<(), String> {
         let two = self.cfg.screens == Screens::TwoVirtioGpu;
         let tablet = self.cfg.screens != Screens::Firmware;
 
         // ---- Step 1: two windows, which the runner drives. ----
+        self.desktop_ready(1)?;
+        self.keep_screens("desktop")?;
         self.line("Desktop test: drive the windows")?;
-        self.qmp.connect()?;
-        // QEMU drops input sent to a device whose driver isn't listening yet: wait until the
-        // input service uses the keyboard and mouse, and the display server knows the tablets.
-        self.line("input: using QEMU Virtio Keyboard")?;
-        self.line("input: using QEMU Virtio Mouse")?;
-        match self.cfg.screens {
-            Screens::TwoVirtioGpu => drop(self.line("display: 2 tablets.")?),
-            Screens::FirmwareWithTablet => drop(self.line("display: 1 tablets.")?),
-            Screens::Firmware => {}
-        }
-        if two {
-            self.line("wintest desk: arranged 2 screens")?;
-        } else {
-            self.line("wintest desk: one screen")?;
-        }
         // (Beta, opened last, is on top. Whether it also has the focus depends on how soon
         // after its launch it opened, which a slow emulated machine can stretch past the two
         // seconds the rule allows; the host tests check that rule.)
@@ -581,20 +708,12 @@ impl Run<'_> {
             })?;
         }
 
-        // The start menu key goes to the desktop, not to the app with the focus. On two
-        // screens the test desktop answers it by mirroring the second screen, and again by
-        // putting it back.
+        // The start menu key goes to the desktop, not to the app with the focus: it opens the
+        // start menu, and closes it again.
         self.chord(&["meta_l"])?;
-        self.line("wintest desk: start menu")?;
-        if two {
-            self.line("wintest desk: mirroring")?;
-            self.view("the second screen mirroring", |v| v.screens.iter().any(|s| s.mirrors == 1))?;
-            self.chord(&["meta_l"])?;
-            self.lines("wintest desk: arranged 2 screens", 2)?;
-            self.view("the second screen beside the first", |v| {
-                v.screens.len() == 2 && v.screens.iter().all(|s| s.mirrors == 0)
-            })?;
-        }
+        self.line("desktop: start menu open")?;
+        self.chord(&["meta_l"])?;
+        self.line("desktop: start menu closed")?;
         if self.text().contains("wintest Beta: key 82")
             || self.text().contains("wintest Beta: key 83")
         {
@@ -611,7 +730,8 @@ impl Run<'_> {
         );
         self.move_to(b.x + 60, b.y - 13)?;
         self.button(true)?;
-        let (tx, ty) = (first.x + first.width - 300 - 20, first.y + first.height - 200 - 20);
+        // (Above the taskbar.)
+        let (tx, ty) = (first.x + first.width - 300 - 20, first.y + first.height - 200 - 70);
         self.move_to(tx + 60, ty)?;
         self.button(false)?;
         self.view("Beta moved", |v| v.window("Beta").is_some_and(|w| w.x == tx && w.y == ty + 13))?;
@@ -637,31 +757,49 @@ impl Run<'_> {
         // Ctrl+W closes the focused window.
         self.chord(&["ctrl", "w"])?;
         self.line("wintest Beta: closing")?;
+        // The hung app is stopped from its window menu (a right click on its title bar): the
+        // display server leaves Stop to the desktop, which asks the sandbox manager.
+        let v = self.view("Hung", |v| v.window("Hung").is_some())?;
+        let h = v.window("Hung").cloned().ok_or("no Hung")?;
+        self.move_to(h.x + 40, h.y - 13)?;
+        let right =
+            |down: bool| format!(r#"{{"type":"btn","data":{{"button":"right","down":{down}}}}}"#);
+        self.qmp.send(true, &[right(true)])?;
+        std::thread::sleep(Duration::from_millis(150));
+        self.qmp.send(true, &[right(false)])?;
+        let v = self.view("Hung's window menu with Stop", |v| {
+            v.menu.as_ref().is_some_and(|m| m.rows.iter().any(|r| r == "Stop"))
+        })?;
+        let (sx, sy) = v.menu.as_ref().and_then(|m| m.row("Stop")).ok_or("no Stop")?;
+        self.click_at(sx, sy)?;
+        self.line("desktop: stopping app")?;
 
-        // ---- Step 3: the display server crashed and started again. ----
+        // ---- Step 3: the display server crashed and started again, and the desktop. ----
         self.line("Desktop test: after the restart")?;
-        self.line("wintest desk: disconnected")?;
+        self.desktop_ready(2)?;
         self.view("Again drawn and focused", |v| {
             v.window("Again").is_some_and(|w| w.is("drawn") && w.is("focused"))
         })?;
         // The guest may finish the test and restart the machine before the keys are let go,
         // and QEMU then closes its control socket: the next lines are what count.
-        let _ = self.chord(&["ctrl", "w"]);
+        self.chord(&["ctrl", "w"])?;
         self.line("wintest Again: closing")?;
-        self.line("Desktop test passed")?;
 
-        // The test ends by restarting the machine; QEMU, told not to, stops.
-        let end = Instant::now() + Duration::from_secs(30);
-        while !matches!(self.child.try_wait(), Ok(Some(_))) {
-            if Instant::now() > end {
-                return Err("the test passed, but the machine didn't restart".into());
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
-        match self.qmp.shutdown_reason().as_deref() {
-            Some("guest-reset") => Ok(()),
-            other => Err(format!("QEMU stopped for the reason {other:?}, not a restart")),
-        }
+        // ---- Step 4: the start menu launches the test window, focused. ----
+        self.line("Desktop test: the start menu")?;
+        self.from_start_menu("wintest", 2)?;
+        self.view("the window from the start menu, focused", |v| {
+            v.window("test").is_some_and(|w| w.is("drawn") && w.is("focused"))
+        })?;
+        self.chord(&["ctrl", "w"])?;
+        self.line("wintest test: closing")?;
+
+        // ---- Step 5: falling back to the shell, which restarts the machine. ----
+        self.line("Desktop test: falling back")?;
+        self.line("Desktop test passed")?;
+        self.shell("reboot")?;
+        self.line("users: chris asked to restart")?;
+        self.stopped("guest-reset")
     }
 }
 

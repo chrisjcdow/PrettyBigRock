@@ -44,9 +44,7 @@ use pbr_files::{Files, READ};
 use pbr_interfaces::pbr_sandbox::{self as sandbox, Available};
 use pbr_interfaces::pbr_users as users;
 use pbr_interfaces::pbr_window::{ScreenPlace, WindowInfo};
-use pbr_window::{
-    Connection, Edge, Event, PointerEvent, PointerKind, Win, WindowFlags, WindowKind,
-};
+use pbr_window::{Connection, Event, PointerEvent, PointerKind, Win, WindowFlags, WindowKind};
 
 granite::main!(main);
 
@@ -61,6 +59,9 @@ const ACT_MINIMISE: u32 = 3;
 /// A window menu choice (note 0022, section 10): the permissions viewer, or stopping the app.
 const CHOICE_PERMISSIONS: u32 = 1;
 const CHOICE_STOP: u32 = 2;
+/// The edge a panel goes along, as `create`'s `at` gives it (`lib/compositor`: 1 top, 2
+/// bottom, 3 left, 4 right).
+const BOTTOM: i32 = 2;
 /// The clock's timer.
 const CLOCK: u32 = 1;
 /// Two clicks on the same icon within this long are a double click (nanoseconds).
@@ -298,7 +299,7 @@ impl Desktop {
                 "Taskbar",
                 (width.max(1), taskbar::HEIGHT as u32),
                 WindowFlags::default(),
-                (screen as i32, Edge::Bottom as i32),
+                (screen as i32, BOTTOM),
                 0,
             ) {
                 Ok(win) => self.panel = Some((screen, win)),
@@ -476,6 +477,7 @@ impl Desktop {
     fn close_menu(&mut self) {
         if let Some(m) = self.menu.take() {
             let _ = self.conn.destroy(m.win);
+            say!("start menu closed.");
             self.draw_panel();
         }
     }

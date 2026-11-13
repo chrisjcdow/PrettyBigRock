@@ -78,10 +78,13 @@ fn x86(
     let fadt = acpi::find_table(&reader, machine.rsdp, b"FACP").ok_or("no FADT")?;
     let (pm1a, pm1b) = acpi::fadt_pm1_control(&reader, fadt).ok_or("no PM1 control ports")?;
     let ports = IoPorts(copy(start, role::IO_PORTS).ok_or("no I/O ports")?);
-    let port = |p: u16| ports.slice(u64::from(p), 2, rights::READ | rights::WRITE);
-    caps.push((PM1A, port(pm1a).map_err(|e| format!("PM1a: {e}"))?.0, rights::ALL));
+    // (Slices are made with every right, so the root program can pass them on; the power
+    // service is given only reading and writing.)
+    let port = |p: u16| ports.slice(u64::from(p), 2, rights::ALL);
+    let rw = rights::READ | rights::WRITE;
+    caps.push((PM1A, port(pm1a).map_err(|e| format!("PM1a: {e}"))?.0, rw));
     if pm1b != 0 {
-        caps.push((PM1B, port(pm1b).map_err(|e| format!("PM1b: {e}"))?.0, rights::ALL));
+        caps.push((PM1B, port(pm1b).map_err(|e| format!("PM1b: {e}"))?.0, rw));
     }
     // The DSDT, then every SSDT: each a read-only slice of whole pages, with where the table
     // is in it.
@@ -93,7 +96,7 @@ fn x86(
         let first = t & !0xFFF;
         let offset = t - first;
         let pages = (offset + u64::from(len)).next_multiple_of(4096);
-        match memory.slice(first, pages, rights::READ | rights::MAP) {
+        match memory.slice(first, pages, rights::ALL) {
             Ok(slice) => {
                 let r = TABLES + i as u32;
                 caps.push((r, slice.0, rights::READ | rights::MAP));

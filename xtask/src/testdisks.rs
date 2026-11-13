@@ -106,7 +106,7 @@ pub const SYSTEM: &[(&str, Option<&str>)] = &[
 /// The desktop's `screens.txt` on the test system volume: for the two virtio-gpu machines, the
 /// first screen (1280 x 800) main, the second at 2x beside it. Other machines' screens aren't
 /// named, so it changes nothing for them.
-pub const SCREENS: &str = "# The desktop boot's screens (xtask/src/testdisks.rs)\nscreen \"Virtual-1\" at 0,0 scale 100 main\nscreen \"Virtual-2\" at 1280,0 scale 200\n";
+pub const SCREENS: &str = "# The desktop boot's screens (xtask/src/testdisks.rs)\nscreen \"RHT-1234-00000000 Virtual-1\" at 0,0 scale 100 main\nscreen \"RHT-1234-00000000 Virtual-2\" at 1280,0 scale 200\n";
 
 /// Puts [`SYSTEM`] on the RockFS volume in `path` (a disk with one), with `tools/rockfs.py`.
 fn system_volume(path: &Path) -> Result<(), String> {
