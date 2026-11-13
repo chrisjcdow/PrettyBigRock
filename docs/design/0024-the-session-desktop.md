@@ -295,5 +295,15 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 12 November 2026, built ahead of the rest (M6 stage 4): section 5's settings, because the
+  input service needs the layout. As written, with these points settled: `set` accepts only
+  the keys this version knows (`layout`, `timezone`) and answers the new error `BadSetting`
+  for anything else or a value that can't be used; keys it doesn't know that are already in
+  the file are kept. `settings()` gives `layout` and `timezone` always, with their defaults
+  if never set, then the file's other keys. There is one seat, so **the layout that applies
+  is that of the user who has the terminal** (when the desktop has a login screen, whoever
+  logged in there): another user's `set layout` is saved and waits. The shell has `settings`
+  and `set KEY VALUE`. The time zone is saved and checked (-12:00 to +14:00) but nothing
+  shows times with it yet.
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).

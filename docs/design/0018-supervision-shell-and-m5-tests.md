@@ -244,6 +244,11 @@ traits, which are settled first.
   question on limits per program).
 
 ## Changes
+- 12 November 2026 (M6 stage 4, note 0021): the console no longer opens keyboards. It takes
+  the seat from the input service, which the root program supervises with the other
+  services and starts before the console; `rule` gains the `input` lookups (the console as
+  a consumer, the users service to set the layout). Section 5's "anything outside ASCII is
+  `?`" is now "anything the font can't draw".
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
 - 2 November 2026, stage 1: kernel 1.2's tests are in the program self-test, not `lib/captree`.
 - 7 November 2026, stage 6: test 6 as built (`services/root/src/sandboxtest.rs`). The build

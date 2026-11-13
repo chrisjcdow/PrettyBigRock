@@ -111,8 +111,11 @@ flexible enum SeatError { NotAllowed @1, NoSuchLayout @2, NoRing @3 }
 ### 4. Layouts: `lib/keymap`
 
 A layout is a small text file in the start-up archive, `layouts/<name>.kbd`, in the same
-style as manifests (note 0017): one `key value…` per line, `#` for comments, UTF-8, at most
-16 KiB.
+style as manifests (note 0017): one `key value…` per line, UTF-8, at most 16 KiB. It has its
+own reader, though, not `lib/manifest`'s: keys type `#` and `"` and letters outside ASCII,
+which that reader gives other meanings or refuses. A comment is a whole line starting with
+`#`; anywhere else `#` is a character like any other. (The files are in the repository at
+`services/input/layouts/`.)
 
 ```
 # layouts/us-intl.kbd
@@ -120,7 +123,7 @@ title "English (US, international, with dead keys)"
 key A a A á Á
 key E e E é É
 key APOSTROPHE dead:acute dead:diaeresis ' "
-key 6 6 dead:circumflex ¼ ^
+key 6 6 dead:circumflex ¼
 dead acute a á A Á e é E É i í I Í o ó O Ó u ú U Ú space '
 dead circumflex a â A Â e ê E Ê i î I Î o ô O Ô u û U Û space ^
 dead diaeresis a ä A Ä e ë E Ë i ï I Ï o ö O Ö u ü U Ü y ÿ space "
@@ -129,14 +132,16 @@ dead diaeresis a ä A Ä e ë E Ë i ï I Ï o ö O Ö u ü U Ü y ÿ space "
 | Line | Meaning |
 |------|---------|
 | `title "…"` | The name people see |
-| `key CODE NORMAL [SHIFT [ALTGR [ALTGR-SHIFT]]]` | What a key types. `CODE` is `pbr.input`'s name without `KEY_` (`A`, `1`, `APOSTROPHE`, `KP_7`); a value is one character, `space`, `none`, or `dead:NAME` |
+| `key CODE NORMAL [SHIFT [ALTGR [ALTGR-SHIFT]]]` | What a key types. `CODE` is `pbr.input`'s name without `KEY_` (`A`, `1`, `APOSTROPHE`, `KP_7`); a value is one character, `space`, `none`, or `dead:NAME`. `SHIFT` left out is the same as `NORMAL`; the AltGr values left out type nothing, and may only be given in a file with an `altgr` line |
 | `dead NAME BASE RESULT…` | What a dead key does to the next character; any other character types the accent (the value of `BASE` `space`) and then itself |
 | `altgr` | The right Alt key is AltGr on this layout (otherwise it is Alt) |
 
 - **Caps Lock** swaps the normal and shifted characters of a key whose two are a lower-case
   letter and its capital (the rule is in `lib/keymap`, for every letter in Unicode's Latin,
   Greek and Cyrillic blocks). **Num Lock** makes the keypad type digits; off, it is arrows and
-  editing keys. Both are kept by the input service, across all keyboards.
+  editing keys, and the input service reports those keys' codes (`KEY_HOME` for the keypad's
+  7), so that no consumer needs to know about the keypad. Both are kept by the input service,
+  across all keyboards; Num Lock starts on and Caps Lock off.
 - **Keys a layout doesn't mention** type nothing. Control keys (Enter, Tab, Backspace, Escape,
   Delete) are the same in every layout and not written in the files.
 - **The parser** refuses the whole file for an unknown key name, a key given twice, a bad
@@ -230,6 +235,46 @@ is tested: the display server learns which screen a tablet belongs to from its s
 - Keyboard lights (Caps Lock, Num Lock).
 
 ## Changes
+- 12 November 2026, building it (M6 stage 4). The design held; what building settled or
+  changed:
+  - **Layout files have their own reader** (section 4), because `#` and `"` are things keys
+    type. The parser also refuses a `dead` table no key uses, a table without its `space`
+    pair, AltGr values in a file with no `altgr` line, and a `key` line for a key that isn't
+    written in layouts (Enter, Shift, the arrows).
+  - **Dead keys, exactly:** the same dead key twice types its accent once; a different dead
+    key after one types the first's accent and waits itself; a key that types nothing but
+    isn't a modifier (Backspace, an arrow, Enter) drops a waiting dead key; a dead key waits
+    for the next key on any keyboard. While Ctrl, Alt or Meta is held a dead key carries its
+    accent as its character and nothing waits.
+  - **A key or button still held after a reset has the value 3, `VALUE_HELD`,** not a press
+    (sections 2 and 3). A consumer that acts on presses, as the console does, would otherwise
+    act twice on a key held across a reset. Such events carry no characters.
+  - **Pointer events carry the modifiers of every keyboard together** (a mouse has no Shift
+    of its own, and Ctrl+click means Ctrl on whichever keyboard); key events carry their own
+    keyboard's, as section 1 says.
+  - **A keyboard and mouse in one driver** (the PS/2 controller) is two devices of the seat.
+  - **A driver's "lost" event** clears what was held on that device and sends the consumer a
+    reset, as a device going does. `EVENT_LOST` to the consumer is only for the consumer's
+    own ring having been full.
+  - **`set_layout` is the users service's alone:** a consumer's capability is refused it
+    (section 3 didn't say). `devices()` is a consumer's alone; `layouts()` is for both.
+  - **Which user's layout:** there is one seat, so the layout is that of the user at it: for
+    now the user who has the terminal (note 0024, Changes). The users service sets it again
+    whenever the input service has been restarted, which it hears of through a receiver
+    watch (note 0019).
+  - **The `us` layout is also built into the input service,** so that a start-up archive
+    with no readable layout still leaves a keyboard that types.
+  - **Section 6, the console:** it answers `Closed` to `read_line` when it has no seat (it
+    was: no keyboard). `lib/terminal`'s grid now keeps every character `lib/font` has, where
+    it kept only ASCII.
+  - **Section 9, tests:** as listed, with the layouts typed through the shell (`set layout
+    gb`, then a line of its keys) rather than through `pbr.users.debug`, and the input
+    service crashed between `set layout gb` and that line, which checks the console's watch
+    and the layout being set again in one go.
+  - **Found on the way:** every program that reads the start-up archive checks its checksum
+    over all of it, and unoptimised and emulated that took the input service more than 10
+    seconds to start (and was most of the device manager's 20 to 30). `lib/archive` is now
+    built optimised in test builds, like the drawing code.
 - 11 November 2026, built ahead of the rest (M6 stage 2): section 7, tablets in the virtio
   driver. In `pbr.input`'s 16-byte events (the drivers' rings) a position can't have the
   second field section 2's table gives the input service's events, so `EVENT_POSITION`

@@ -746,3 +746,44 @@ brief, each reviewed in full.
   43206630132), since the font's cell and the self-test both run at every boot. Last
   session's Stress run on `2de1a6c` (43072806182) had passed.
 
+## Session 16: 12 and 13 November 2026, M6 stage 4 (the input service)
+
+- **Stress on stage 3** (run 43206630132, `8a6273d`): 119 of 120 boots passed. The one that
+  failed (ARM64 EL1) was the block test giving up on finding its disk: its 30 seconds were
+  counted from before the device manager had finished starting, and the device manager's
+  first answer took nearly all of them. They now count from that answer (`70e2b3c`). Not a
+  hang, and nothing to do with stage 3. Timing that boot showed why the device manager was
+  so slow: it checks the start-up archive's checksum over tens of megabytes, unoptimised and
+  emulated. `lib/archive` is now built optimised in test builds (`e63c1f5`); drivers report
+  running in under a second where they took 2 to 4.
+- **New key codes** in `pbr.input`: the keypad, the locks, Print Screen, Pause, Menu, the key
+  beside the left Shift, and a sideways wheel. The PS/2 decoder reads Pause's and Print
+  Screen's sequences; the keypad's Enter is its own key.
+- **`lib/keymap` and three layouts** (`us`, `gb`, `us-intl`), by a Sonnet subagent to a brief
+  (it stopped once on a usage limit and was resumed from where it was). I read the library
+  and the layouts in full. M5's US table moved out of `lib/devices` into the test that checks
+  `us.kbd` against it, key by key. Layout files have their own reader: keys type `#`.
+- **`pbr.seat` and `lib/seat`**: the seat's 32-byte events, the merge (modifiers per
+  keyboard, Caps Lock and Num Lock for the seat, one dead key waiting for the seat), repeats
+  made in one place (half a second, then 30 a second; one key at a time; modifiers don't
+  interrupt), and the full-ring rule (drop, count, then a lost event, a reset and what is
+  still held). A key still held after a reset is reported as `VALUE_HELD`, not as a press.
+  All host-tested, with a clock the tests move.
+- **`services/input`**: a watcher thread finds input devices through the device manager and
+  opens each (taking it from whoever had it); a reader thread per device; the main thread owns
+  the seat and serves `pbr.seat`. `take` revokes the previous consumer's ring and doorbell.
+  Badges decide who may do what, and the root program's lookup table decides who gets which
+  badge: the console is a consumer, the users service may only set the layout.
+- **The console takes the seat** instead of opening keyboards, and hears through a receiver
+  watch when the input service goes. `lib/terminal` keeps every character the font has.
+- **Settings** (note 0024, section 5, built early): `lib/manifest`'s `settings` module,
+  `pbr.users.settings` and `set`, the shell's `settings` and `set KEY VALUE`. The users
+  service tells the input service the layout of the user at the keyboard, and again after
+  the input service is restarted.
+- **Boot tests**: `services/root/src/seattest.rs` (who may do what, a second taker, a key held
+  while its keyboard's driver crashes, tablets) and nine more lines in the shell test: the
+  settings, a line typed with UK keys, the input service crashed under the console, a line
+  typed with US-international dead keys. The runner can now name keys (`{S-3}`, `{G-e}`).
+- What building changed in the notes: note 0021's Changes (dead keys exactly, `VALUE_HELD`,
+  who may call what, which user's layout), note 0024's and note 0018's.
+
