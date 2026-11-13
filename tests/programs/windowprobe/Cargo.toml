@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-test-windowprobe"
+description = "A hostile windowed test program that tries every guarantee of the display server and fails (note 0022, section 8)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "windowprobe"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-draw = { path = "../../../lib/draw" }
+pbr-granite = { path = "../../../lib/granite" }
+pbr-interfaces = { path = "../../../lib/interfaces" }
+pbr-window = { path = "../../../lib/window" }
+
+[lints]
+workspace = true

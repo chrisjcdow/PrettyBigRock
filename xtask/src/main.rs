@@ -92,6 +92,8 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-test-fileprobe", "fileprobe", "fileprobe"),
     ("pbr-test-sandboxed", "sandboxed", "apps/sandboxed"),
     ("pbr-shell-app", "shell", "apps/shell"),
+    ("pbr-test-wintest", "wintest", "wintest"),
+    ("pbr-test-windowprobe", "windowprobe", "windowprobe"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -144,6 +146,9 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-test-probe",
     "pbr-test-protocol",
     "pbr-test-sandboxed",
+    "pbr-test-windowprobe",
+    "pbr-test-wintest",
+    "pbr-window",
 ];
 
 /// Crates tested on this computer.
@@ -177,6 +182,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-seat",
     "pbr-shell",
     "pbr-virtio",
+    "pbr-window",
     "rockfs-rs",
     "xtask",
 ];
@@ -972,6 +978,7 @@ fn licence_for(rel: &Path) -> &'static str {
         || under("lib/files/")
         || under("lib/font/")
         || under("lib/draw/")
+        || under("lib/window/")
         || under("targets/")
     {
         "MPL-2.0"
@@ -1044,6 +1051,7 @@ mod tests {
         assert_eq!(licence_for(Path::new("lib/elf/Cargo.toml")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/font/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/draw/src/canvas.rs")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("lib/window/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/testpng/src/lib.rs")), "GPL-3.0-or-later");
         assert_eq!(licence_for(Path::new("interfaces/echo.pbi")), "MIT");
         assert_eq!(licence_for(Path::new("lib/interfaces/build.rs")), "MIT");

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-test-wintest"
+description = "A well-behaved windowed test program for the desktop boot (note 0026)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "wintest"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-draw = { path = "../../../lib/draw" }
+pbr-granite = { path = "../../../lib/granite" }
+pbr-interfaces = { path = "../../../lib/interfaces" }
+pbr-window = { path = "../../../lib/window" }
+
+[lints]
+workspace = true

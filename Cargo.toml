@@ -50,6 +50,7 @@ members = [
     "lib/terminal",
     "lib/testpng",
     "lib/virtio",
+    "lib/window",
     "services/console",
     "services/devmgr",
     "services/fat",
@@ -65,6 +66,8 @@ members = [
     "tests/programs/probe",
     "tests/programs/protocol",
     "tests/programs/sandboxed",
+    "tests/programs/windowprobe",
+    "tests/programs/wintest",
     "tools/rockfs-rs",
     "xtask",
 ]
