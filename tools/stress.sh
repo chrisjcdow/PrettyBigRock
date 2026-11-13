@@ -31,7 +31,7 @@ for i in $(seq 1 "$runs"); do
         keep="stress-failures/$(date '+%Y-%m-%d-%H%M%S')"
         mkdir -p "$keep"
         cp build/stress-last-run.txt "$keep/runner-output.txt"
-        cp build/qemu/serial-* "$keep/" 2>/dev/null
+        cp build/qemu/serial-* build/qemu/desktop-* "$keep/" 2>/dev/null
         for arch in x86_64 aarch64; do
             [ -f "build/$arch/debug/kernel.elf" ] && cp "build/$arch/debug/kernel.elf" "$keep/kernel-$arch.elf"
         done
