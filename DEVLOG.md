@@ -845,4 +845,31 @@ reviewed in full.
     and on the slow BIOS machine Beta didn't: the runner doesn't rely on it (the host tests
     check the rule).
 - `cargo xtask ci` passed on all four configurations, both boots each, in about 30 minutes
-  here; GitHub's CI passed on `6ebaed1`. Stress was started on the stage's last commit.
+  here; GitHub's CI passed on `6ebaed1`.
+- **Stress found a kernel deadlock** (run 43415528657, on `950cfde`): four of the 30 runs
+  hung in the self-test boot, on x86-64 BIOS and UEFI and on ARM64 UEFI, all the same way.
+  The runner's dump named it at once: one core in `Endpoint::call` waiting for a capability
+  table's lock (checking its capability is `still_held`, which it does under the endpoint's
+  lock), another in `Endpoint::cap_removed` waiting for that endpoint's lock, reached from
+  `caps::give` moving a capability in a message. `give` called `removed` inside
+  `if let Ok(old) = from.table.lock().remove(h) { … }`, and a guard made in an `if let`'s
+  condition lives until the end of its block, so the table's lock was still held: the
+  opposite order. `close` and `revoke` already let it go first. Fixed (`663c47a`), and note
+  0006 now states the order: an object's lock, then a table's; objects are told about added
+  and removed capabilities only after the table's lock is let go. Nothing else in the kernel
+  holds a table's lock into an object's hook. It may well also have been the unexplained ARM64
+  EL1 hang of 10 November. `cargo xtask ci` passed with the fix; Stress was started again
+  on it (run 43425586508).
+- **Stress on the fix** (run 43425586508, `663c47a`): 28 of 30 runs passed, each run both
+  boots on all four configurations; no hangs (four in the run before the fix). The two
+  failures:
+  - QEMU itself crashed (SIGSEGV) on x86-64 UEFI while the firmware was still looking for the
+    disk, before the loader ran, as in sessions 11 and 15.
+  - ARM64 EL2 self-test: after the device self-test crashed `virtio-gpu` on purpose, the new
+    driver took 11.4 seconds to tell the device manager it was ready (1.4 s on its first
+    start, under a second after a crash in every other run), past the test's 5-second limit.
+    The driver did come back and worked. Nothing found explains it: the device manager
+    answers `ready` on a thread of its own, and the driver's own waits are a second at most.
+    That it is about 10 s more than usual suggests a time-out somewhere, but a starved runner
+    explains it as well. **Left open**; if it comes back, the device manager's and driver's
+    threads at that moment are what to look at.
