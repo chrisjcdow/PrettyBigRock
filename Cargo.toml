@@ -22,6 +22,7 @@ members = [
     "lib/blockcache",
     "lib/bootinfo",
     "lib/captree",
+    "lib/compositor",
     "lib/crc",
     "lib/devices",
     "lib/draw",
@@ -91,7 +92,8 @@ panic = "abort"
 # Drawing is built optimised even in test (debug) builds: the boot tests run x86-64 emulated on
 # a busy machine, where unoptimised pixel loops make the screen far too slow to test the desktop
 # (note 0026, section 6). Debug assertions and overflow checks stay on, since they are set for
-# the whole profile, not per package. M6 adds the display server here when it is written.
+# the whole profile, not per package. The display server's composing (`lib/compositor`) is
+# here too.
 [profile.dev.package.pbr-font]
 opt-level = 2
 
@@ -99,6 +101,9 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.pbr-draw]
+opt-level = 2
+
+[profile.dev.package.pbr-compositor]
 opt-level = 2
 
 # The display rules and pixel conversion, and the framebuffer driver's copying: every pixel
