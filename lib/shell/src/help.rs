@@ -43,6 +43,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("revoke APP PATH", "take PATH back from a running app"),
     ("stop APP", "stop an app"),
     ("shutdown", "save everything, then it is safe to turn off the computer (administrators)"),
+    ("poweroff", "save everything and turn the computer off"),
+    ("reboot", "save everything and restart the computer"),
 ];
 
 /// The note `help` ends with.

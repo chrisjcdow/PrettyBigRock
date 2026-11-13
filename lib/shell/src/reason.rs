@@ -224,6 +224,7 @@ pub fn sandbox_reason(op: SandboxOp, e: &CallError<SandboxError>) -> Reason {
         SandboxError::NoMemory => "there isn't enough memory to start it",
         SandboxError::BadCapability => "that isn't a file or folder the app can be given",
         SandboxError::Failed => "it couldn't be started (the log says why)",
+        SandboxError::NotAllowed => "the shell isn't allowed to do that",
         SandboxError::Unknown(n) => return Reason::Text(format!("the sandbox gave error {n}")),
     })
 }
@@ -245,6 +246,8 @@ pub enum UsersOp {
     Setup,
     /// `shutdown`.
     Shutdown,
+    /// `poweroff` and `reboot`.
+    Power,
     /// `settings` and `set`.
     Settings,
 }
@@ -282,6 +285,10 @@ pub fn users_reason(op: UsersOp, e: &CallError<UsersError>) -> Reason {
         UsersError::BadSetting => {
             "the settings are layout (a keyboard layout there is, such as us, gb or us-intl) \
              and timezone (such as +02:00)"
+        }
+        UsersError::NotSupported => {
+            "this computer can't be turned off by software: it has shut down, and you can turn \
+             it off now"
         }
         UsersError::Unknown(n) => return Reason::Text(format!("the users service gave error {n}")),
     })

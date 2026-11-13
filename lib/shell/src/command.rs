@@ -189,6 +189,10 @@ pub enum Command {
     Stop(AppRef),
     /// `shutdown`
     Shutdown,
+    /// `poweroff`: 1.3's name, turning the computer off (note 0024, section 7)
+    PowerOff,
+    /// `reboot`: restarting it
+    Reboot,
     /// `potato`
     Potato,
 }
@@ -227,6 +231,8 @@ impl Command {
             Command::Revoke { .. } => "revoke",
             Command::Stop(_) => "stop",
             Command::Shutdown => "shutdown",
+            Command::PowerOff => "poweroff",
+            Command::Reboot => "reboot",
             Command::Potato => "potato",
         }
     }
@@ -345,6 +351,8 @@ pub fn parse(words: &[String]) -> Result<Option<Command>, ParseError> {
         "users" => no_arguments("users", args, Command::Users)?,
         "apps" => no_arguments("apps", args, Command::Apps)?,
         "shutdown" => no_arguments("shutdown", args, Command::Shutdown)?,
+        "poweroff" => no_arguments("poweroff", args, Command::PowerOff)?,
+        "reboot" => no_arguments("reboot", args, Command::Reboot)?,
         "potato" => no_arguments("potato", args, Command::Potato)?,
         "echo" => Command::Echo(args.join(" ")),
         "ls" => {
@@ -652,6 +660,8 @@ mod tests {
         assert_eq!(ok("users"), Command::Users);
         assert_eq!(ok("apps"), Command::Apps);
         assert_eq!(ok("shutdown"), Command::Shutdown);
+        assert_eq!(ok("poweroff"), Command::PowerOff);
+        assert_eq!(ok("reboot"), Command::Reboot);
         assert_eq!(ok("potato"), Command::Potato);
     }
 
@@ -957,6 +967,8 @@ mod tests {
             "revoke 1 a",
             "stop 1",
             "shutdown",
+            "poweroff",
+            "reboot",
             "potato",
         ] {
             let name = ok(line).name();

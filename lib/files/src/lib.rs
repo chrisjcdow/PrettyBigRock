@@ -237,6 +237,13 @@ impl Files {
         Files { tree, caps, current: String::from("/") }
     }
 
+    /// Where app `app`'s own folder is in its tree (docs/design/0024-the-session-desktop.md,
+    /// section 4): `/Home/Apps/APP`, the same path the user sees it at. The sandbox manager
+    /// makes it the first time an app whose manifest says `data` is launched.
+    pub fn data_folder(app: &str) -> String {
+        alloc::format!("/Home/Apps/{app}")
+    }
+
     /// The entries: (path, folder).
     pub fn entries(&self) -> Vec<(String, bool)> {
         self.tree.mounts().iter().map(|m| (m.path.clone(), m.kind == Kind::Folder)).collect()

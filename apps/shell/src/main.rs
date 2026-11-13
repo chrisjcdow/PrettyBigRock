@@ -348,6 +348,8 @@ impl Shell {
                 self.show(name, outcome)
             }
             Command::Shutdown => self.shutdown(),
+            Command::PowerOff => self.power(false),
+            Command::Reboot => self.power(true),
         }
     }
 
@@ -417,6 +419,24 @@ impl Shell {
         match done {
             Ok(()) => self.say("It's now safe to turn off your computer.\n"),
             Err(reason) => self.say(&format!("shutdown: {reason}\n")),
+        }
+    }
+
+    /// `poweroff` and `reboot` (note 0024, section 7): the users service saves everything,
+    /// stops every app (this shell among them) and turns the computer off or restarts it. On
+    /// success nothing comes back.
+    fn power(&self, restart: bool) -> Result<(), TerminalGone> {
+        self.say(if restart { "Restarting...\n" } else { "Turning the computer off...\n" })?;
+        let done = self.users_service().and_then(|u| {
+            let r = if restart { u.restart() } else { u.power_off() };
+            r.map_err(|e| users_reason(UsersOp::Power, &e))
+        });
+        match done {
+            Ok(()) => Ok(()),
+            Err(reason) => {
+                let name = if restart { "reboot" } else { "poweroff" };
+                self.say(&format!("{name}: {reason}\n"))
+            }
         }
     }
 

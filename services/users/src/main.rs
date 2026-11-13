@@ -26,12 +26,31 @@
 //! Sessions are tied to this service (note 0013): if it ends, they end. A session whose sandbox
 //! manager ends is started again (note 0018, section 3).
 //!
-//! **The terminal** (note 0018, sections 5 and 6). The console serves one terminal, on the
-//! screen; this service finds it through the supervisor (`lookup("console")`) and gives it to
-//! one session, the first administrator's (the one started at start-up), whose sandbox manager
-//! starts the shell on it. If the console goes (it ended, and was restarted), the terminal stops
-//! working: that session is started again with the new console's terminal. If there is no
-//! console yet, this service keeps asking for one, and starts the session again once there is.
+//! **The screens** (docs/design/0024-the-session-desktop.md, sections 2 and 8). The root
+//! program runs either the display server (the desktop, the default) or the console (text
+//! mode), never both. One session, the first administrator's (the one started at start-up), is
+//! the user at the screen:
+//! - with the display server (`lookup("display")`), this service asks it for a session
+//!   capability for that user, shows that session (`activate`), and gives the capability to
+//!   the session's sandbox manager, which starts the desktop;
+//! - with the console (`lookup("console")`), it gives that session the console's terminal, and
+//!   its sandbox manager starts the shell on it.
+//!
+//! If either goes (it ended and was restarted, or the display server was given up on and the
+//! root program started the console instead), that session is started again with what there is
+//! now. If there is neither yet, this service keeps asking, and starts the session again once
+//! there is one.
+//!
+//! **Noticing what has gone.** This service holds capabilities for the storage service, the
+//! system volume, each volume a session holds, the console or the display server, and the input
+//! service. It asks the kernel to tell it when nobody can receive on any of them any more (a
+//! *receiver watch*, note 0019), and checks which, then: a service that has gone has taken
+//! everything opened through it, so whatever depended on it starts afresh (note 0018,
+//! section 3). It only looks from time to time while it is waiting for something to appear.
+//!
+//! **Turning off and restarting** (note 0024, section 7): `power_off` and `restart` show the
+//! shutting-down screen, stop every session's apps, save every volume, then ask the power
+//! service (`lookup("power")`), which only this service may use.
 
 #![no_std]
 #![no_main]
@@ -51,7 +70,9 @@ use granite::process::{self, Spawn, Spawned, State, role};
 use granite::sys::{perm, rights};
 use granite::time;
 use pbr_archive::Archive;
+use pbr_interfaces::pbr_display_sessions as sessions_if;
 use pbr_interfaces::pbr_file::{self as file, FileError, FileRights, NodeKind};
+use pbr_interfaces::pbr_power::{self as power_if, PowerError};
 use pbr_interfaces::pbr_seat::{self as seat, SeatError};
 use pbr_interfaces::pbr_storage::{self as storage, StorageError, VolumeState};
 use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
@@ -69,16 +90,26 @@ granite::main!(main);
 const DEBUG: u64 = 1;
 /// Sessions' badges: this plus the session's number.
 const SESSION_BASE: u64 = 0x100;
+/// Added to a session's badge on the `pbr.users` capability for its desktop, which may only ask
+/// who the user is, read and change their settings, and turn the computer off or restart it
+/// (note 0024, section 6).
+const LIMITED: u64 = 1 << 40;
 
-/// What a sandbox manager is started with (see `services/sandbox`): its session's `pbr.users`
-/// at this role, and the badge of the `pbr.sandbox` capability minted for the session.
+/// What a sandbox manager is started with (see `services/sandbox`, which uses the same
+/// numbers): its session's `pbr.users` at this role; the console's terminal, for the session
+/// that owns it; the session's display capability, in a desktop session; and the limited
+/// `pbr.users` for its desktop.
 const SANDBOX_USERS: u32 = 1001;
-const SANDBOX_SESSION: u64 = 1;
-/// The role the session that owns the terminal gets its `pbr.terminal` at (`services/sandbox`
-/// uses the same number).
 const SANDBOX_TERMINAL: u32 = 1002;
+const SANDBOX_DISPLAY: u32 = 1003;
+const SANDBOX_DESKTOP_USERS: u32 = 1006;
+/// The badges of `pbr.sandbox` capabilities, as the sandbox manager reads them: the kind of
+/// holder in the top byte (1 trusted, 2 desktop, 3 permissions viewer, 4 file picker) and an
+/// app's number below, 0 for these, minted here for the self-test.
+const SANDBOX_KIND_SHIFT: u32 = 56;
+const SANDBOX_TRUSTED: u64 = 1 << SANDBOX_KIND_SHIFT;
 /// A session's budget: the sandbox manager and every app it starts are paid from it.
-const SESSION_BUDGET: u64 = 16 << 20;
+const SESSION_BUDGET: u64 = 32 << 20;
 /// Sandbox managers run at the priority of services.
 const SESSION_PRIORITY: u8 = 2;
 /// The volume in memory used when there is no system volume.
@@ -95,9 +126,13 @@ const CALL_MS: u64 = 60_000;
 /// there (note 0018, section 3), and how long such a check may wait.
 const CHECK_MS: u64 = 500;
 const CHECK_TIMEOUT_MS: u64 = 5_000;
-/// The bit of `Service::ended` that the kernel signals when the input service has gone (a
-/// receiver watch, note 0019). Sessions use the bits below it.
+/// The bits of `Service::ended` that the kernel signals when something this service holds has
+/// gone (receiver watches, note 0019): the input service; the console or the display server;
+/// the storage service or a volume. Sessions use the bits below them.
 const INPUT_GONE: u64 = 1 << 63;
+const FRONT_GONE: u64 = 1 << 62;
+const VOLUME_GONE: u64 = 1 << 61;
+const WATCHED: u64 = INPUT_GONE | FRONT_GONE | VOLUME_GONE;
 
 /// Where the users are kept.
 struct System {
@@ -113,8 +148,9 @@ struct Session {
     /// Its bit in [`Service::ended`].
     bit: u32,
     sandbox: Spawned,
-    /// In self-test runs, a `pbr.sandbox` capability for the session, for the root program.
-    test_cap: Option<Endpoint>,
+    /// In test runs, a copy of its sandbox manager's endpoint that can mint `pbr.sandbox`
+    /// capabilities for the root program (and can't receive).
+    test_minter: Option<Endpoint>,
     /// The capabilities its tree was made from: the sandbox manager got copies, so these are
     /// the parents of everything the session holds. They are also how a volume going is
     /// noticed (`Service::check`).
@@ -150,12 +186,17 @@ struct Service {
     next_session: u32,
     /// The console's terminal, while there is one that answers.
     console: Option<terminal::Client>,
-    /// Whose session gets the terminal: the first administrator's.
+    /// The display server's `pbr.display.sessions`, while there is one that answers.
+    display: Option<sessions_if::Client>,
+    /// Whose session gets the screen (the terminal or the display): the first administrator's.
     console_user: Option<String>,
+    /// The power service, once found.
+    power: Option<power_if::Client>,
     /// Signalled with a session's bit when its sandbox manager ends; bound to the endpoint.
     ended: Notification,
-    /// An administrator asked for `shutdown`.
+    /// An administrator asked for `shutdown`, or someone for `power_off` or `restart`.
     shut_down: bool,
+    /// Started for a boot test (`selftest` or `desktoptest`): `pbr.users.debug` is served.
     selftest: bool,
     /// The input service, through the capability that can set the keyboard layout and nothing
     /// else (note 0021, section 5), while it is known and answering.
@@ -177,7 +218,7 @@ fn main(mut start: granite::Start) -> i32 {
 
 fn run(start: &mut granite::Start) -> Result<(), String> {
     let args: Vec<&str> = start.args().split_whitespace().collect();
-    let selftest = args.contains(&"selftest");
+    let selftest = args.contains(&"selftest") || args.contains(&"desktoptest");
     // (Self-test only: behave as if there were no system volume.)
     let ignore_system = selftest && args.contains(&"nosystem");
     let endpoint = Endpoint(start.take(role::OWN).ok_or("started without an endpoint to serve")?);
@@ -193,7 +234,6 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
 
     granite::println!("users: looking for the system volume.");
     let (system, users) = find_system(&storage, ignore_system)?;
-    let console = find_console(&parent);
     let console_user = users.iter().find(|u| u.kind == Kind::Admin).map(|u| u.name.clone());
     let mut s = Service {
         endpoint,
@@ -207,14 +247,19 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         users,
         sessions: Vec::new(),
         next_session: 1,
-        console,
+        console: None,
+        display: None,
         console_user,
+        power: None,
         ended,
         shut_down: false,
         selftest,
         input: None,
         layout_set: false,
     };
+    s.watch(s.storage.endpoint(), VOLUME_GONE);
+    s.watch(s.system.root.endpoint(), VOLUME_GONE);
+    s.find_front();
     // At start, a session for the first administrator (M5 has no login yet; note 0017,
     // section 3).
     match s.users.iter().find(|u| u.kind == Kind::Admin).cloned() {
@@ -350,18 +395,14 @@ fn find_storage(parent: &supervisor::Client) -> Result<storage::Client, String> 
     }
 }
 
-/// The console's terminal, if the console is running: asked once, without waiting, since
-/// nothing here depends on it (`Service::check` asks again later).
-fn find_console(parent: &supervisor::Client) -> Option<terminal::Client> {
-    match parent.lookup("console") {
-        Ok(h) => {
-            let mut c = terminal::Client::new(Endpoint(h));
-            c.set_timeout_ms(CHECK_TIMEOUT_MS);
-            Some(c)
-        }
-        Err(CallError::Service(SupervisorError::NotReady)) => None,
+/// Looks up `name` through the supervisor, once, without waiting: `None` if it isn't running
+/// now (starting, being restarted, or not running in this boot at all).
+fn look_up(parent: &supervisor::Client, name: &str) -> Option<Endpoint> {
+    match parent.lookup(name) {
+        Ok(h) => Some(Endpoint(h)),
+        Err(CallError::Service(SupervisorError::NotReady | SupervisorError::Stopped)) => None,
         Err(e) => {
-            granite::println!("users: finding the console: {e}");
+            granite::println!("users: finding the {name}: {e}");
             None
         }
     }
@@ -501,27 +542,48 @@ impl Service {
             .find(|b| !self.sessions.iter().any(|s| s.bit == *b))
             .ok_or("too many sessions")?;
         let ep = Endpoint::create().map_err(|e| format!("an endpoint: {e}"))?;
-        let test_cap = if self.selftest {
-            Some(ep.mint(SANDBOX_SESSION, CLIENT).map_err(|e| format!("minting: {e}"))?)
+        // (A copy that can send and mint, not receive: the sandbox manager must be the only
+        // receiver, or its clients wouldn't hear when it has gone.)
+        let test_minter = if self.selftest {
+            Some(Endpoint(ep.0.duplicate(CLIENT).map_err(|e| format!("copying: {e}"))?))
         } else {
             None
         };
-        let users_cap = self
-            .endpoint
-            .mint(SESSION_BASE + u64::from(number), CLIENT)
-            .map_err(|e| format!("minting: {e}"))?;
+        let badge = SESSION_BASE + u64::from(number);
+        let users_cap = self.endpoint.mint(badge, CLIENT).map_err(|e| format!("minting: {e}"))?;
+        let desktop_users =
+            self.endpoint.mint(badge | LIMITED, CLIENT).map_err(|e| format!("minting: {e}"))?;
         let mut caps = vec![
             (role::OWN, ep.0.raw(), rights::ALL, false),
             (SANDBOX_USERS, users_cap.0.raw(), rights::ALL, false),
+            (SANDBOX_DESKTOP_USERS, desktop_users.0.raw(), rights::ALL, false),
             (role::ARCHIVE, self.archive.raw(), rights::READ | rights::MAP, false),
         ];
         if granite::log::handle() != 0 {
             caps.push((role::LOG, granite::log::handle(), rights::ALL & !rights::CONTROL, false));
         }
-        // The terminal, for the session that owns it. Its sandbox manager starts the shell on
-        // it, and gives it to nothing but apps granted `terminal` (note 0017, section 5).
+        // The screen, for the session that owns it: the display server's session for it,
+        // shown at once, or the console's terminal. Its sandbox manager starts the desktop or
+        // the shell, and gives the terminal to nothing but apps granted `terminal` (note 0017,
+        // section 5), and windows to nothing but apps granted `windows`.
+        let at_screen = self.console_user.as_deref() == Some(user.name.as_str());
+        let mut display_session = None;
+        if at_screen && let Some(d) = &self.display {
+            match d.start(&user.name) {
+                Ok(started) => {
+                    if let Err(e) = d.activate(started.number) {
+                        granite::println!("users: showing {}'s session: {e}", user.name);
+                    }
+                    display_session = Some(started.session);
+                }
+                Err(e) => granite::println!("users: a display session for {}: {e}", user.name),
+            }
+        }
+        if let Some(d) = &display_session {
+            caps.push((SANDBOX_DISPLAY, d.0.raw(), rights::ALL, false));
+        }
         let terminal = match &self.console {
-            Some(c) if self.console_user.as_deref() == Some(user.name.as_str()) => {
+            Some(c) if at_screen && display_session.is_none() => {
                 caps.push((SANDBOX_TERMINAL, c.endpoint().0.raw(), CLIENT, false));
                 true
             }
@@ -551,10 +613,16 @@ impl Service {
             user.name,
             if user.kind == Kind::Admin { "administrator" } else { "standard" },
             tree.len(),
-            if terminal { " and the terminal" } else { "" }
+            if terminal {
+                " and the terminal"
+            } else if display_session.is_some() {
+                " and the display"
+            } else {
+                ""
+            }
         );
         history.started(now_ms());
-        let held = tree
+        let held: Vec<file::Client> = tree
             .into_iter()
             .map(|(_, h, _)| {
                 let mut c = file::Client::new(Endpoint(h));
@@ -562,12 +630,15 @@ impl Service {
                 c
             })
             .collect();
+        for c in &held {
+            self.watch(c.endpoint(), VOLUME_GONE);
+        }
         self.sessions.push(Session {
             number,
             user: user.clone(),
             bit,
             sandbox,
-            test_cap,
+            test_minter,
             held,
             history,
         });
@@ -653,8 +724,42 @@ impl Service {
             );
             self.restart_session(s);
         }
-        self.check_console();
+        self.check_front();
         self.keep_layout();
+    }
+
+    /// Asks the kernel to signal `bit` once nobody can receive on `ep` any more. The watch
+    /// belongs to that capability, so it lasts as long as this service keeps it.
+    fn watch(&self, ep: &Endpoint, bit: u64) {
+        if let Err(e) = ep.watch_receiver(&self.ended, bit) {
+            granite::println!("users: can't watch a service: {e}");
+        }
+    }
+
+    /// Whether something this service needs isn't there yet, so that it must look again from
+    /// time to time (nothing will signal it when it appears).
+    fn waiting(&self) -> bool {
+        !self.shut_down && ((self.console.is_none() && self.display.is_none()) || !self.layout_set)
+    }
+
+    /// Looks for the display server, and for the console if there is no display server: the
+    /// root program runs one or the other (note 0024, section 1). Answers whether one was found.
+    fn find_front(&mut self) -> bool {
+        if let Some(ep) = look_up(&self.parent, "display") {
+            self.watch(&ep, FRONT_GONE);
+            let mut c = sessions_if::Client::new(ep);
+            c.set_timeout_ms(CHECK_TIMEOUT_MS);
+            self.display = Some(c);
+            return true;
+        }
+        if let Some(ep) = look_up(&self.parent, "console") {
+            self.watch(&ep, FRONT_GONE);
+            let mut c = terminal::Client::new(ep);
+            c.set_timeout_ms(CHECK_TIMEOUT_MS);
+            self.console = Some(c);
+            return true;
+        }
+        false
     }
 
     // --------------------------------------------------------------------------------------
@@ -745,29 +850,35 @@ impl Service {
         }
     }
 
-    /// Checks the console's terminal: if the console has gone, or has come (again), the session
-    /// that owns the terminal is started again with what there is now.
-    fn check_console(&mut self) {
-        let changed = match &self.console {
-            Some(c) if c.size().is_err_and(|e| lost(&e)) => {
-                granite::println!("users: the console has gone.");
-                self.console = find_console(&self.parent);
-                true
-            }
-            Some(_) => false,
-            None => {
-                self.console = find_console(&self.parent);
-                self.console.is_some()
-            }
+    /// Checks the screen's service (the display server or the console): if it has gone, or one
+    /// has come (again, or the console in the display server's place), the session at the
+    /// screen is started again with what there is now (note 0024, sections 2 and 8).
+    fn check_front(&mut self) {
+        let display_gone =
+            self.display.as_ref().is_some_and(|d| d.screens().is_err_and(|e| lost(&e)));
+        let console_gone = self.console.as_ref().is_some_and(|c| c.size().is_err_and(|e| lost(&e)));
+        let changed = if display_gone || console_gone {
+            granite::println!(
+                "users: the {} has gone.",
+                if display_gone { "display server" } else { "console" }
+            );
+            self.display = None;
+            self.console = None;
+            self.find_front();
+            true
+        } else if self.display.is_none() && self.console.is_none() {
+            self.find_front()
+        } else {
+            false
         };
         let Some(owner) = self.console_user.clone() else { return };
         if !changed {
             return;
         }
-        // (If the owner isn't logged in now, they get the terminal when they next are.)
+        // (If the owner isn't logged in now, they get the screen when they next are.)
         if let Some(i) = self.sessions.iter().position(|s| s.user.name == owner) {
             let s = self.sessions.remove(i);
-            granite::println!("users: starting {owner}'s session again, for the terminal.");
+            granite::println!("users: starting {owner}'s session again, for the screen.");
             self.restart_session(s);
         }
     }
@@ -805,6 +916,8 @@ impl Service {
             match found {
                 Ok((system, users)) => {
                     self.system = system;
+                    self.watch(self.storage.endpoint(), VOLUME_GONE);
+                    self.watch(self.system.root.endpoint(), VOLUME_GONE);
                     // The terminal belongs to the first administrator in the users read now.
                     self.console_user =
                         users.iter().find(|u| u.kind == Kind::Admin).map(|u| u.name.clone());
@@ -847,9 +960,14 @@ fn serve(s: &mut Service) {
         }
     };
     let mut buffer = vec![0u8; 4096];
-    let mut next_check = time::after_ms(CHECK_MS);
+    // When to look at what this service holds next. Nothing is looked at on a timer unless
+    // something is awaited: what it holds signals it when it goes.
+    let mut check_at: Option<u64> = None;
     loop {
-        let mut wake = next_check;
+        if s.waiting() && check_at.is_none() {
+            check_at = Some(time::after_ms(CHECK_MS));
+        }
+        let mut wake = check_at.unwrap_or(time::FOREVER);
         if let Some(due) = s.pending.iter().map(|p| p.due).min() {
             wake = wake.min(due * 1_000_000);
         }
@@ -858,8 +976,9 @@ fn serve(s: &mut Service) {
                 let badge = msg.badge;
                 let unknown = if badge == DEBUG && s.selftest {
                     debug_if::dispatch(s, msg, &buffer, reply)
-                } else if let Some(i) = s.session(badge) {
-                    users_if::dispatch(&mut Calls { s, session: i }, msg, &buffer, reply)
+                } else if let Some(i) = s.session(badge & !LIMITED) {
+                    let limited = badge & LIMITED != 0;
+                    users_if::dispatch(&mut Calls { s, session: i, limited }, msg, &buffer, reply)
                 } else {
                     Some((msg, reply))
                 };
@@ -870,8 +989,13 @@ fn serve(s: &mut Service) {
             Ok(Event::Signal(bits)) => {
                 if bits & INPUT_GONE != 0 {
                     s.input_gone();
+                    check_at = Some(time::now());
                 }
-                s.ended(bits & !INPUT_GONE)
+                // Something this service holds has gone: find out what, now.
+                if bits & (FRONT_GONE | VOLUME_GONE) != 0 {
+                    check_at = Some(time::now());
+                }
+                s.ended(bits & !WATCHED)
             }
             Ok(Event::Gone(_)) | Err(granite::Error::TimedOut) => {}
             Err(e) => {
@@ -879,11 +1003,71 @@ fn serve(s: &mut Service) {
                 time::sleep_ms(10);
             }
         }
-        if time::now() >= next_check {
+        if check_at.is_some_and(|t| time::now() >= t) {
+            check_at = None;
             s.check();
-            next_check = time::after_ms(CHECK_MS);
         }
-        s.restart_due();
+        // After `shutdown`, `power_off` or `restart` nothing is started again.
+        if !s.shut_down {
+            s.restart_due();
+        }
+    }
+}
+
+impl Service {
+    /// Turns the computer off or restarts it (note 0024, section 7), for `who`: the
+    /// shutting-down screen, every session's apps stopped, every volume saved, then the power
+    /// service. Returns only if that last step can't be done.
+    fn power(&mut self, who: &str, restart: bool) -> Result<(), UsersError> {
+        let what = if restart { "restart" } else { "turn the computer off" };
+        if self.power.is_none() {
+            let ep = look_up(&self.parent, "power").ok_or_else(|| {
+                granite::println!(
+                    "users: {who} asked to {what}, but the power service isn't there."
+                );
+                UsersError::NotReady
+            })?;
+            let mut c = power_if::Client::new(ep);
+            c.set_timeout_ms(CALL_MS);
+            self.power = Some(c);
+        }
+        granite::println!("users: {who} asked to {what}; saving every volume.");
+        if let Some(d) = &self.display
+            && let Err(e) = d.farewell(restart)
+        {
+            granite::println!("users: the shutting-down screen: {e}");
+        }
+        // Nothing is started or looked for again from here on.
+        self.shut_down = true;
+        self.pending.clear();
+        for s in self.sessions.drain(..) {
+            let _ = s.sandbox.process.stop(0);
+        }
+        // Saving can take a while on a slow disk: the storage service answers only once every
+        // filesystem server has finished. If it fails, the computer is still turned off as
+        // asked (as 1.3 did); RockFS's saving survives a power cut, and the log says so.
+        if let Err(e) = self.storage.shutdown() {
+            granite::println!("users: saving the volumes failed: {e}");
+        }
+        let power = self.power.as_ref().ok_or(UsersError::Failed)?;
+        let r = if restart { power.restart() } else { power.off() };
+        // (Success never answers: the machine has gone.)
+        match r {
+            Err(CallError::Service(PowerError::NotSupported)) => {
+                granite::println!(
+                    "PrettyBigRock has shut down. You can turn the computer off now."
+                );
+                if !restart && let Some(d) = &self.display {
+                    let _ = d.halted();
+                }
+                Err(UsersError::NotSupported)
+            }
+            Err(e) => {
+                granite::println!("users: the power service: {e}");
+                Err(UsersError::Failed)
+            }
+            Ok(()) => Ok(()),
+        }
     }
 }
 
@@ -902,6 +1086,8 @@ fn answered(r: granite::Result<()>) {
 struct Calls<'a> {
     s: &'a mut Service,
     session: usize,
+    /// Called through the desktop's capability, which can do less (note 0024, section 6).
+    limited: bool,
 }
 
 fn to_interface(u: &User) -> users_if::User {
@@ -928,7 +1114,14 @@ fn storage_error(e: CallError<StorageError>) -> UsersError {
 }
 
 impl Calls<'_> {
+    /// Refuses the operations the desktop's capability can't use: everything but `whoami`,
+    /// `settings`, `set`, `power_off` and `restart`.
+    fn full(&self) -> Result<(), UsersError> {
+        if self.limited { Err(UsersError::NotAllowed) } else { Ok(()) }
+    }
+
     fn admin(&self) -> Result<(), UsersError> {
+        self.full()?;
         match self.s.sessions[self.session].user.kind {
             Kind::Admin => Ok(()),
             Kind::Standard => Err(UsersError::NotAllowed),
@@ -1154,6 +1347,22 @@ impl users_if::Server for Calls<'_> {
         });
     }
 
+    fn power_off(&mut self, reply: users_if::power_off::Reply) {
+        let who = self.s.sessions[self.session].user.name.clone();
+        answered(match self.s.power(&who, false) {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.err(e),
+        });
+    }
+
+    fn restart(&mut self, reply: users_if::restart::Reply) {
+        let who = self.s.sessions[self.session].user.name.clone();
+        answered(match self.s.power(&who, true) {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.err(e),
+        });
+    }
+
     fn shutdown(&mut self, reply: users_if::shutdown::Reply) {
         // Saving every volume can take a while on a slow disk: the storage service answers
         // only once every filesystem server has finished.
@@ -1219,9 +1428,31 @@ impl debug_if::Server for Service {
         };
         let s = &self.sessions[i];
         let users = self.endpoint.mint(SESSION_BASE + u64::from(s.number), CLIENT);
-        let sandbox = s.test_cap.as_ref().map(|c| c.0.duplicate(CLIENT));
+        let sandbox = s.test_minter.as_ref().map(|m| m.mint(SANDBOX_TRUSTED, CLIENT));
         answered(match (users, sandbox) {
-            (Ok(u), Some(Ok(b))) => reply.ok(OutCap::Cap(u.0), OutCap::Cap(b)),
+            (Ok(u), Some(Ok(b))) => reply.ok(OutCap::Cap(u.0), OutCap::Cap(b.0)),
+            _ => reply.err(DebugError::Failed),
+        });
+    }
+
+    fn sandbox(
+        &mut self,
+        name: String,
+        kind: debug_if::SandboxKind,
+        reply: debug_if::sandbox::Reply,
+    ) {
+        let Some(s) = self.sessions.iter().find(|s| s.user.name == name) else {
+            return answered(reply.err(DebugError::NoSuchUser));
+        };
+        let kind = match kind {
+            debug_if::SandboxKind::Trusted => 1,
+            debug_if::SandboxKind::Desktop => 2,
+            debug_if::SandboxKind::Viewer => 3,
+            debug_if::SandboxKind::Picker => 4,
+        };
+        let cap = s.test_minter.as_ref().map(|m| m.mint(kind << SANDBOX_KIND_SHIFT, CLIENT));
+        answered(match cap {
+            Some(Ok(c)) => reply.ok(OutCap::Cap(c.0)),
             _ => reply.err(DebugError::Failed),
         });
     }
