@@ -3,7 +3,11 @@
 
 /// Launching apps and managing what they hold
 /// (docs/design/0017-users-sandbox-manager-and-manifests.md, section 7). Served by each
-/// session's sandbox manager to the session's trusted programs (the shell).
+/// session's sandbox manager, through capabilities badged with what their holder may do
+/// (docs/design/0024-the-session-desktop.md, section 9): trusted apps (the shell, Terminal,
+/// Files) may do everything but `grant`; the desktop may launch, `cancel`, `list`, `details`,
+/// `stop` and `apps`; the permissions viewer may `list`, `details`, `grants`, `revoke` and
+/// `stop`. Anything else answers `NotAllowed`.
 interface pbr.sandbox version 1;
 
 /// What a capability may do (copied from `pbr.file` until interfaces can import each other;
@@ -31,13 +35,62 @@ struct Grant { path: string<1024>, rights: FileRights, reason: GrantReason }
 /// One running app.
 struct AppInfo { id: u32, app: string<64>, trusted: bool, running: bool }
 
+/// What an app holds besides files, each at a start-up role (note 0024, section 10).
+bits AppServices: u32 {
+    /// `pbr.window`, at role 1003.
+    Windows @0,
+    /// `pbr.picker`, at role 1004.
+    Picker @1,
+    /// `pbr.sysinfo`, at role 1005.
+    Sysinfo @2,
+    /// The console's terminal, at role 1002.
+    Terminal @3,
+    /// Its own folder, `/Home/Apps/APP`.
+    Data @4,
+    /// `pbr.users`, at role 1001.
+    Users @5,
+    /// `pbr.sandbox`, at role 1000.
+    Sandbox @6,
+}
+
+/// More about a running app than `AppInfo`.
+struct AppDetails {
+    id: u32,
+    app: string<64>,
+    /// Its manifest's title.
+    title: string<64>,
+    trusted: bool,
+    /// Its windows may be system windows.
+    system: bool,
+    services: AppServices,
+    /// When it was started (nanoseconds on the monotonic clock).
+    started: u64,
+}
+
+/// An app that can be launched: what the start menu and the desktop list (note 0024,
+/// section 6).
+struct Available {
+    app: string<32>,
+    /// Its manifest's title.
+    title: string<64>,
+    /// Its manifest's `icon`, or empty.
+    icon: string<32>,
+    /// Its manifest asks for `windows`.
+    windows: bool,
+    /// Its manifest says `hidden`.
+    hidden: bool,
+}
+
 /// Starts preparing a launch of `apps/APP`, with `args` after its manifest's own arguments.
-/// Reads the manifest and decides what the app gets. A few launches can wait at once; when
-/// they are all taken, the caller's own oldest one is dropped to make room.
+/// Reads the manifest and decides what the app gets. Each caller may have 4 launches waiting
+/// at once, and there are at most 16 in all (`TooMany`); they go when `start` or `cancel` is
+/// called, or when the caller's capability goes.
 @1 fn prepare(app: string<64>, args: string<3072>) -> (launch: u32) error SandboxError;
 
 /// Adds a file or folder the user chose, at `path` in the app's tree. If something the app
-/// already gets covers it, with the rights this capability has, nothing more is added.
+/// already gets covers it, with the rights this capability has, nothing more is added. The
+/// capability's server is asked what it is with a 2-second limit, on a helper thread: other
+/// requests are answered meanwhile.
 @2 fn choose(launch: u32, path: string<1024>, node: handle<pbr.file>) -> () error SandboxError;
 
 /// Starts the app. The process capability can be watched and inspected, not stopped.
@@ -56,6 +109,17 @@ struct AppInfo { id: u32, app: string<64>, trusted: bool, running: bool }
 
 /// Stops an app.
 @7 fn stop(app: u32) -> () error SandboxError;
+
+/// Gives up a prepared launch.
+@8 fn cancel(launch: u32) -> () error SandboxError;
+
+/// More about a running app than `list` says.
+@9 fn details(app: u32) -> (details: AppDetails) error SandboxError;
+
+// @10, `grant`, comes with the file picker (note 0025, M6 stage 8).
+
+/// The apps in the start-up archive, in name order, with what the desktop shows of them.
+@11 fn apps() -> (apps: list<Available, 32>) error SandboxError;
 
 /// What can go wrong.
 flexible enum SandboxError {
@@ -81,4 +145,6 @@ flexible enum SandboxError {
     BadCapability @9,
     /// The program couldn't be started (the log says why).
     Failed @10,
+    /// The caller's capability doesn't allow this operation.
+    NotAllowed @11,
 }

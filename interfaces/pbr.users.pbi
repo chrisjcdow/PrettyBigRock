@@ -85,6 +85,15 @@ struct Setting {
 /// user at the keyboard.
 @9 fn set(key: string<32>, value: string<128>) -> () error UsersError;
 
+/// Turns the computer off (note 0024, section 7), for any user in M6: the screens show that it is
+/// shutting down, every session's apps are stopped, every volume is saved, then the power
+/// service turns it off. Answers only if that can't be done (`NotSupported`: the screen then
+/// says the computer can be turned off by hand, and nothing works until the next start).
+@10 fn power_off() -> () error UsersError;
+
+/// Restarts the computer, in the same order as `power_off`.
+@11 fn restart() -> () error UsersError;
+
 /// What can go wrong.
 flexible enum UsersError {
     /// Only administrators may.
@@ -104,4 +113,6 @@ flexible enum UsersError {
     TooMany @8,
     /// No setting has that name, or it can't have that value.
     BadSetting @9,
+    /// This computer can't be turned off by software (yet).
+    NotSupported @10,
 }

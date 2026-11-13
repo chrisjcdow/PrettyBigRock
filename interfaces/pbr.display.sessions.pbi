@@ -26,6 +26,10 @@ struct ScreenSummary { connector: string<32>, width: u32, height: u32, scale: u3
 @3 fn farewell(restarting: bool) -> () error SessionsError;
 /// The screens, for the About window's system information (note 0026, section 3).
 @4 fn screens() -> (screens: list<ScreenSummary, 16>) error SessionsError;
+/// After `farewell`, when the computer couldn't be turned off by software: says on every
+/// screen that it has shut down and can be turned off now (1.3's last screen; note 0024,
+/// section 7).
+@5 fn halted() -> () error SessionsError;
 
 /// What can go wrong.
 flexible enum SessionsError {

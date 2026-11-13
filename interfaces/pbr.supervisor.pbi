@@ -27,4 +27,8 @@ flexible enum SupervisorError {
     NotReady @2,
     /// Too much kept already.
     TooMany @3,
+    /// That service isn't running and won't be started again in this boot: it was never
+    /// started (the console when the display server is, and the other way round), or it ended
+    /// too often and was given up on (note 0024, section 8).
+    Stopped @4,
 }
