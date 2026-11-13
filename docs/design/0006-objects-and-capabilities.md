@@ -157,7 +157,10 @@ built on wait queues), so a long revocation can be preempted and doesn't mask in
 Each process's table has its own spin lock for the fast path (looking a handle up), taken
 inside the tree lock when both are needed. Splitting the tree lock is a later, local change.
 Lock-order rules for sleeping locks: a sleeping lock may never be taken while any spin lock
-is held, and the debug-build checker reports it if one is.
+is held, and the debug-build checker reports it if one is. A table's lock is never held
+while an object's own lock is taken (when a capability is added or removed, the object is
+told only after the table's lock is let go): an endpoint holds its lock while a waiting
+caller looks in its own table, so the order is the object's lock, then the table's.
 
 **Where the logic lives.** The tree itself (insert, move, close with re-parenting, revoke)
 is ordinary logic, so it lives in its own library, `lib/captree`, built both for the kernel
@@ -271,3 +274,10 @@ Every process has a **budget** in bytes, and a count of how much of it is used.
   never given an *unbadged* endpoint capability it can copy, since a copy of one can be minted
   with any badge (section 5).
 - 10 November 2026, M6: object type 12, the machine, with its right `POWER` (note 0019).
+- 13 November 2026, M6 stage 5: the rule that a table's lock is never held while an object's
+  lock is taken (section 5, "Locking"), which was followed everywhere but one place: moving a
+  capability in a message told the object it had left the sender's table while that table's
+  lock was still held. An endpoint call looks in the caller's table under the endpoint's lock,
+  so a thread calling an endpoint and another thread of the same process sending a capability
+  for it away could deadlock two cores. Stress found it once in 30 x86-64
+  BIOS self-test boots (run 43415528657).

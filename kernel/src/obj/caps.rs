@@ -284,8 +284,15 @@ pub fn give(
         *o = Owner::Table { process: Arc::downgrade(to), handle: nh };
     }
     added(&moved, to);
-    // Nothing else can change `from`'s table entry while the tree is locked.
-    if let Ok(old) = from.table.lock().remove(h) {
+    // Nothing else can change `from`'s table entry while the tree is locked. The table's lock
+    // must be let go before `removed`, as in `close` and `revoke`: `removed` takes the object's
+    // own lock, and an endpoint's is held while a waiting caller checks its own table
+    // (`still_held`), so holding a table's lock into it takes the two in the opposite order,
+    // and two cores doing both at once wait for each other for ever. (In Rust, a lock guard
+    // made in an `if let`'s condition lives until the end of the block, so it is taken out in a
+    // statement of its own, whose guard is dropped at the semicolon.)
+    let old = from.table.lock().remove(h);
+    if let Ok(old) = old {
         removed(&old, from);
     }
     Ok((nh, moved.rights))
