@@ -18,19 +18,13 @@ pub mod text_editor;
 mod text_field;
 
 pub use button::Button;
-#[allow(unused_imports)] // until every group of widgets is in (M6 stage 7)
 pub use buttons::*;
 pub use label::Label;
 pub use layout::{Column, Grid, Panel, Row, Space, Stretch};
-#[allow(unused_imports)] // until every group of widgets is in (M6 stage 7)
 pub use list::*;
-#[allow(unused_imports)] // until every group of widgets is in (M6 stage 7)
 pub use menu::*;
-#[allow(unused_imports)] // until every group of widgets is in (M6 stage 7)
 pub use terminal::*;
-#[allow(unused_imports)] // until every group of widgets is in (M6 stage 7)
 pub use text_editor::*;
-#[allow(unused_imports)] // until every group of widgets is in (M6 stage 7)
 pub use text_field::*;
 
 // Drawing shared by the widgets written on Button's pattern.
