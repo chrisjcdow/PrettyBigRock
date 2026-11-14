@@ -7,7 +7,7 @@
 /// (docs/design/0024-the-session-desktop.md, section 9): trusted apps (the shell, Terminal,
 /// Files) may do everything but `grant`; the desktop may launch, `cancel`, `list`, `details`,
 /// `stop` and `apps`; the permissions viewer may `list`, `details`, `grants`, `revoke` and
-/// `stop`. Anything else answers `NotAllowed`.
+/// `stop`; the file picker may `grant` and `details`. Anything else answers `NotAllowed`.
 interface pbr.sandbox version 1;
 
 /// What a capability may do (copied from `pbr.file` until interfaces can import each other;
@@ -116,7 +116,15 @@ struct Available {
 /// More about a running app than `list` says.
 @9 fn details(app: u32) -> (details: AppDetails) error SandboxError;
 
-// @10, `grant`, comes with the file picker (note 0025, M6 stage 8).
+/// Gives a running app a file or folder the user chose in the file picker (the picker only;
+/// note 0025): records it as `Chosen` at `path` in the app's tree, makes the sandbox manager's
+/// own capability from `node` with exactly `rights` (and a share of 4096 records), and answers
+/// with the app's capability, derived from it, so that `revoke` takes it back with everything
+/// the app opened through it. If something the app already holds covers `path` with `rights`,
+/// nothing is recorded: the answer is opened through that, and goes when it does. The app must
+/// hold the picker (`AppServices.Picker`).
+@10 fn grant(app: u32, path: string<1024>, node: handle<pbr.file>, rights: FileRights)
+        -> (granted: handle<pbr.file>) error SandboxError;
 
 /// The apps in the start-up archive, in name order, with what the desktop shows of them.
 @11 fn apps() -> (apps: list<Available, 32>) error SandboxError;

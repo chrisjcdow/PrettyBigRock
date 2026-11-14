@@ -52,11 +52,25 @@
 //! kernel says when every capability carrying it has gone, and the launches that app prepared
 //! go with it.
 //!
+//! **The file picker** (note 0025, section 1). A desktop session also keeps `apps/picker`
+//! running. This program makes the picker's endpoint and gives the picker its receiving end;
+//! each app granted `picker` gets a capability to it whose badge is the app's number, minted
+//! *watched*, so the picker knows which app is asking and hears when it has gone. The picker's
+//! own `pbr.sandbox` capability may only `grant` (and ask `details`, for the app's title): when
+//! the user chooses a file, the picker opens it and hands it here, and this program keeps the
+//! capability, records the grant as `Chosen`, and gives the app one derived from it. So a
+//! chosen file is in `grants` and `revoke` takes it back, like a grant at launch.
+//!
+//! **Records per grant** (note 0026, section 4). Each capability this program keeps for a grant
+//! is made with `pbr.file`'s `limit`, not `reduce`: whatever the app opens through it can hold
+//! at most 4096 of the filesystem server's records (16384 for each entry of a trusted app's
+//! tree), so one app can't fill a volume's records and stop every other program opening files.
+//!
 //! **Never held up.** This program answers one request at a time, so it must never wait for
-//! something it doesn't control. The only such wait is asking a chosen capability's server what
-//! it is (`choose`): that happens on a helper thread, with a 2-second limit, and the request is
-//! answered when it finishes (a reply capability can be kept and answered later, note 0008),
-//! while other requests are answered meanwhile.
+//! something it doesn't control. The only such waits are asking a chosen capability's server
+//! about it (`choose`, `grant`): that happens on a helper thread, with a 2-second limit, and the
+//! request is answered when it finishes (a reply capability can be kept and answered later,
+//! note 0008), while other requests are answered meanwhile.
 
 #![no_std]
 #![no_main]
@@ -102,12 +116,16 @@ const USERS: u32 = 1001;
 const TERMINAL: u32 = 1002;
 const DISPLAY: u32 = 1003;
 const DESKTOP_USERS: u32 = 1006;
+/// `pbr.sysinfo` (note 0026, section 3), for the system apps that ask for it.
+const SYSINFO: u32 = 1007;
 
 /// The roles an app finds what it is granted at (note 0024, section 10).
 const APP_SANDBOX: u32 = 1000;
 const APP_USERS: u32 = 1001;
 const APP_TERMINAL: u32 = 1002;
 const APP_WINDOW: u32 = 1003;
+const APP_PICKER: u32 = 1004;
+const APP_SYSINFO: u32 = 1005;
 
 /// The badges on `pbr.sandbox` capabilities: the kind of holder in the top byte, the app's
 /// number below. The users service mints some itself for the self-test: their number is 0, or
@@ -121,7 +139,7 @@ mod badge {
     pub const DESKTOP: u64 = 2;
     /// The permissions viewer (`sandbox view`): `list`, `details`, `grants`, `revoke`, `stop`.
     pub const VIEWER: u64 = 3;
-    /// The file picker: `grant` (note 0025; M6 stage 8).
+    /// The file picker: `grant`, and `details` for the title of the app asking (note 0025).
     pub const PICKER: u64 = 4;
 
     pub const fn make(kind: u64, app: u32) -> u64 {
@@ -159,7 +177,7 @@ fn allowed(kind: u64, op: u32) -> bool {
             matches!(op, PREPARE | CHOOSE | START | CANCEL | LIST | DETAILS | STOP | APPS)
         }
         badge::VIEWER => matches!(op, LIST | DETAILS | GRANTS | REVOKE | STOP),
-        badge::PICKER => op == GRANT,
+        badge::PICKER => matches!(op, GRANT | DETAILS),
         _ => false,
     }
 }
@@ -167,6 +185,7 @@ fn allowed(kind: u64, op: u32) -> bool {
 /// The apps kept running on the session's terminal or display.
 const SHELL: &str = "shell";
 const DESKTOP: &str = "desktop";
+const PICKER: &str = "picker";
 /// The "caller" of the launches this program makes itself (the shell's, the desktop's). Badge
 /// 0 is never on a capability anyone is given, so no client can use these launches.
 const ITSELF: u64 = 0;
@@ -191,6 +210,10 @@ const APPS_FOLDER: &str = "/Home/Apps";
 const APP_PRIORITY: u8 = 1;
 /// How long a chosen capability's server has to say what it is (and make the app's copy).
 const CHOSEN_TIMEOUT_MS: u64 = 2_000;
+/// Each grant's share of its filesystem server's records (note 0026, section 4): an app's place
+/// or chosen file, and each entry of a trusted app's tree.
+const RECORDS: u32 = 4096;
+const TRUSTED_RECORDS: u32 = 16384;
 /// A capability that can be passed on: what clients are given.
 const CLIENT: u32 = rights::SEND | rights::TRANSFER | rights::DUPLICATE;
 
@@ -222,6 +245,8 @@ struct Extras {
     system: bool,
     desktop: bool,
     viewer: bool,
+    picker: bool,
+    sysinfo: bool,
     /// Its own folder: whether, and why.
     data: Option<GrantReason>,
 }
@@ -258,21 +283,38 @@ struct Running {
     /// The copy of the session's display capability its window capability was asked for
     /// through: revoking it takes the app's windows.
     windows: Option<Handle>,
-    /// Whether this is the app this program keeps running (the shell or the desktop).
-    kept: bool,
+    /// Which of the apps this program keeps running it is (the shell, the desktop, the
+    /// picker), if any.
+    kept: Option<&'static str>,
 }
 
-/// A chosen capability being checked on a helper thread (`choose`).
+/// A capability being checked on a helper thread: `choose`'s for a launch, or `grant`'s for a
+/// running app.
 struct Checking {
     job: u32,
-    caller: u64,
-    launch: u32,
     path: String,
-    reply: sandbox::choose::Reply,
+    to: CheckFor,
     thread: Option<JoinHandle>,
 }
 
-/// What a helper thread found: whether it is a folder, its rights, and the app's own copy.
+/// Who a check is for, and how to answer.
+enum CheckFor {
+    Choose {
+        caller: u64,
+        launch: u32,
+        reply: sandbox::choose::Reply,
+    },
+    /// `covered`: what the app already holds covers the path, so the answer is opened through
+    /// that and nothing is recorded.
+    Grant {
+        app: u32,
+        covered: bool,
+        reply: sandbox::grant::Reply,
+    },
+}
+
+/// What a helper thread found: whether it is a folder, its rights, and the capability made
+/// from it (the one to keep, for a new grant; the app's own, when it was covered).
 type Checked = (u32, Option<(bool, u32, Handle)>);
 
 /// The app this program keeps running, and when it is due to be started again.
@@ -290,11 +332,17 @@ struct Sandbox {
     /// The session's `pbr.users`, for trusted apps, and the one for the desktop.
     users: Option<Endpoint>,
     desktop_users: Option<Endpoint>,
+    /// `pbr.sysinfo`, for apps granted `sysinfo`.
+    sysinfo: Option<Endpoint>,
     /// The console's terminal, if this session owns it.
     terminal: Option<terminal::Client>,
     /// The session's display, in a desktop session, while the display server is there.
     display: Option<Handle>,
-    kept: Option<Kept>,
+    /// The file picker's endpoint, in a desktop session, with every right: the picker gets
+    /// its receiving end, apps capabilities minted from it.
+    picker: Option<Endpoint>,
+    /// The apps it keeps running: the shell; or the desktop and the picker.
+    kept: Vec<Kept>,
     /// The start-up archive, mapped for good.
     archive: Archive<'static>,
     /// The session's tree.
@@ -328,6 +376,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let endpoint = Endpoint(start.take(role::OWN).ok_or("started without an endpoint to serve")?);
     let users = start.take(USERS).map(Endpoint);
     let desktop_users = start.take(DESKTOP_USERS).map(Endpoint);
+    let sysinfo = start.take(SYSINFO).map(Endpoint);
     let terminal = start.take(TERMINAL).map(|h| {
         let mut c = terminal::Client::new(Endpoint(h));
         c.set_timeout_ms(TERMINAL_CHECK_MS);
@@ -354,22 +403,32 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         // The watch belongs to this copy, which is kept for as long as the process runs.
         core::mem::forget(ep);
     }
-    // In a desktop session the desktop is kept running; with the terminal, the shell.
-    let kept = if display.is_some() {
-        Some(DESKTOP)
+    // In a desktop session the desktop and the picker are kept running; with the terminal, the
+    // shell.
+    let names: &[&'static str] = if display.is_some() {
+        &[DESKTOP, PICKER]
     } else if terminal.is_some() {
-        Some(SHELL)
+        &[SHELL]
     } else {
-        None
-    }
-    .map(|name| Kept { name, history: History::new(), due: Some(now_ms()) });
+        &[]
+    };
+    let kept = names
+        .iter()
+        .map(|&name| Kept { name, history: History::new(), due: Some(now_ms()) })
+        .collect();
+    let picker = match display {
+        Some(_) => Some(Endpoint::create().map_err(|e| format!("the picker's endpoint: {e}"))?),
+        None => None,
+    };
     let mut s = Sandbox {
         user,
         endpoint,
         users,
         desktop_users,
+        sysinfo,
         terminal,
         display,
+        picker,
         kept,
         archive,
         files,
@@ -406,8 +465,9 @@ fn serve(s: &mut Sandbox) {
         s.start_kept_if_due();
         let wake = s
             .kept
-            .as_ref()
-            .and_then(|k| k.due)
+            .iter()
+            .filter_map(|k| k.due)
+            .min()
             .map_or(time::FOREVER, |t| time::after_ms(t.saturating_sub(now_ms())));
         match ep.receive(&mut buffer, wake) {
             Ok(Event::Call(msg, reply)) => {
@@ -483,21 +543,54 @@ fn fs_rights(r: pbr_manifest::Rights) -> u32 {
     }
 }
 
-/// Runs on a helper thread: asks a chosen capability's server what it is and for a copy for
-/// the app, both within [`CHOSEN_TIMEOUT_MS`] (a server that doesn't answer as a filesystem
-/// does gives `None`).
-fn check_chosen(node: Endpoint) -> Option<(bool, u32, Handle)> {
+/// Runs on a helper thread: asks a chosen capability's server what it is and for a capability
+/// of this program's own, with `want` rights (or all it has, for `None`) and its share of
+/// records, both within [`CHOSEN_TIMEOUT_MS`]. A server that doesn't answer as a filesystem
+/// does, or a capability without the rights wanted, gives `None`.
+fn check_chosen(node: Endpoint, want: Option<u32>) -> Option<(bool, u32, Handle)> {
     let end = now_ms() + CHOSEN_TIMEOUT_MS;
     let mut node = file::Client::new(node);
     node.set_timeout_ms(CHOSEN_TIMEOUT_MS);
     let info = node.info().ok()?;
     let folder = info.kind == NodeKind::Folder;
-    let rights = info.rights.0 & (FsRights::READ.0 | FsRights::WRITE.0);
+    let has = info.rights.0 & (FsRights::READ.0 | FsRights::WRITE.0);
+    let rights = want.unwrap_or(has);
+    if has & rights != rights {
+        return None;
+    }
     // Step 3 for a chosen file: a capability of its own, derived from the one the caller
-    // passed, so revoking it later takes back only this app's.
+    // passed, so revoking it later takes back only this app's, with the app's share of the
+    // filesystem server's records (note 0026, section 4).
     node.set_timeout_ms(end.saturating_sub(now_ms()).max(1));
-    let own = node.reduce(file::FileRights(rights)).ok()?;
+    let own = node.limit(file::FileRights(rights), RECORDS).ok()?;
     Some((folder, rights, own.into_endpoint().0))
+}
+
+/// Runs on a helper thread, for a `grant` that something the app holds already covers: opens
+/// `rest` (empty for the same file or folder) through `held` with `rights`, within
+/// [`CHOSEN_TIMEOUT_MS`]. What it gives is derived from the app's own grant, so it goes when
+/// that does, and it counts against that grant's share of records.
+fn open_through(held: Endpoint, rest: &str, rights: u32) -> Option<(bool, u32, Handle)> {
+    let mut node = file::Client::new(held);
+    node.set_timeout_ms(CHOSEN_TIMEOUT_MS);
+    let (node, folder) = if rest.is_empty() {
+        let folder = node.info().ok()?.kind == NodeKind::Folder;
+        (node.reduce(file::FileRights(rights)).ok()?, folder)
+    } else {
+        let opened = node.open(rest, file::FileRights(rights)).ok()?;
+        (opened.node, opened.info.kind == NodeKind::Folder)
+    };
+    Some((folder, rights, node.into_endpoint().0))
+}
+
+impl CheckFor {
+    /// Answers with an error.
+    fn fail(self, e: SandboxError) {
+        answered(match self {
+            CheckFor::Choose { reply, .. } => reply.err(e),
+            CheckFor::Grant { reply, .. } => reply.err(e),
+        })
+    }
 }
 
 impl Sandbox {
@@ -633,6 +726,8 @@ impl Sandbox {
                 system: d.system,
                 desktop: d.desktop,
                 viewer: d.sandbox_view,
+                picker: d.picker,
+                sysinfo: d.sysinfo,
                 data: d.data.map(|(_, why)| reason(why)),
             },
             grants,
@@ -672,35 +767,42 @@ impl Sandbox {
         if let Err(e) = early {
             return answered(reply.err(e));
         }
+        self.check(path, CheckFor::Choose { caller, launch: id, reply }, move || {
+            check_chosen(node, None)
+        });
+    }
+
+    /// Runs `work` on a helper thread; when it signals, [`Sandbox::finish_checks`] answers.
+    fn check(
+        &mut self,
+        path: String,
+        to: CheckFor,
+        work: impl FnOnce() -> Option<(bool, u32, Handle)> + Send + 'static,
+    ) {
         let job = self.next_job;
         self.next_job += 1;
         let found = self.checked.clone();
         let signals = match self.signals.0.duplicate(rights::ALL) {
             Ok(h) => Notification(h),
-            Err(_) => return answered(reply.err(SandboxError::Failed)),
+            Err(_) => return to.fail(SandboxError::Failed),
         };
+        // A *closure* (`move || …`) is a function made on the spot that takes what it uses
+        // with it: here the capability and the shared list, owned by the new thread.
         let thread = granite::thread::spawn(move || {
-            let result = check_chosen(node);
+            let result = work();
             found.lock().push((job, result));
             let _ = signals.signal(CHECKED);
         });
         match thread {
-            Ok(t) => self.checking.push(Checking {
-                job,
-                caller,
-                launch: id,
-                path,
-                reply,
-                thread: Some(t),
-            }),
+            Ok(t) => self.checking.push(Checking { job, path, to, thread: Some(t) }),
             Err(e) => {
                 granite::println!("sandbox ({}): a helper thread: {e}", self.user);
-                answered(reply.err(SandboxError::NoMemory));
+                to.fail(SandboxError::NoMemory);
             }
         }
     }
 
-    /// Answers the `choose` requests whose capabilities have been checked.
+    /// Answers the `choose` and `grant` requests whose capabilities have been checked.
     fn finish_checks(&mut self) {
         let done: Vec<Checked> = core::mem::take(&mut *self.checked.lock());
         for (job, result) in done {
@@ -710,17 +812,146 @@ impl Sandbox {
             if let Some(t) = c.thread.take() {
                 let _ = t.join();
             }
-            let answer = match result {
-                Some((folder, rights, own)) => {
-                    self.add_chosen(c.caller, c.launch, &c.path, folder, rights, own)
+            match c.to {
+                CheckFor::Choose { caller, launch, reply } => {
+                    let answer = match result {
+                        Some((folder, rights, own)) => {
+                            self.add_chosen(caller, launch, &c.path, folder, rights, own)
+                        }
+                        None => Err(SandboxError::BadCapability),
+                    };
+                    answered(match answer {
+                        Ok(()) => reply.ok(),
+                        Err(e) => reply.err(e),
+                    });
                 }
-                None => Err(SandboxError::BadCapability),
-            };
-            answered(match answer {
-                Ok(()) => c.reply.ok(),
-                Err(e) => c.reply.err(e),
-            });
+                CheckFor::Grant { app, covered, reply } => {
+                    let answer = match result {
+                        Some((_, _, given)) if covered => Ok(given),
+                        Some((folder, rights, own)) => {
+                            self.add_granted(app, &c.path, folder, rights, own)
+                        }
+                        None => Err(SandboxError::BadCapability),
+                    };
+                    answered(match answer {
+                        Ok(cap) => reply.ok(OutCap::Cap(Endpoint(cap))),
+                        Err(e) => reply.err(e),
+                    });
+                }
+            }
         }
+    }
+
+    /// Gives a running app a file or folder the user chose in the picker (note 0025, section
+    /// 1): checked here as far as it can be at once, then on a helper thread (the server must
+    /// be asked), and answered by [`Sandbox::finish_checks`].
+    fn grant(
+        &mut self,
+        id: u32,
+        path: String,
+        node: Endpoint,
+        rights: u32,
+        reply: sandbox::grant::Reply,
+    ) {
+        let user = self.user.clone();
+        let early = (|| {
+            if pbr_filetree::normalize("/", &path).as_deref() != Ok(path.as_str()) || path == "/" {
+                return Err(SandboxError::BadPath);
+            }
+            let rw = FsRights::READ.0 | FsRights::WRITE.0;
+            if rights & !rw != 0 || rights & FsRights::READ.0 == 0 {
+                return Err(SandboxError::BadCapability);
+            }
+            if self.checking.len() >= MAX_CHECKING {
+                return Err(SandboxError::TooMany);
+            }
+            let app = self.app(id)?;
+            // Only an app that holds the picker can be given what was chosen in it.
+            if app.services.0 & AppServices::PICKER.0 == 0 {
+                return Err(SandboxError::NotAllowed);
+            }
+            // Something it holds already covers the path: the answer comes through that.
+            for g in &app.grants {
+                let rest = if g.path == path {
+                    Some("")
+                } else if g.folder && inside(&g.path, &path) {
+                    Some(if g.path == "/" { &path[1..] } else { &path[g.path.len() + 1..] })
+                } else {
+                    None
+                };
+                if let Some(rest) = rest {
+                    if g.rights & rights != rights {
+                        return Err(SandboxError::Overlaps);
+                    }
+                    let held = g.cap.as_ref().ok_or(SandboxError::Failed)?;
+                    let held = held.duplicate(rights::SEND).map_err(|_| SandboxError::Failed)?;
+                    return Ok(Some((Endpoint(held), String::from(rest))));
+                }
+                // A chosen folder may not contain something the app gets: its tree can't hold
+                // one entry inside another (note 0017, Changes).
+                if inside(&path, &g.path) || (!g.folder && inside(&g.path, &path)) {
+                    return Err(SandboxError::Overlaps);
+                }
+            }
+            if app.grants.len() >= pbr_filetree::MAX_ENTRIES {
+                return Err(SandboxError::TooMany);
+            }
+            Ok(None)
+        })();
+        match early {
+            Err(e) => {
+                granite::println!("sandbox ({user}): not granting {path} to app {id}: {e:?}");
+                answered(reply.err(e))
+            }
+            Ok(Some((held, rest))) => {
+                let to = CheckFor::Grant { app: id, covered: true, reply };
+                self.check(path, to, move || open_through(held, &rest, rights));
+            }
+            Ok(None) => {
+                let to = CheckFor::Grant { app: id, covered: false, reply };
+                self.check(path, to, move || check_chosen(node, Some(rights)));
+            }
+        }
+    }
+
+    /// The rest of `grant`, once the chosen capability is known to be a file or folder and
+    /// `own` is this program's capability for it: the grant is recorded, and the app is given
+    /// a copy, derived from `own`, so that revoking `own` takes it back.
+    fn add_granted(
+        &mut self,
+        id: u32,
+        path: &str,
+        folder: bool,
+        rights: u32,
+        own: Handle,
+    ) -> Result<Handle, SandboxError> {
+        let user = self.user.clone();
+        // (The app may have ended, or been given something covering it, meanwhile.)
+        let app = self.app(id)?;
+        if app
+            .grants
+            .iter()
+            .any(|g| g.path == path || inside(&g.path, path) || inside(path, &g.path))
+        {
+            return Err(SandboxError::Overlaps);
+        }
+        if app.grants.len() >= pbr_filetree::MAX_ENTRIES {
+            return Err(SandboxError::TooMany);
+        }
+        let theirs = own.duplicate(CLIENT).map_err(|_| SandboxError::Failed)?;
+        granite::println!(
+            "sandbox ({user}): {} was given {path} ({}), chosen in the picker.",
+            app.name,
+            if rights & FsRights::WRITE.0 != 0 { "read and write" } else { "read" }
+        );
+        app.grants.push(Held {
+            path: String::from(path),
+            folder,
+            rights,
+            reason: GrantReason::Chosen,
+            cap: Some(own),
+        });
+        Ok(theirs)
     }
 
     /// The rest of `choose`, once the chosen capability is known to be a file or folder with
@@ -846,11 +1077,18 @@ impl Sandbox {
             self.make_data_folder(&launch.name)?;
         }
 
-        // 3. A capability for each grant, derived from the session's with the rights granted.
+        // 3. A capability for each grant, derived from the session's with the rights granted
+        // and the grant's share of records (note 0026, section 4).
         let mut grants = Vec::new();
         for mut g in launch.grants.drain(..) {
             if g.cap.is_none() {
-                match self.files.open(&g.path, FsRights(g.rights)) {
+                let share =
+                    if g.reason == GrantReason::Trusted { TRUSTED_RECORDS } else { RECORDS };
+                let made = self
+                    .files
+                    .open(&g.path, FsRights(g.rights))
+                    .and_then(|f| f.limit(FsRights(g.rights), share));
+                match made {
                     Ok(f) => g.cap = Some(f.into_handle()),
                     Err(FilesError::File(file::FileError::NotFound)) => {
                         // A place this user's home doesn't have: nothing to give.
@@ -890,9 +1128,14 @@ impl Sandbox {
         if granite::log::handle() != 0 {
             caps.push((role::LOG, granite::log::handle(), rights::ALL & !rights::CONTROL, false));
         }
+        // The picker this program keeps running is told so by its badges and roles: its
+        // `pbr.sandbox` may only grant, and it serves the picker's endpoint.
+        let is_picker = caller == ITSELF && launch.name == PICKER;
         // `pbr.sandbox`, badged with what this app may do, and watched, so that its launches
         // go when it does.
-        let kind = if extras.trusted {
+        let kind = if is_picker {
+            Some(badge::PICKER)
+        } else if extras.trusted {
             Some(badge::TRUSTED)
         } else if extras.desktop {
             Some(badge::DESKTOP)
@@ -912,7 +1155,9 @@ impl Sandbox {
         }
         // `pbr.users`: all of the session's for a trusted app; the desktop's can only ask who
         // the user is, the settings and the power operations (note 0024, section 6).
-        let users = if extras.trusted {
+        let users = if is_picker {
+            None
+        } else if extras.trusted {
             self.users.as_ref()
         } else if extras.desktop {
             self.desktop_users.as_ref()
@@ -922,6 +1167,30 @@ impl Sandbox {
         if let Some(u) = users {
             caps.push((APP_USERS, u.0.raw(), CLIENT, false));
             services.0 |= AppServices::USERS.0;
+        }
+        // The picker: its endpoint's receiving end for the picker itself; for an app granted
+        // `picker`, a capability whose badge is the app's number, watched, so that the picker
+        // hears when the app has gone (note 0025, section 1).
+        if let Some(ep) = &self.picker {
+            if is_picker {
+                let serve = ep.0.duplicate(rights::RECEIVE).map_err(|_| SandboxError::Failed)?;
+                caps.push((APP_PICKER, serve.raw(), rights::RECEIVE, false));
+                keep.push(serve);
+            } else if extras.picker {
+                let theirs = ep
+                    .mint_watched(u64::from(app_id), rights::SEND | rights::TRANSFER)
+                    .map_err(|_| SandboxError::Failed)?;
+                caps.push((APP_PICKER, theirs.0.raw(), rights::SEND | rights::TRANSFER, false));
+                keep.push(theirs.0);
+                services.0 |= AppServices::PICKER.0;
+            }
+        }
+        // System information, if it is granted.
+        if extras.sysinfo
+            && let Some(i) = &self.sysinfo
+        {
+            caps.push((APP_SYSINFO, i.0.raw(), CLIENT, false));
+            services.0 |= AppServices::SYSINFO.0;
         }
         // The terminal, if it is granted and this session has it.
         if extras.terminal
@@ -991,6 +1260,10 @@ impl Sandbox {
             grants.len(),
             if windows.is_some() { " and windows" } else { "" }
         );
+        let kept = match caller {
+            ITSELF => self.kept.iter().find(|k| k.name == launch.name).map(|k| k.name),
+            _ => None,
+        };
         self.apps.push(Running {
             id: app_id,
             name: launch.name,
@@ -1003,7 +1276,7 @@ impl Sandbox {
             _thread: spawned.thread,
             grants,
             windows,
-            kept: caller == ITSELF,
+            kept,
         });
         Ok((app_id, Process(theirs)))
     }
@@ -1038,17 +1311,17 @@ impl Sandbox {
         }
         let _ = app.process.stop(0);
         granite::println!("sandbox ({}): stopped {}.", self.user, app.name);
-        if app.kept {
-            self.kept_ended();
+        if let Some(name) = app.kept {
+            self.kept_ended(name);
         }
         Ok(())
     }
 
-    /// The app this program keeps running has ended: it is started again, with the restart
+    /// An app this program keeps running has ended: it is started again, with the restart
     /// policy, while what it needs is still there.
-    fn kept_ended(&mut self) {
+    fn kept_ended(&mut self, name: &str) {
         let user = &self.user;
-        let Some(k) = &mut self.kept else { return };
+        let Some(k) = self.kept.iter_mut().find(|k| k.name == name) else { return };
         match k.history.crashed(now_ms()) {
             Decision::Restart { delay_ms } => k.due = Some(now_ms() + delay_ms),
             Decision::GiveUp => {
@@ -1061,12 +1334,12 @@ impl Sandbox {
         }
     }
 
-    /// Starts the shell or the desktop, if that is due.
+    /// Starts the shell, the desktop or the picker, if that is due.
     fn start_kept_if_due(&mut self) {
-        let Some(k) = &mut self.kept else { return };
-        if k.due.is_none_or(|t| t > now_ms()) {
+        let now = now_ms();
+        let Some(k) = self.kept.iter_mut().find(|k| k.due.is_some_and(|t| t <= now)) else {
             return;
-        }
+        };
         k.due = None;
         let name = k.name;
         if name == SHELL {
@@ -1090,13 +1363,13 @@ impl Sandbox {
         } else if self.display.is_none() {
             return;
         }
-        if let Some(k) = &mut self.kept {
+        if let Some(k) = self.kept.iter_mut().find(|k| k.name == name) {
             k.history.started(now_ms());
         }
         let started = self.prepare(ITSELF, name, "").and_then(|id| self.start(ITSELF, id));
         if let Err(e) = started {
             granite::println!("sandbox ({}): can't start the {name}: {e:?}", self.user);
-            self.kept_ended();
+            self.kept_ended(name);
         }
     }
 
@@ -1126,7 +1399,7 @@ impl Sandbox {
             return;
         }
         let user = &self.user;
-        let mut kept_ended = false;
+        let mut kept_ended: Vec<&'static str> = Vec::new();
         self.apps.retain(|a| {
             if bits & (1 << a.bit) == 0 {
                 return true;
@@ -1137,13 +1410,13 @@ impl Sandbox {
                 Ok(State::Running | State::Ending) => true,
                 state => {
                     granite::println!("sandbox ({user}): {} ended: {state:?}.", a.name);
-                    kept_ended |= a.kept;
+                    kept_ended.extend(a.kept);
                     false
                 }
             }
         });
-        if kept_ended {
-            self.kept_ended();
+        for name in kept_ended {
+            self.kept_ended(name);
         }
     }
 
@@ -1288,6 +1561,20 @@ impl sandbox::Server for Sandbox {
             services: a.services,
             started: a.started,
         }));
+    }
+
+    fn grant(
+        &mut self,
+        app: u32,
+        path: String,
+        node: Endpoint,
+        rights: FileRights,
+        reply: sandbox::grant::Reply,
+    ) {
+        if !may(reply.badge(), op::GRANT) {
+            return answered(reply.err(SandboxError::NotAllowed));
+        }
+        Sandbox::grant(self, app, path, node, rights.0, reply);
     }
 
     fn apps(&mut self, reply: sandbox::apps::Reply) {
