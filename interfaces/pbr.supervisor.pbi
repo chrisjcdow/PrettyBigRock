@@ -19,6 +19,10 @@ interface pbr.supervisor version 1;
 /// Release everything kept for this child's previous instances.
 @3 fn release_kept() -> () error SupervisorError;
 
+/// The computer's memory and how much is free, in bytes, from the root program's own budget
+/// (which is all of it): for `pbr.sysinfo` (note 0026, section 3). The users service only.
+@4 fn memory() -> (total: u64, available: u64) error SupervisorError;
+
 /// What can go wrong.
 flexible enum SupervisorError {
     /// This child may not look that service up (or keep memory).

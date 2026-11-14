@@ -29,6 +29,11 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// The system's name, as `pbr.sysinfo` gives it (note 0026, section 3).
+pub const SYSTEM_NAME: &str = "PrettyBigRock";
+/// The version being built, which M6 releases as its alpha (note 0026, section 5).
+pub const VERSION: &str = "2.0.0-alpha.1";
+
 /// One of the folders in a user's home that apps ask for by name (note 0017, section 4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Place {

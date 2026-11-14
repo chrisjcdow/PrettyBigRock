@@ -21,6 +21,9 @@ enum SandboxKind { Trusted @1, Desktop @2, Viewer @3, Picker @4 }
 /// Where the users are kept: the system volume's id, and whether it is in memory.
 @101 fn system() -> (volume: u32, in_memory: bool) error DebugError;
 
+/// A `pbr.sysinfo` capability, as the system apps that ask for `sysinfo` are given.
+@103 fn sysinfo() -> (sysinfo: handle<any>) error DebugError;
+
 /// What can go wrong.
 flexible enum DebugError {
     NoSuchUser @1,

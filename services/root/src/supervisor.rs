@@ -733,6 +733,22 @@ impl supervisor::Server for Calls<'_> {
         });
     }
 
+    fn memory(&mut self, reply: supervisor::memory::Reply) {
+        let users = {
+            let g = self.0.0.lock();
+            caller(&g, reply.badge()).is_some_and(|i| g.children[i].kind == Kind::Users)
+        };
+        if !users {
+            return answered(reply.err(SupervisorError::NotAllowed));
+        }
+        // The root program's budget is all the memory programs can have; every service's budget
+        // is taken from it, so what it has left unused is what is free.
+        answered(match process::info(process::self_handle()) {
+            Ok(i) => reply.ok(i.budget, i.budget.saturating_sub(i.used)),
+            Err(_) => reply.err(SupervisorError::NotReady),
+        });
+    }
+
     fn release_kept(&mut self, reply: supervisor::release_kept::Reply) {
         let result = {
             let mut g = self.0.0.lock();

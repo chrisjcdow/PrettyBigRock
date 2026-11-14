@@ -21,7 +21,9 @@
 //! It serves, on one endpoint, told apart by badges (a badge is a number a service stamps on
 //! each capability it hands out, so it knows who is calling; note 0008):
 //! - [`SESSION_BASE`] + a session's number: `pbr.users`, for that session;
-//! - [`DEBUG`]: `pbr.users.debug`, only in self-test runs, for the root program.
+//! - [`DEBUG`]: `pbr.users.debug`, only in self-test runs, for the root program;
+//! - [`SYSINFO`]: `pbr.sysinfo`, read-only facts about the computer (note 0026, section 3), which
+//!   each session's sandbox manager passes on to the system apps that ask for `sysinfo`.
 //!
 //! Sessions are tied to this service (note 0013): if it ends, they end. A session whose sandbox
 //! manager ends is started again (note 0018, section 3).
@@ -76,6 +78,7 @@ use pbr_interfaces::pbr_power::{self as power_if, PowerError};
 use pbr_interfaces::pbr_seat::{self as seat, SeatError};
 use pbr_interfaces::pbr_storage::{self as storage, StorageError, VolumeState};
 use pbr_interfaces::pbr_supervisor::{self as supervisor, SupervisorError};
+use pbr_interfaces::pbr_sysinfo::{self as sysinfo_if, SysinfoError};
 use pbr_interfaces::pbr_terminal as terminal;
 use pbr_interfaces::pbr_users::{self as users_if, UserKind, UsersError};
 use pbr_interfaces::pbr_users_debug::{self as debug_if, DebugError};
@@ -88,6 +91,9 @@ granite::main!(main);
 
 /// The badge of the root program's `pbr.users.debug` (self-test runs only).
 const DEBUG: u64 = 1;
+/// The badge of `pbr.sysinfo`: the same for everyone who holds it, since it says nothing about
+/// who is asking or anyone else.
+const SYSINFO: u64 = 2;
 /// Sessions' badges: this plus the session's number.
 const SESSION_BASE: u64 = 0x100;
 /// Added to a session's badge on the `pbr.users` capability for its desktop, which may only ask
@@ -103,6 +109,7 @@ const SANDBOX_USERS: u32 = 1001;
 const SANDBOX_TERMINAL: u32 = 1002;
 const SANDBOX_DISPLAY: u32 = 1003;
 const SANDBOX_DESKTOP_USERS: u32 = 1006;
+const SANDBOX_SYSINFO: u32 = 1007;
 /// The badges of `pbr.sandbox` capabilities, as the sandbox manager reads them: the kind of
 /// holder in the top byte (1 trusted, 2 desktop, 3 permissions viewer, 4 file picker) and an
 /// app's number below, 0 for these, minted here for the self-test.
@@ -556,10 +563,12 @@ impl Service {
         let users_cap = self.endpoint.mint(badge, CLIENT).map_err(|e| format!("minting: {e}"))?;
         let desktop_users =
             self.endpoint.mint(badge | LIMITED, CLIENT).map_err(|e| format!("minting: {e}"))?;
+        let sysinfo = self.endpoint.mint(SYSINFO, CLIENT).map_err(|e| format!("minting: {e}"))?;
         let mut caps = vec![
             (role::OWN, ep.0.raw(), rights::ALL, false),
             (SANDBOX_USERS, users_cap.0.raw(), rights::ALL, false),
             (SANDBOX_DESKTOP_USERS, desktop_users.0.raw(), rights::ALL, false),
+            (SANDBOX_SYSINFO, sysinfo.0.raw(), rights::ALL, false),
             (role::ARCHIVE, self.archive.raw(), rights::READ | rights::MAP, false),
         ];
         if granite::log::handle() != 0 {
@@ -995,6 +1004,8 @@ fn serve(s: &mut Service) {
                 let badge = msg.badge;
                 let unknown = if badge == DEBUG && s.selftest {
                     debug_if::dispatch(s, msg, &buffer, reply)
+                } else if badge == SYSINFO {
+                    sysinfo_if::dispatch(&mut Facts(s), msg, &buffer, reply)
                 } else if let Some(i) = s.session(badge & !LIMITED) {
                     let limited = badge & LIMITED != 0;
                     users_if::dispatch(&mut Calls { s, session: i, limited }, msg, &buffer, reply)
@@ -1428,6 +1439,86 @@ fn volume_info(v: &storage::VolumeInfo) -> users_if::VolumeInfo {
 }
 
 // ------------------------------------------------------------------------------------------
+// `pbr.sysinfo`: facts about the computer, for About and Terminal (note 0026, section 3).
+
+/// `pbr.sysinfo`, answering one call. (A *tuple struct*: a struct whose one field has no name,
+/// reached as `.0`.)
+struct Facts<'a>(&'a mut Service);
+
+impl sysinfo_if::Server for Facts<'_> {
+    fn version(&mut self, reply: sysinfo_if::version::Reply) {
+        answered(reply.ok(pbr_manifest::SYSTEM_NAME, pbr_manifest::VERSION))
+    }
+
+    fn memory(&mut self, reply: sysinfo_if::memory::Reply) {
+        // The root program knows: every service's budget is taken from its own.
+        answered(match self.0.parent.memory() {
+            Ok(m) => reply.ok(m.total, m.available),
+            Err(_) => reply.err(SysinfoError::NotReady),
+        })
+    }
+
+    fn screens(&mut self, reply: sysinfo_if::screens::Reply) {
+        let Some(d) = &self.0.display else {
+            // Text mode: no display server, so no screens to describe.
+            return answered(reply.ok(&[]));
+        };
+        answered(match d.screens() {
+            Ok(list) => {
+                let screens: Vec<sysinfo_if::ScreenSummary> = list
+                    .into_iter()
+                    .map(|s| sysinfo_if::ScreenSummary {
+                        connector: s.connector,
+                        width: s.width,
+                        height: s.height,
+                        scale: s.scale,
+                    })
+                    .collect();
+                reply.ok(&screens)
+            }
+            Err(_) => reply.err(SysinfoError::NotReady),
+        })
+    }
+
+    fn volumes(&mut self, reply: sysinfo_if::volumes::Reply) {
+        let s = &mut *self.0;
+        let Ok(list) = s.storage.list() else {
+            return answered(reply.err(SysinfoError::NotReady));
+        };
+        let mut out = Vec::new();
+        for v in &list {
+            // How full it is, from its filesystem server, if it is being served. (A server
+            // that doesn't answer in time leaves it at 0 rather than holding everyone up.)
+            let mut free = 0;
+            if v.state == VolumeState::Ready
+                && let Ok(root) = s.storage.open(v.id)
+            {
+                let mut root = file::Client::new(Endpoint(root));
+                root.set_timeout_ms(CHECK_TIMEOUT_MS);
+                if let Ok(space) = root.space() {
+                    free = space.free;
+                }
+            }
+            out.push(sysinfo_if::VolumeInfo {
+                label: v.label.clone(),
+                filesystem: String::from(match v.filesystem {
+                    storage::Filesystem::RockFs => "RockFS",
+                    storage::Filesystem::Fat32 => "FAT32",
+                    storage::Filesystem::Empty => "empty",
+                    storage::Filesystem::Unknown => "unknown",
+                }),
+                size: v.size,
+                free,
+                read_only: v.read_only,
+                in_memory: v.in_memory,
+                system: v.id == s.system.volume,
+            });
+        }
+        answered(reply.ok(&out))
+    }
+}
+
+// ------------------------------------------------------------------------------------------
 // `pbr.users.debug`, for the self-test.
 
 impl debug_if::Server for Service {
@@ -1482,5 +1573,12 @@ impl debug_if::Server for Service {
 
     fn system(&mut self, reply: debug_if::system::Reply) {
         answered(reply.ok(self.system.volume, self.system.in_memory));
+    }
+
+    fn sysinfo(&mut self, reply: debug_if::sysinfo::Reply) {
+        answered(match self.endpoint.mint(SYSINFO, CLIENT) {
+            Ok(c) => reply.ok(OutCap::Cap(c.0)),
+            Err(_) => reply.err(DebugError::Failed),
+        })
     }
 }
