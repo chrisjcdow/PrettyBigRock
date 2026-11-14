@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-picker"
+description = "The file picker: the user chooses a file or folder for an app, which is given that and nothing else (note 0025, section 1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The window is a library, tested on the host with sandstone's harness against a tree in
+# memory; the program is the service and the event loop around it.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "picker"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-browse = { path = "../../lib/browse" }
+pbr-sandstone = { path = "../../lib/sandstone" }
+
+[target.'cfg(target_os = "prettybigrock")'.dependencies]
+pbr-files = { path = "../../lib/files" }
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-window = { path = "../../lib/window" }
+
+[dev-dependencies]
+pbr-sandstone = { path = "../../lib/sandstone", features = ["testing"] }
+
+[lints]
+workspace = true

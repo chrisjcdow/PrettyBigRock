@@ -32,9 +32,14 @@ mod program {
     use alloc::format;
     use alloc::string::String;
     use alloc::vec::Vec;
+    use pbr_files::{FileRights, Files};
     use pbr_sandstone::Runtime;
+    use pbr_sandstone::picker::{Ask, FilePicker, PickError};
     use pbr_test_gallery::Gallery;
     use pbr_window::{Connection, Event};
+
+    /// The bit of the event loop's notification the file picker's answers come through.
+    const PICKED: u32 = 9;
 
     granite::main!(main);
 
@@ -53,6 +58,12 @@ mod program {
                 return 2;
             }
         };
+        // Its file tree (nothing of the user's: the gallery's manifest asks for no place), where
+        // what the file picker gives is put, and the file picker (note 0025).
+        let mut files = Files::from_start(&mut start);
+        let mut picker =
+            conn.notifier().ok().and_then(|n| FilePicker::from_start(&mut start, n, PICKED));
+        say!("{} the file picker", if picker.is_some() { "has" } else { "hasn't" });
         let mut rt = Runtime::new(Gallery::new(), pbr_test_gallery::settings());
         if !rt.open(&mut conn) {
             say!("the display server refused the window");
@@ -65,9 +76,30 @@ mod program {
                 let f = if focused { " focused" } else { "" };
                 say!("configure {}x{} scale {scale}{f}", size.0, size.1);
             }
+            // The picker's answer comes as the event loop's own bit.
+            let picked = matches!(event, Event::Notified(bits) if bits & (1 << PICKED) != 0);
             let go = rt.handle(&mut *c, event);
             for m in rt.app_mut().take_log() {
                 say!("message {m}");
+            }
+            if let Some(p) = &mut picker {
+                if let Some(wish) = rt.app_mut().take_pick() {
+                    let ask = if wish.save {
+                        Ask::save("", "Gallery.txt").filter("Text", "txt")
+                    } else {
+                        Ask::open("").filter("Text", "txt md")
+                    };
+                    match p.open(wish.window, wish.serial, &ask) {
+                        Ok(()) => {
+                            say!("asked the picker to {}", if wish.save { "save" } else { "open" })
+                        }
+                        Err(e) => say!("can't ask the picker: {e:?}"),
+                    }
+                }
+                if picked && let Some(answer) = p.take() {
+                    let save = rt.app().text().as_bytes().to_vec();
+                    use_answer(&mut files, &mut rt, answer, save);
+                }
             }
             let lines = describe(&rt);
             if lines != last {
@@ -83,6 +115,43 @@ mod program {
         });
         say!("closing");
         0
+    }
+
+    /// What the picker answered: what was chosen is put in the gallery's tree; a file to save
+    /// gets the field's text, and one opened puts its first line in the field.
+    fn use_answer(
+        files: &mut Files,
+        rt: &mut Runtime<Gallery>,
+        answer: Result<pbr_sandstone::picker::Chosen, PickError>,
+        text: Vec<u8>,
+    ) {
+        let chosen = match answer {
+            Ok(c) => c,
+            Err(e) => return say!("the picker answered {e:?}"),
+        };
+        let path = match FilePicker::mount(files, chosen) {
+            Ok(p) => p,
+            Err(e) => {
+                return say!("can't put what was chosen in the tree: {}", pbr_files::describe(e));
+            }
+        };
+        say!("picked {path}");
+        let rw = FileRights(FileRights::READ.0 | FileRights::WRITE.0);
+        // Saving: the file was given read and write; opening: read only, so it is read.
+        match files.open(&path, rw) {
+            Ok(f) => match f.save(&text) {
+                Ok(()) => say!("saved {} bytes to {path}", text.len()),
+                Err(e) => say!("can't save {path}: {}", pbr_files::describe(e)),
+            },
+            Err(_) => match files.open(&path, FileRights::READ).and_then(|f| f.read_all()) {
+                Ok(data) => {
+                    let text = alloc::string::String::from_utf8_lossy(&data);
+                    rt.app_mut().set_text(&text);
+                    say!("read {} bytes from {path}", data.len());
+                }
+                Err(e) => say!("can't read {path}: {}", pbr_files::describe(e)),
+            },
+        }
     }
 
     /// Every window of the app and its widgets, as lines.

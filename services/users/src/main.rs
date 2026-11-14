@@ -205,6 +205,9 @@ struct Service {
     shut_down: bool,
     /// Started for a boot test (`selftest` or `desktoptest`): `pbr.users.debug` is served.
     selftest: bool,
+    /// The desktop boot (`desktoptest`): sessions are told to describe the windows of the system
+    /// apps the runner drives.
+    describe: bool,
     /// The last number given to a self-test's `pbr.sandbox` capability (`sandbox`).
     next_test_badge: u32,
     /// The input service, through the capability that can set the keyboard layout and nothing
@@ -228,6 +231,7 @@ fn main(mut start: granite::Start) -> i32 {
 fn run(start: &mut granite::Start) -> Result<(), String> {
     let args: Vec<&str> = start.args().split_whitespace().collect();
     let selftest = args.contains(&"selftest") || args.contains(&"desktoptest");
+    let describe = args.contains(&"desktoptest");
     // (Self-test only: behave as if there were no system volume.)
     let ignore_system = selftest && args.contains(&"nosystem");
     let endpoint = Endpoint(start.take(role::OWN).ok_or("started without an endpoint to serve")?);
@@ -263,6 +267,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         ended,
         shut_down: false,
         selftest,
+        describe,
         next_test_badge: 0,
         input: None,
         layout_set: false,
@@ -603,6 +608,10 @@ impl Service {
         };
         let file_tree: Vec<(&str, u32, bool)> =
             tree.iter().map(|(p, h, folder)| (p.as_str(), h.raw(), *folder)).collect();
+        // In the desktop boot the sandbox manager has the system apps the runner drives describe
+        // their windows in the log.
+        let args =
+            if self.describe { format!("{} describe", user.name) } else { user.name.clone() };
         let sandbox = process::spawn(&Spawn {
             name: "sandbox",
             program: &self.sandbox,
@@ -610,7 +619,7 @@ impl Service {
             priority: SESSION_PRIORITY,
             caps: &caps,
             log: false,
-            args: &user.name,
+            args: &args,
             tied: true,
             file_tree: &file_tree,
         })

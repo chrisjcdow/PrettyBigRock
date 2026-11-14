@@ -27,6 +27,9 @@ pbr-granite = { path = "../../../lib/granite" }
 pbr-sandstone = { path = "../../../lib/sandstone" }
 pbr-window = { path = "../../../lib/window" }
 
+[target.'cfg(target_os = "prettybigrock")'.dependencies]
+pbr-files = { path = "../../../lib/files" }
+
 [dev-dependencies]
 pbr-sandstone = { path = "../../../lib/sandstone", features = ["testing"] }
 

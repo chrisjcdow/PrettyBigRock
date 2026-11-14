@@ -186,6 +186,8 @@ fn allowed(kind: u64, op: u32) -> bool {
 const SHELL: &str = "shell";
 const DESKTOP: &str = "desktop";
 const PICKER: &str = "picker";
+/// The permissions viewer (note 0025, section 4), which the desktop launches.
+const VIEWER: &str = "permissions";
 /// The "caller" of the launches this program makes itself (the shell's, the desktop's). Badge
 /// 0 is never on a capability anyone is given, so no client can use these launches.
 const ITSELF: u64 = 0;
@@ -327,6 +329,9 @@ struct Kept {
 struct Sandbox {
     /// Whose session this is, for messages.
     user: String,
+    /// A test boot (`describe` among its arguments): the system apps the desktop boot's runner
+    /// drives (the picker, the permissions viewer) are told to describe their windows.
+    describe: bool,
     /// The endpoint it serves, with every right (so it can mint badges).
     endpoint: Endpoint,
     /// The session's `pbr.users`, for trusted apps, and the one for the desktop.
@@ -373,6 +378,7 @@ fn main(mut start: granite::Start) -> i32 {
 
 fn run(start: &mut granite::Start) -> Result<(), String> {
     let user = String::from(start.args().split_whitespace().next().unwrap_or("?"));
+    let describe = start.args().split_whitespace().skip(1).any(|a| a == "describe");
     let endpoint = Endpoint(start.take(role::OWN).ok_or("started without an endpoint to serve")?);
     let users = start.take(USERS).map(Endpoint);
     let desktop_users = start.take(DESKTOP_USERS).map(Endpoint);
@@ -422,6 +428,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     };
     let mut s = Sandbox {
         user,
+        describe,
         endpoint,
         users,
         desktop_users,
@@ -702,11 +709,15 @@ impl Sandbox {
                 cap: None,
             });
         }
-        let args = match (app.args.is_empty(), args.is_empty()) {
+        let mut args = match (app.args.is_empty(), args.is_empty()) {
             (_, true) => app.args.clone(),
             (true, false) => String::from(args),
             (false, false) => format!("{} {args}", app.args),
         };
+        if self.describe && (name == PICKER || name == VIEWER) {
+            args =
+                if args.is_empty() { String::from("describe") } else { format!("{args} describe") };
+        }
         if args.len() > MAX_ARGS {
             return Err(SandboxError::TooMany);
         }

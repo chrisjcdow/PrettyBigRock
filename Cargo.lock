@@ -334,6 +334,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-picker"
+version = "0.0.0"
+dependencies = [
+ "pbr-browse",
+ "pbr-files",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-sandstone",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-platform"
 version = "0.0.0"
 dependencies = [
@@ -406,6 +418,7 @@ name = "pbr-sandstone"
 version = "0.0.0"
 dependencies = [
  "pbr-draw",
+ "pbr-files",
  "pbr-font",
  "pbr-granite",
  "pbr-interfaces",
@@ -489,6 +502,7 @@ name = "pbr-test-gallery"
 version = "0.0.0"
 dependencies = [
  "pbr-draw",
+ "pbr-files",
  "pbr-granite",
  "pbr-sandstone",
  "pbr-window",

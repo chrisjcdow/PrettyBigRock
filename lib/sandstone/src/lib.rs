@@ -36,6 +36,7 @@
 //! - [`theme`]: the look, carried over from PrettyBigRock 1.3;
 //! - [`widget`]: the widgets;
 //! - [`dialog`]: messages, questions and lines to type, in dialog windows;
+//! - `picker` (on PrettyBigRock): asking the file picker for a file, on a helper thread;
 //! - the runtime (between the display server and the app) and [`run`];
 //! - `testing` (with the `testing` feature): [`testing::Harness`], which runs an app against a
 //!   pretend display server on the host, for tests.
@@ -54,6 +55,8 @@ pub mod event;
 pub mod geometry;
 mod image;
 pub mod layout;
+#[cfg(target_os = "prettybigrock")]
+pub mod picker;
 mod platform;
 mod run;
 mod runtime;

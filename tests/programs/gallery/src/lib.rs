@@ -434,6 +434,10 @@ pub enum Message {
     // The menus.
     /// File, New: a new, empty text in the editor.
     New,
+    /// File, Open…: the file picker, to read a file into the field (note 0025).
+    OpenFile,
+    /// File, Save as…: the file picker, to save the field's text.
+    SaveFile,
     /// File, Close: ends the app.
     Close,
     /// Edit, Copy: the field's text goes to the clipboard.
@@ -514,6 +518,20 @@ pub struct Gallery {
     last: String,
     /// Every message since [`Gallery::take_log`] was last called.
     log: Vec<String>,
+    /// A file picker asked for and not yet handed to the program ([`Gallery::take_pick`]).
+    pick: Option<Pick>,
+}
+
+/// A file picker the app wants: the program asks the picker (only it holds the picker's
+/// capability), and the window and the press that asked, which the picker checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pick {
+    /// Save as, rather than Open.
+    pub save: bool,
+    /// The display server's number for the window it was asked from.
+    pub window: Option<pbr_window::Win>,
+    /// The key or button press that asked.
+    pub serial: u32,
 }
 
 /// The window as the app wants it: 560 by 380 logical pixels, not resizable.
@@ -547,7 +565,23 @@ impl Gallery {
             version: 0,
             last: String::new(),
             log: Vec::new(),
+            pick: None,
         }
+    }
+
+    /// The file picker asked for since the last call, if one was.
+    pub fn take_pick(&mut self) -> Option<Pick> {
+        self.pick.take()
+    }
+
+    /// The field's text, which Save as saves.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Puts text read from a file in the field (its first line, as a field has one).
+    pub fn set_text(&mut self, text: &str) {
+        self.text = text.lines().next().unwrap_or("").chars().take(200).collect();
     }
 
     /// Each message given to `update` since the last call, as the `{:?}` text of the message
@@ -578,6 +612,8 @@ impl Gallery {
             "File",
             vec![
                 MenuItem::new("New", Message::New).shortcut(Shortcut::ctrl('n')),
+                MenuItem::new("Open…", Message::OpenFile).shortcut(Shortcut::ctrl('o')),
+                MenuItem::new("Save as…", Message::SaveFile).shortcut(Shortcut::ctrl('s')),
                 MenuItem::separator(),
                 MenuItem::new("Close", Message::Close).shortcut(Shortcut::ctrl('w')),
             ],
@@ -783,6 +819,10 @@ impl App for Gallery {
         self.last = format!("{message:?}").chars().take(48).collect();
         match message {
             Message::New => self.editor = Content::new(),
+            Message::OpenFile | Message::SaveFile => {
+                let save = matches!(message, Message::SaveFile);
+                self.pick = Some(Pick { save, window: cx.display_window(), serial: cx.serial() });
+            }
             Message::Close => {}
             // The serial of the click or key that made this message lets the app use the
             // clipboard (note 0022): `copy_text` and `paste_text` ask the display server.

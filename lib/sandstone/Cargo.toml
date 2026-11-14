@@ -23,6 +23,11 @@ pbr-interfaces = { path = "../interfaces" }
 pbr-testpng = { path = "../testpng", optional = true }
 pbr-window = { path = "../window" }
 
+# Mounting what the file picker gives in the app's tree (`picker`) needs `lib/files`, which is
+# built for PrettyBigRock only.
+[target.'cfg(target_os = "prettybigrock")'.dependencies]
+pbr-files = { path = "../files" }
+
 [dev-dependencies]
 # The tests use the harness: a package may name itself here to turn a feature on for its tests.
 pbr-sandstone = { path = ".", features = ["testing"] }

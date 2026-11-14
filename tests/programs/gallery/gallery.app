@@ -6,3 +6,4 @@
 title "Gallery"
 budget 8M
 windows
+picker
