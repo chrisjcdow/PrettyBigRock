@@ -98,6 +98,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-desktop-app", "desktop", "apps/desktop"),
     ("pbr-test-wintest", "wintest", "apps/wintest"),
     ("pbr-test-windowprobe", "windowprobe", "apps/windowprobe"),
+    ("pbr-test-gallery", "gallery", "apps/gallery"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -116,6 +117,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("apps/desktop.app", "apps/desktop/desktop.app"),
     ("apps/wintest.app", "tests/programs/wintest/wintest.app"),
     ("apps/windowprobe.app", "tests/programs/windowprobe/windowprobe.app"),
+    ("apps/gallery.app", "tests/programs/gallery/gallery.app"),
     // Keyboard layouts, which the input service reads (note 0021, section 4).
     ("layouts/us.kbd", "services/input/layouts/us.kbd"),
     ("layouts/gb.kbd", "services/input/layouts/gb.kbd"),
@@ -153,6 +155,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-desktop-app",
     "pbr-test-echo",
     "pbr-test-fileprobe",
+    "pbr-test-gallery",
     "pbr-test-memfs",
     "pbr-test-probe",
     "pbr-test-protocol",
@@ -187,6 +190,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-manifest",
     "pbr-supervise",
     "pbr-terminal",
+    "pbr-test-gallery",
     "pbr-testpng",
     "pbr-partition",
     "pbr-platform",

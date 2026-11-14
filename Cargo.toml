@@ -67,6 +67,7 @@ members = [
     "services/users",
     "tests/programs/echo",
     "tests/programs/fileprobe",
+    "tests/programs/gallery",
     "tests/programs/memfs",
     "tests/programs/probe",
     "tests/programs/protocol",

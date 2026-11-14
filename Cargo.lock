@@ -475,6 +475,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-test-gallery"
+version = "0.0.0"
+dependencies = [
+ "pbr-draw",
+ "pbr-granite",
+ "pbr-sandstone",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-test-memfs"
 version = "0.0.0"
 dependencies = [
@@ -577,4 +587,5 @@ dependencies = [
  "pbr-elf",
  "pbr-interface-compiler",
  "pbr-partition",
+ "pbr-testpng",
 ]

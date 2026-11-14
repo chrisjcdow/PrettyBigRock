@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-test-gallery"
+description = "The widget gallery: every sandstone widget in one window, for the desktop boot (note 0023, section 6)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The gallery itself is a library, so that it is tested on the host with sandstone's harness
+# (and its reference pictures are the ones the desktop boot compares screenshots with); the
+# program is the event loop around it.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "gallery"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-draw = { path = "../../../lib/draw" }
+pbr-granite = { path = "../../../lib/granite" }
+pbr-sandstone = { path = "../../../lib/sandstone" }
+pbr-window = { path = "../../../lib/window" }
+
+[dev-dependencies]
+pbr-sandstone = { path = "../../../lib/sandstone", features = ["testing"] }
+
+[lints]
+workspace = true
