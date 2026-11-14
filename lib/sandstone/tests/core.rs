@@ -181,8 +181,10 @@ fn a_question_dialog_answers_with_the_button_chosen() {
     assert!(h.dialog().is_none());
     assert_eq!(h.app().answers, vec!["yes"]);
 
-    // Enter and Escape in a dialog.
+    // The default button has the focus when it opens.
     h.click_on("Ask");
+    assert_eq!(h.focused().unwrap().what.label, "Yes");
+    // Enter and Escape in a dialog.
     h.key(Key::Enter);
     h.click_on("Ask");
     h.key(Key::Escape);

@@ -838,7 +838,11 @@ impl<A: App> Runtime<A> {
         let main_win = self.display_window(WindowId::MAIN);
         for (id, d) in core::mem::take(&mut self.asked.dialogs) {
             let title = String::from(d.title());
+            let focus = dialog::first_focus(&d);
             self.windows.push(Window::new(id, Win(0), Purpose::Dialog(d)));
+            if let Some(w) = self.windows.last_mut() {
+                w.focus_key = Some(String::from(focus));
+            }
             let k = self.windows.len() - 1;
             let theme = self.theme;
             let size = with_root(&self.app, &self.windows, k, &theme, |root| {

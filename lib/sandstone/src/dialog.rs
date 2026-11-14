@@ -12,6 +12,7 @@
 
 use crate::Length;
 use crate::element::Element;
+use crate::element::Identify;
 use crate::event::Role;
 use crate::theme::Theme;
 use crate::widget::{Button, Column, Label, Row, Space, Stretch};
@@ -159,6 +160,16 @@ impl<M> Dialog<M> {
     }
 }
 
+/// The ids of the line to type and of the default button: the one that has the focus when
+/// the dialog opens, so that typing goes to the line and Enter presses the default button.
+pub(crate) const INPUT_ID: &str = "dialog-input";
+pub(crate) const DEFAULT_ID: &str = "dialog-default";
+
+/// What has the focus when a dialog opens.
+pub(crate) fn first_focus<M>(d: &Dialog<M>) -> &'static str {
+    if d.input.is_some() { INPUT_ID } else { DEFAULT_ID }
+}
+
 /// How wide a dialog's text may be before it wraps.
 const TEXT_WIDTH: i32 = 360;
 /// A dialog's buttons, as 1.3's: 96 by 26.
@@ -180,12 +191,12 @@ pub(crate) fn view<'a, M>(d: &'a Dialog<M>, theme: &Theme) -> Element<'a, Answer
     }
     let mut buttons = Row::new().spacing(8).push(Stretch::new());
     for (i, b) in d.buttons.iter().enumerate() {
-        let mut button =
+        let button =
             Button::new(&b.label).on_press(Answer::Button(i)).width(Length::Fixed(BUTTON_WIDTH));
-        button = match b.role {
-            Some(Role::Default) => button.default(),
-            Some(Role::Cancel) => button.cancel(),
-            None => button,
+        let button: Element<'a, Answer> = match b.role {
+            Some(Role::Default) => button.default().id(DEFAULT_ID),
+            Some(Role::Cancel) => button.cancel().into(),
+            None => button.into(),
         };
         buttons = buttons.push(button);
     }
