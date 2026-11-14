@@ -45,6 +45,12 @@ struct Space { total: u64, free: u64, label: string<64>, filesystem: string<16> 
 @2 fn reduce(rights: FileRights) -> (node: handle<pbr.file>) error FileError;
 /// The volume's size and free space.
 @3 fn space() -> (space: Space) error FileError;
+/// Like `reduce`, but whatever is opened, created, reduced or limited through the new capability
+/// (and through what that opens) may hold at most `records` records at once, counting the new
+/// capability's own, and those also count against every limit above it
+/// (docs/design/0026-apps-m6-tests-and-stages.md, section 4). Past it: `TooManyOpen`. A limit
+/// can be set within a limit, never above it (`BadArgument`).
+@4 fn limit(rights: FileRights, records: u32) -> (node: handle<pbr.file>) error FileError;
 
 /// Reads up to `max` bytes (at most 65536) from `offset`. Fewer only at the end of the file.
 @10 fn read(offset: u64, max: u32) -> (data: bytes<65536>) error FileError;

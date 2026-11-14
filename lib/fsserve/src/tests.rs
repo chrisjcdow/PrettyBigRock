@@ -306,3 +306,119 @@ fn a_hostile_client() {
     }
     assert_eq!(c.records(), 0);
 }
+
+/// Records per grant (note 0026, section 4): a limit holds whatever is opened through it, a
+/// limit inside another counts against both, and one full share doesn't stop another.
+#[test]
+fn limits_share_records() {
+    let (mut c, root) = new();
+    let (a, _) = c.create(root, "a", Kind::Folder, ALL).unwrap();
+    let (f, _) = c.create(root, "a/f", Kind::File, ALL).unwrap();
+    c.gone(f);
+    // A share of 3: the limited record itself and two more.
+    let g = c.limit(a, ALL, 3).unwrap();
+    assert_eq!(c.info(g).unwrap().rights, ALL);
+    let (f1, _) = c.open(g, "f", READ).unwrap();
+    let f2 = c.reduce(f1, READ).unwrap();
+    assert_eq!(c.open(g, "f", READ).map(|_| ()), Err(Error::TooManyOpen));
+    assert_eq!(c.reduce(g, READ), Err(Error::TooManyOpen));
+    // Creating through a full share makes nothing.
+    assert_eq!(c.create(g, "new", Kind::File, ALL).map(|_| ()), Err(Error::TooManyOpen));
+    assert_eq!(c.open(a, "new", READ).map(|_| ()), Err(Error::NotFound));
+    // Another grant of the same folder is unaffected.
+    let h = c.limit(a, READ, 2).unwrap();
+    let (h1, _) = c.open(h, "f", READ).unwrap();
+    // And the unlimited record above can still open.
+    let (x, _) = c.open(a, "f", READ).unwrap();
+    c.gone(f2);
+    let (f3, _) = c.open(g, "f", READ).unwrap();
+    // A limit within a limit: never above it, and counting against both.
+    assert_eq!(c.limit(g, READ, 4), Err(Error::BadArgument));
+    c.gone(f3);
+    let inner = c.limit(g, READ, 3).unwrap();
+    assert_eq!(c.open(inner, "f", READ).map(|_| ()), Err(Error::TooManyOpen));
+    c.gone(f1);
+    let (i1, _) = c.open(inner, "f", READ).unwrap();
+    // Rights still only shrink; zero records is no share at all.
+    assert_eq!(c.limit(h, ALL, 1), Err(Error::NoRight));
+    assert_eq!(c.limit(a, READ, 0), Err(Error::BadArgument));
+    assert_eq!(c.limit(a, 4, 1), Err(Error::BadArgument));
+    assert_eq!(c.limits_used(), 3);
+    for b in [i1, inner, g, h1, h, x] {
+        c.gone(b);
+    }
+    assert_eq!(c.limits_used(), 0);
+    // The limits' slots are reused.
+    let again = c.limit(a, READ, 1).unwrap();
+    assert_eq!(c.limits_used(), 1);
+    c.gone(again);
+    c.gone(a);
+    c.gone(root);
+    assert_eq!(c.records(), 0);
+    assert_eq!(c.limits_used(), 0);
+}
+
+/// Random opens, reductions, limits and goings, checked against a model that works out every
+/// limit's count from which record each record was made through.
+#[test]
+fn limits_against_a_model() {
+    let mut c = Core::with_limit(MemFs::new("Test"), 40);
+    let root = c.root().unwrap();
+    c.create(root, "f", Kind::File, ALL).map(|(b, _)| c.gone(b)).unwrap();
+    let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+    // The model: for each live record, its badge and the chain of limits above it (as ids
+    // into `maxes`), nearest first.
+    let mut maxes: Vec<u32> = Vec::new();
+    let mut held: Vec<(u64, Vec<usize>)> = alloc::vec![(root, Vec::new())];
+    let count =
+        |held: &[(u64, Vec<usize>)], l: usize| held.iter().filter(|h| h.1.contains(&l)).count();
+    for _ in 0..20_000 {
+        let i = (rng.next() % held.len() as u64) as usize;
+        let (b, chain) = held[i].clone();
+        let room = held.len() < 40 && chain.iter().all(|&l| count(&held, l) < maxes[l] as usize);
+        match rng.next() % 5 {
+            0 | 1 => {
+                let r = if c.info(b).unwrap().stat.kind == Kind::Folder {
+                    c.open(b, "f", READ).map(|x| x.0)
+                } else {
+                    c.reduce(b, READ)
+                };
+                assert_eq!(r.is_ok(), room, "open or reduce disagreed with the model");
+                if let Ok(n) = r {
+                    held.push((n, chain));
+                }
+            }
+            2 => {
+                let records = (rng.next() % 6) as u32 + 1;
+                let nearest = chain.first().map(|&l| maxes[l]);
+                let r = c.limit(b, READ, records);
+                if nearest.is_some_and(|m| records > m) {
+                    assert_eq!(r, Err(Error::BadArgument));
+                } else {
+                    assert_eq!(r.is_ok(), room, "limit disagreed with the model");
+                }
+                if let Ok(n) = r {
+                    maxes.push(records);
+                    let mut chain = chain;
+                    chain.insert(0, maxes.len() - 1);
+                    held.push((n, chain));
+                }
+            }
+            _ => {
+                if i != 0 {
+                    let (gone, _) = held.swap_remove(i);
+                    c.gone(gone);
+                }
+            }
+        }
+        assert_eq!(c.records(), held.len());
+        // A limit is kept exactly while something is under it.
+        let live = (0..maxes.len()).filter(|&l| count(&held, l) > 0).count();
+        assert_eq!(c.limits_used(), live);
+    }
+    for (b, _) in held.drain(..) {
+        c.gone(b);
+    }
+    assert_eq!(c.records(), 0);
+    assert_eq!(c.limits_used(), 0);
+}

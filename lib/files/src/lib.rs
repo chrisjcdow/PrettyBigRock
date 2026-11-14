@@ -161,6 +161,12 @@ impl File {
         Ok(File { client: self.client.reduce(rights)? })
     }
 
+    /// A copy with fewer rights, revoked with this one, under which at most `records` records
+    /// may be open at once (note 0026, section 4).
+    pub fn limit(&self, rights: FileRights, records: u32) -> Result<File> {
+        Ok(File { client: self.client.limit(rights, records)? })
+    }
+
     /// Everything in this folder.
     pub fn list(&self) -> Result<Vec<Listing>> {
         let mut out = Vec::new();

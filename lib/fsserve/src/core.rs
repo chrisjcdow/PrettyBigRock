@@ -117,6 +117,26 @@ struct Object {
     rights: u32,
     /// Changes were made through it, so its going may complete a save (note 0014, section 6).
     wrote: bool,
+    /// The nearest limit above it (note 0026, section 4), as an index into [`Core`]'s limits,
+    /// or `None` if only the server's own [`LIMIT`] applies.
+    limit: Option<u32>,
+}
+
+/// A share of the records (note 0026, section 4): what is opened, created, reduced or limited
+/// through a capability made by `pbr.file.limit` (and through what that opens, and so on) may
+/// hold at most `max` records at once. One program with one grant could otherwise fill every
+/// record the server has, and no other program could open anything on that volume.
+///
+/// Limits nest: a record counts against its nearest limit and every limit above that one.
+/// `used` counts every record under the limit, directly or through a limit inside it, so a
+/// limit is no longer needed exactly when `used` comes back to 0 (its first record was made
+/// with it, so it never starts at 0); its slot is then reused.
+#[derive(Clone, Copy)]
+struct Share {
+    max: u32,
+    used: u32,
+    /// The limit this one was set within.
+    parent: Option<u32>,
 }
 
 struct Slot {
@@ -134,6 +154,8 @@ pub struct Core<F: Filesystem> {
     limit: usize,
     /// For each node with changes not yet committed, how many records made changes to it.
     writers: BTreeMap<NodeId, usize>,
+    /// The limits set with `limit`; `None` for a slot free to reuse.
+    shares: Vec<Option<Share>>,
 }
 
 /// Checks a path against note 0014's rules and splits it into names.
@@ -173,7 +195,15 @@ impl<F: Filesystem> Core<F> {
     /// The same, with a smaller limit on records (for tests).
     pub fn with_limit(fs: F, limit: usize) -> Core<F> {
         let empty = Slot { generation: 0, object: None };
-        Core { fs, slots: vec![empty], free: Vec::new(), live: 0, limit, writers: BTreeMap::new() }
+        Core {
+            fs,
+            slots: vec![empty],
+            free: Vec::new(),
+            live: 0,
+            limit,
+            writers: BTreeMap::new(),
+            shares: Vec::new(),
+        }
     }
 
     /// How many records there are.
@@ -186,15 +216,52 @@ impl<F: Filesystem> Core<F> {
         self.slots.len()
     }
 
+    /// How many limits are in use (for tests: they must all go when their records do).
+    pub fn limits_used(&self) -> usize {
+        self.shares.iter().filter(|s| s.is_some()).count()
+    }
+
     /// A record for the root folder, with every right: the badge the server mints itself.
     pub fn root(&mut self) -> Result<Badge, Error> {
         let root = self.fs.root();
-        self.add(root, Kind::Folder, ALL)
+        self.add(root, Kind::Folder, ALL, None)
     }
 
-    fn add(&mut self, node: NodeId, kind: Kind, rights: u32) -> Result<Badge, Error> {
-        if self.live >= self.limit {
+    /// The limits from `limit` upwards, nearest first.
+    fn chain(&self, mut limit: Option<u32>) -> Vec<u32> {
+        let mut out = Vec::new();
+        while let Some(i) = limit {
+            out.push(i);
+            limit = self.shares[i as usize].and_then(|s| s.parent);
+        }
+        out
+    }
+
+    /// Whether one more record fits under `limit`, every limit above it, and the server.
+    fn room(&self, limit: Option<u32>) -> bool {
+        self.live < self.limit
+            && self
+                .chain(limit)
+                .iter()
+                .all(|&i| self.shares[i as usize].is_none_or(|s| s.used < s.max))
+    }
+
+    /// Adds a record under `limit` (the nearest limit above it), if that and every limit above
+    /// it has room, and the server as a whole has.
+    fn add(
+        &mut self,
+        node: NodeId,
+        kind: Kind,
+        rights: u32,
+        limit: Option<u32>,
+    ) -> Result<Badge, Error> {
+        if !self.room(limit) {
             return Err(Error::TooManyOpen);
+        }
+        for i in self.chain(limit) {
+            if let Some(s) = &mut self.shares[i as usize] {
+                s.used += 1;
+            }
         }
         let index = match self.free.pop() {
             Some(i) => i,
@@ -204,7 +271,7 @@ impl<F: Filesystem> Core<F> {
             }
         };
         let slot = &mut self.slots[index as usize];
-        slot.object = Some(Object { node, kind, rights, wrote: false });
+        slot.object = Some(Object { node, kind, rights, wrote: false, limit });
         self.live += 1;
         Ok(u64::from(slot.generation) << 32 | u64::from(index))
     }
@@ -233,6 +300,16 @@ impl<F: Filesystem> Core<F> {
         slot.generation = (slot.generation + 1) & 0x7FFF_FFFF;
         self.free.push(index as u32);
         self.live -= 1;
+        // It no longer counts against its limits; a limit with nothing left under it goes.
+        for i in self.chain(o.limit) {
+            let share = &mut self.shares[i as usize];
+            if let Some(s) = share {
+                s.used -= 1;
+                if s.used == 0 {
+                    *share = None;
+                }
+            }
+        }
         if o.wrote {
             let left = match self.writers.get_mut(&o.node) {
                 Some(n) => {
@@ -296,7 +373,45 @@ impl<F: Filesystem> Core<F> {
         }
         Self::need(&o, rights)?;
         self.fs.stat(o.node)?; // a removed node stays removed
-        self.add(o.node, o.kind, rights)
+        self.add(o.node, o.kind, rights, o.limit)
+    }
+
+    /// Like [`Core::reduce`], but the new record and everything made through it may hold at
+    /// most `records` records at once, counting the new record itself; those also count against
+    /// every limit above it (note 0026, section 4). A limit can be set within a limit, never
+    /// above it: `records` may not be more than the nearest limit's own.
+    pub fn limit(&mut self, badge: Badge, rights: u32, records: u32) -> Result<Badge, Error> {
+        let o = self.get(badge)?;
+        if rights & !ALL != 0 || records == 0 {
+            return Err(Error::BadArgument);
+        }
+        if let Some(i) = o.limit
+            && self.shares[i as usize].is_some_and(|s| records > s.max)
+        {
+            return Err(Error::BadArgument);
+        }
+        Self::need(&o, rights)?;
+        self.fs.stat(o.node)?;
+        // The new limit takes a free slot (or a new one); it starts with nothing under it and
+        // gets its first record from `add`, which also checks the limits above have room.
+        let share = Share { max: records, used: 0, parent: o.limit };
+        let at = match self.shares.iter().position(|s| s.is_none()) {
+            Some(i) => {
+                self.shares[i] = Some(share);
+                i
+            }
+            None => {
+                self.shares.push(Some(share));
+                self.shares.len() - 1
+            }
+        } as u32;
+        match self.add(o.node, o.kind, rights, Some(at)) {
+            Ok(b) => Ok(b),
+            Err(e) => {
+                self.shares[at as usize] = None;
+                Err(e)
+            }
+        }
     }
 
     /// The volume's size and free space.
@@ -369,7 +484,7 @@ impl<F: Filesystem> Core<F> {
         let names = split_path(path)?;
         let node = self.walk(o.node, &names)?;
         let stat = self.fs.stat(node)?;
-        let b = self.add(node, stat.kind, rights)?;
+        let b = self.add(node, stat.kind, rights, o.limit)?;
         Ok((b, Info { stat, rights, read_only: self.fs.read_only() }))
     }
 
@@ -393,9 +508,14 @@ impl<F: Filesystem> Core<F> {
         if self.fs.stat(parent)?.kind != Kind::Folder {
             return Err(Error::NotAFolder);
         }
+        // Room for its record is checked first, so that a full share doesn't leave behind a
+        // file made but not opened.
+        if !self.room(o.limit) {
+            return Err(Error::TooManyOpen);
+        }
         let node = self.fs.create(parent, last, kind)?;
         let stat = self.fs.stat(node)?;
-        let b = self.add(node, kind, rights)?;
+        let b = self.add(node, kind, rights, o.limit)?;
         Ok((b, Info { stat, rights, read_only: self.fs.read_only() }))
     }
 

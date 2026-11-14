@@ -100,6 +100,18 @@ impl<F: Filesystem> file::Server for Files<'_, F> {
         }
     }
 
+    fn limit(&mut self, r: FileRights, records: u32, reply: file::limit::Reply) {
+        let b = reply.badge();
+        match self.core.limit(b, r.0, records) {
+            Ok(nb) => {
+                if reply.ok(OutCap::derived(nb, rights::ALL)).is_err() {
+                    self.core.gone(nb);
+                }
+            }
+            Err(e) => answered(reply.err(error(e))),
+        }
+    }
+
     fn space(&mut self, reply: file::space::Reply) {
         let b = reply.badge();
         answered(match self.core.space(b) {
