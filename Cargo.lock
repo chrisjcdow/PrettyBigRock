@@ -40,6 +40,16 @@ name = "pbr-bootinfo"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-browse"
+version = "0.0.0"
+dependencies = [
+ "pbr-draw",
+ "pbr-files",
+ "pbr-interfaces",
+ "pbr-testpng",
+]
+
+[[package]]
 name = "pbr-captree"
 version = "0.0.0"
 

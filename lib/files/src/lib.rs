@@ -95,6 +95,8 @@ pub struct Listing {
     pub size: u64,
     /// When it last changed (seconds since 1970 UTC), 0 if unknown.
     pub modified: u64,
+    /// Hidden from ordinary listings (shown only when asked).
+    pub hidden: bool,
 }
 
 /// An open file or folder: its own capability, closed when this is dropped.
@@ -178,6 +180,7 @@ impl File {
                 folder: e.kind == NodeKind::Folder,
                 size: e.size,
                 modified: e.modified,
+                hidden: e.hidden,
             }));
             if r.next == 0 {
                 return Ok(out);
@@ -354,6 +357,7 @@ impl Files {
                     folder: kind == Kind::Folder,
                     size: 0,
                     modified: 0,
+                    hidden: false,
                 })
                 .collect()),
             Found::Nothing => Err(Error::NotFound),

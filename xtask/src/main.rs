@@ -1035,6 +1035,7 @@ fn licence_for(rel: &Path) -> &'static str {
         || under("lib/draw/")
         || under("lib/window/")
         || under("lib/sandstone/")
+        || under("lib/browse/")
         || under("targets/")
     {
         "MPL-2.0"

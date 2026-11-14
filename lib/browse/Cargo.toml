@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MPL-2.0
+[package]
+name = "pbr-browse"
+description = "Browsing folders, shared by the file picker and Files: listing, sorting, places, kinds of file and their icons (note 0026, section 1)"
+version.workspace = true
+edition.workspace = true
+license = "MPL-2.0"
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Browsing a program's real file tree (`lib/files`) is only built for PrettyBigRock itself; on
+# the host the tests browse the tree in memory, `MemTree`.
+[target.'cfg(target_os = "prettybigrock")'.dependencies]
+pbr-files = { path = "../files" }
+pbr-interfaces = { path = "../interfaces" }
+
+[dev-dependencies]
+pbr-draw = { path = "../draw" }
+pbr-testpng = { path = "../testpng" }
+
+[lints]
+workspace = true
