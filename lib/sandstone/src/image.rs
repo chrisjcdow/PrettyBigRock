@@ -6,7 +6,7 @@
 
 use crate::element::Look;
 use crate::geometry::Rect;
-use pbr_draw::{Canvas, Picture};
+use pbr_draw::{Canvas, Colour, Picture};
 
 /// A picture of `width` by `height` pixels, `0xAARRGGBB`, row after row: alpha 0 is clear, 255
 /// solid. Usually an icon kept in the app as a `const` array of 16 x 16.
@@ -39,6 +39,17 @@ impl<'a> Image<'a> {
     /// `dest` is its size, so at 2x each is a block of four, as crisp as the font.
     pub fn draw(&self, canvas: &mut Canvas<'_>, dest: Rect) {
         if let Some(p) = Picture::new(self.pixels, self.width, self.height, self.width) {
+            canvas.picture_fit(&p.with_alpha(), dest);
+        }
+    }
+
+    /// Draws it as [`Image::draw`] does, with each pixel's alpha multiplied by `alpha / 255`:
+    /// a greyed-out button's picture is drawn at half strength.
+    pub fn draw_faded(&self, canvas: &mut Canvas<'_>, dest: Rect, alpha: u8) {
+        let n = (self.width * self.height) as usize;
+        let faded: alloc::vec::Vec<u32> =
+            self.pixels[..n].iter().map(|&p| Colour(p).faded(alpha).0).collect();
+        if let Some(p) = Picture::new(&faded, self.width, self.height, self.width) {
             canvas.picture_fit(&p.with_alpha(), dest);
         }
     }
