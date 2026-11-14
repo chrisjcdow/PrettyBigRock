@@ -158,7 +158,9 @@ the tests and the stages), drafted from Chris's answers to the M6 plan and accep
 layouts and the layout setting), 5 (the display server, `lib/window`, and the desktop boot
 with test programs) and 6 (the session's desktop: manifest keys, apps' own folders, the
 sandbox manager's rights and limits, the power service, text mode and falling back, the
-desktop app; an ordinary boot now reaches the desktop) are built; stage 7 (sandstone) is next.
+desktop app; an ordinary boot now reaches the desktop) and 7 (sandstone: the widget toolkit,
+its test harness, and the widget gallery in the desktop boot) are built; stage 8 (the file
+picker, the permissions viewer, `check`, records per grant, `pbr.sysinfo`) is next.
 The stages are in note 0026, section 9.
 
 ## M7: Real hardware I, Roxy

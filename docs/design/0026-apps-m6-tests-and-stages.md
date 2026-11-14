@@ -243,6 +243,18 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 14 November 2026 (stage 7): **the gallery** (`tests/programs/gallery`) is a library (the app,
+  host-tested with sandstone's harness) and a program (the app run by sandstone, writing its
+  widgets' descriptions and its messages to the log). In the desktop boot's first boot the root
+  program launches it beside a second test window, `Other`, after the start menu step. The
+  runner moves `Other` clear of it, compares the gallery on screen with the pictures its host
+  tests draw (`tests/pictures/sandstone/gallery-1x.png`, and `-2x` after dragging it to the 2x
+  screen on the two-screen machines), **pixel for pixel**, then clicks a button, types into a
+  field, Tabs and Shift+Tabs, ticks a box with Space, opens a menu with F10 and moves along
+  with Right, clicks Copy, pastes into `Other` and copies back, answers a question dialog,
+  turns the wheel over a scrolled area, and closes both windows with Ctrl+W. The gallery's
+  screenshots are kept beside the log as PNG files. Stage 9's Screens dialog takes over
+  section 6's live mirroring check, as before.
 - 14 November 2026 (stage 6): the root program's stand-in is gone: the desktop boot runs the
   users service, the sandbox manager and the desktop app, and the root program's test thread
   launches the test programs as apps through `pbr.users.debug` (they are `apps/wintest` and

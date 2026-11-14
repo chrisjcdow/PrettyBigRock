@@ -937,3 +937,50 @@ locks. The `IrqSpinLock` checker's levels and per-core record already exist; pla
 tables, processes, address spaces...), a rule for the few places two locks of one kind are held
 together, and the check in debug builds only. About half a session, most of it settling the real
 order. The virtio-gpu 11.4 s restart wasn't seen again.
+
+## Session 19: 14 November 2026, M6 stage 7 (sandstone)
+
+Chris asked for stage 7 as note 0026 defines it: sandstone's widgets, the test harness and a
+gallery test program, with the core written first by the session's model (Claude Opus 5.5) and
+the widgets by Sonnet subagents, one group per brief, each reviewed with its pictures.
+
+- **The core** (`lib/sandstone`): the `App` trait (view and update, with optional title, start,
+  shortcuts, close request, clipboard and notification hooks, and other windows); elements as
+  widgets behind a `Widget` trait, with `Element::map`; the state tree, matched by kind and
+  place or id; layout by limits (`Shrink`, `Fill`, `Portion`, `Fixed`; rows, columns, grids,
+  panels); Tab order, shortcuts by character, Enter and Escape for default and cancel buttons;
+  popups as windows whose contents their owner gives; sandstone's own dialogs (message,
+  question, a line to type); drawing only what changed, by comparing each widget's *look* with
+  the last view's; the theme (1.3's), with the heading style one setting the desktop's start
+  menu uses too; `Image` for icons; `Event::Resized`; the scroll bar.
+- **The harness** (`sandstone::testing`): an app run against a pretend display server (configure
+  events, focus, popups only after a recent press, the clipboard only with the last press's
+  serial), driven by clicks, keys, the wheel and Shift+clicks, with reference pictures; after
+  every step it draws each window whole and compares it with what drawing only the changes
+  left, which catches a widget whose look misses something.
+- **The widgets**, to six briefs: Icon, IconButton, ToggleButton and CheckBox; TextField (and
+  the dialogs' line to type); TextEditor with its `Content` (lines, undo, find); Scroll and
+  List; MenuBar, menus, context menus, Toolbar and StatusBar; TerminalView (over a `Cells`
+  trait, since `lib/terminal` is GPL) and Canvas. About 240 host tests and 90 reference
+  pictures at 1x and 2x.
+- **The gallery** (`tests/programs/gallery`): every widget in one window, in the first desktop
+  boot beside a second test window; the runner compares it on screen with its host-drawn
+  pictures at 1x and 2x (equal pixel for pixel), then drives it (note 0026, Changes).
+
+Found on the way:
+- The first list brief's subagent stopped partway; a second finished it, fixing a real bug in
+  `Scroll` (a measuring layout pass threw away the offsets).
+- Subagents sharing one working tree broke each other's builds (a stray debug line); the later
+  briefs each had a git worktree of their own.
+- `Event::Resized` was added in one commit whose change to `settle` silently didn't apply (the
+  text it replaced had been reformatted): the terminal's subagent found that the event never
+  came, and the next commit made it so, with a test that would have caught it.
+- A dialog now opens with its line to type, or its default button, focused (Enter on a focused
+  button presses that button, so focusing the first button would have answered No).
+- Messages that come from a button's release use the last press's serial (releases carry
+  none), so a Copy button can copy.
+- The gallery's first boot failed: the second test window opened over the gallery's heading,
+  where the runner clicked; it is now moved aside first.
+- The Screens dialog of note 0024 moves to stage 9 (note 0024, Changes).
+
+Chris's question still open: the heading font (pictures sent again with the gallery's).
