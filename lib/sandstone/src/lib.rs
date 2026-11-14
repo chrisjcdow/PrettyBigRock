@@ -52,6 +52,7 @@ pub mod dialog;
 pub mod element;
 pub mod event;
 pub mod geometry;
+mod image;
 pub mod layout;
 mod platform;
 mod run;
@@ -68,6 +69,7 @@ pub use dialog::Dialog;
 pub use element::{Describe, Description, DrawCx, Element, Identify, LayoutCx, Look, Tree, Widget};
 pub use event::{Event, Key, KeyPress, Modifiers, Pointer, PointerKind, Role, Status};
 pub use geometry::{Align, Length, Limits, Padding, Point, Rect, Size};
+pub use image::Image;
 pub use layout::Node;
 pub use platform::{NewWindow, Platform};
 #[cfg(target_os = "prettybigrock")]
