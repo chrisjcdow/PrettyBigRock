@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-permissions"
+description = "The permissions viewer: what each running app can reach and why, with Take back and Stop (note 0025, section 4)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The window is a library, tested on the host with sandstone's harness against a pretend
+# sandbox manager; the program is the event loop around it.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "permissions"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-sandstone = { path = "../../lib/sandstone" }
+
+[target.'cfg(target_os = "prettybigrock")'.dependencies]
+pbr-granite = { path = "../../lib/granite" }
+pbr-window = { path = "../../lib/window" }
+
+[dev-dependencies]
+pbr-sandstone = { path = "../../lib/sandstone", features = ["testing"] }
+
+[lints]
+workspace = true

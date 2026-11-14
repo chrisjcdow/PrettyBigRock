@@ -501,9 +501,14 @@ impl Desktop {
     /// Launches an app through the sandbox manager, which tells the display server that the
     /// user launched it (so its first window takes the focus).
     fn launch(&mut self, app: &str) {
+        self.launch_with(app, "");
+    }
+
+    /// Launches an app with arguments.
+    fn launch_with(&mut self, app: &str, args: &str) {
         let Some(s) = &self.sandbox else { return };
         say!("launching {app}.");
-        let started = s.prepare(app, "").map_err(|e| format!("{e}")).and_then(|launch| {
+        let started = s.prepare(app, args).map_err(|e| format!("{e}")).and_then(|launch| {
             s.start(launch).map_err(|e| {
                 let _ = s.cancel(launch);
                 format!("{e}")
@@ -566,8 +571,9 @@ impl Desktop {
                 }
             }
             CHOICE_PERMISSIONS => {
-                // The permissions viewer comes with note 0025 (M6 stage 8).
-                say!("what can app {app} reach? (the permissions viewer isn't there yet)");
+                // The permissions viewer, open on that app (note 0025, section 4).
+                say!("what can app {app} reach?");
+                self.launch_with("permissions", &alloc::format!("{app}"));
             }
             _ => {}
         }

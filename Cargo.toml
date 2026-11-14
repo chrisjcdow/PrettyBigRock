@@ -8,6 +8,7 @@
 resolver = "3"
 members = [
     "apps/desktop",
+    "apps/permissions",
     "apps/picker",
     "apps/shell",
     "boot/bios",
