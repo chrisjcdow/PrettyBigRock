@@ -295,6 +295,9 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 14 November 2026 (M6 stage 7): **the Screens dialog moves to stage 9**, with the apps: it is
+  an app-sized piece of sandstone work, and stage 7 built sandstone and its gallery only. The
+  start menu's heading now takes sandstone's theme setting (`theme::HEADING`, note 0023).
 - 14 November 2026, built (M6 stage 6): sections 1 to 4 and 6 to 11, except what the note
   leaves to later stages (the picker and `grant`, stage 8; the Screens dialog, which needs
   sandstone, stage 7; the permissions viewer, stage 8: the window menu's "What can this app

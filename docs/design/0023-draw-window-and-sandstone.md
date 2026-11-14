@@ -239,6 +239,65 @@ testable without a screen.
 - Drag and drop between widgets and apps.
 
 ## Changes
+- 14 November 2026, building sandstone (M6 stage 7). Section 5 held: view and update, state kept
+  between views, the widgets of the table. The core (the `App` trait, elements and messages,
+  the `Context`, the state tree, layout, focus, shortcuts, damage, popups and dialogs) and the
+  harness were written first by Opus; the widgets by Sonnet subagents to six briefs on it,
+  each reviewed with its pictures; the gallery likewise. What building settled or changed:
+  - **`App`** has `view` and `update` as section 5 says, and optional methods with defaults:
+    `title` (the part after the manifest's, "Notepad — letter.txt"), `start`, `shortcuts`,
+    `close_requested` (`None` closes; a message lets Notepad ask first), `clipboard_changed`,
+    `notified` (bits 8 to 63), and `view_window`/`window_title` for other windows the app opens
+    with `Context::open_window`. **`view` returns `Element<'_, Message>`**: an element may
+    borrow the app's state (the text editor shows the app's text, a list the app's rows)
+    without copying it, and the view is dropped before `update` runs.
+  - **Widgets** are values behind a `Widget` trait (`Box<dyn Widget>`); containers give their
+    children through `children()` and get the tree walks (focus order, looks, descriptions,
+    the pointer's shape, popups, shortcuts) for free. `Element::map` changes the message type,
+    which is how sandstone's own dialogs sit beside an app's view.
+  - **Widgets' state** is a tree beside the elements, matched after each view by kind (the
+    widget's type) and, among siblings, by the app's id or else the next unused state of the
+    same kind: an element put in before others leaves their state alone.
+  - **Layout** is limits down, sizes up (flexbox's shape, cut down): `Shrink`, `Fill`,
+    `Portion(n)`, `Fixed(n)`; a child that fills across is first measured with no limit across,
+    then laid out at the row's depth. Layout can't send messages, so a widget whose content
+    depends on its size (the terminal's columns) hears `Event::Resized` once the window is laid
+    out at a new size.
+  - **Drawing only what changed** is done by each drawing widget's *look*, a hash of everything
+    its pixels depend on: the rectangles whose look or place changed are drawn again (the whole
+    tree, clipped to them) and committed with that damage. A widget that draws part of a big
+    content (a list, the editor, a scrolled area) hashes only what is in view; the terminal
+    gives a look per row. **The harness checks this after every step of every test**, drawing
+    each window whole and comparing it with what drawing the changes left.
+  - **Focus**: Tab and Shift+Tab through focusable widgets in tree order; a main window starts
+    with nothing focused (the app may focus something in `start`); a dialog starts with its
+    line to type, or its default button, focused. Toolbar buttons are never focusable. Keys go
+    to the focused widget, then the shortcuts (menus' items', then the app's), then Tab, Enter
+    (the default button) and Escape (the cancel button; a dialog's close).
+  - **Serials**: a button's message comes when it is let go, and the release has no serial, so
+    the last press's serial is used for what follows within 0.9 seconds (copying, a popup).
+  - **Popups** are windows of their own whose contents the widget that opened them gives (a
+    menu's items); keys go to an open popup; it closes when it sends a message, on Escape, or
+    when the display server dismisses it.
+  - **Dialogs** (`Dialog::message`, `question`, `input`) are sandstone's: modal `Dialog`
+    windows sized to their contents, made of its own widgets; closing one is its cancel button.
+  - **The theme** is 1.3's colours and sizes. **Its heading style is one setting**,
+    `theme::HEADING`, which the desktop's start menu uses too, so they always match; it is the
+    font at size 2 until Chris chooses.
+  - **`TerminalView` draws from a `Cells` trait** that Terminal implements over `lib/terminal`'s
+    grid, rather than wrapping the grid: `lib/terminal` is GPL and sandstone MPL-2.0.
+  - **`Image`**: an app's pixels borrowed for an icon, a button or a list row. `Canvas` is drawn
+    again only when the app changes its version number.
+  - **The harness** (`sandstone::testing`, with the `testing` feature, which brings in
+    `lib/testpng`, a GPL test helper) runs an app against a pretend display server that keeps
+    note 0022's rules where they matter (configure events, the keyboard to the newest window,
+    popups only in answer to a recent press, the clipboard only with the last press's serial).
+  - **`sandstone::picker`** waits for stage 8, with the picker. `pbr.picker`'s calls wait for
+    the user, so they will run on a helper thread and answer the event loop through its own
+    bits (section 4), not block it.
+  - **Tests**: about 200 on the host (`lib/sandstone/tests/`), with reference pictures of every
+    widget at 1x and 2x in `tests/pictures/sandstone/`; in QEMU, the gallery
+    (`tests/programs/gallery`), described below in note 0026's Changes.
 - 13 November 2026, building `lib/window` (M6 stage 5, written by a Sonnet subagent to a brief
   and reviewed). Section 4 held; what building settled:
   - **One notification really does carry everything**: `pbr.window.events` now takes the
