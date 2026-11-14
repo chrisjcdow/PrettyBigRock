@@ -983,4 +983,17 @@ Found on the way:
   where the runner clicked; it is now moved aside first.
 - The Screens dialog of note 0024 moves to stage 9 (note 0024, Changes).
 
+- In the first full CI run x86-64 UEFI failed twice: the self-test boot because QEMU 8.2.2
+  itself crashed (SIGSEGV in the firmware, before the kernel: the 13 November problem, once in
+  this session), and the desktop boot because the start menu didn't open (stage 6's code: the
+  desktop handled a screens-changed event first, redrawing both wallpapers, and by the time it
+  asked for the start menu's popup the key's serial was more than a second old:
+  `Window(BadSerial)`). The runner now presses the key again, up to three times, as a person
+  would; the desktop should rather not let wallpaper drawing hold up the start-menu key, left
+  for stage 9 with the Screens dialog.
+
+Results: `cargo xtask ci` passed on all four configurations, every boot (on `35bd0d1`). Stress
+43602888815 (on `f7038ff`: the gallery in the desktop boot, before the start-menu retry): 30
+of 30.
+
 Chris's question still open: the heading font (pictures sent again with the gallery's).
