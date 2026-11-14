@@ -85,6 +85,7 @@ fn held(s: &sandbox::Client, app: u32, path: &str) -> Result<Option<sandbox::Gra
 fn grants(u: &Users, chris: &Session, disk: &Disk) -> Result<(), String> {
     let picker = sandbox_as(u, SandboxKind::Picker)?;
     // Something of chris's that `wintest` (its own folder only) doesn't get.
+    disk.folder("Users/chris/Picked")?;
     disk.write("Users/chris/Picked/letter.txt", "Dear Hema")?;
     let id = chris.sandbox.prepare("wintest", "name=Granted wait").map_err(|e| format!("{e}"))?;
     let app = chris.sandbox.start(id).map_err(|e| format!("starting wintest: {e}"))?;

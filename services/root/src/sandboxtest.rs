@@ -180,6 +180,14 @@ impl Disk {
         f.sync().map_err(fail)
     }
 
+    /// Makes the folder at `path`, if it isn't there.
+    pub(crate) fn folder(&self, path: &str) -> Result<(), String> {
+        match self.root.create(path, NodeKind::Folder, RW) {
+            Ok(_) | Err(CallError::Service(FileError::AlreadyExists)) => Ok(()),
+            Err(e) => Err(format!("making {path}: {e}")),
+        }
+    }
+
     fn remove(&self, path: &str) {
         let _ = self.root.remove(path);
     }
