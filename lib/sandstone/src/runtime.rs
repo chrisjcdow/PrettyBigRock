@@ -934,14 +934,43 @@ impl<A: App> Runtime<A> {
         if self.quit {
             return;
         }
-        for i in 0..self.windows.len() {
+        self.render_all(p);
+        // Widgets that depend on their size hear of a new one once it is laid out; what they
+        // send may change the view again.
+        let resized: Vec<WindowId> = self
+            .windows
+            .iter_mut()
+            .filter(|w| w.resized && w.tree.is_some())
+            .map(|w| {
+                w.resized = false;
+                w.id
+            })
+            .collect();
+        if !resized.is_empty() {
+            for id in resized {
+                if let Some(i) = self.index(id) {
+                    self.dispatch(p, i, &Event::Resized, 0);
+                }
+            }
+            self.act_on_asked(p);
+            self.render_all(p);
+        }
+        self.update_titles(p);
+    }
+
+    /// Builds and draws every window that needs it.
+    fn render_all(&mut self, p: &mut dyn Platform) {
+        let mut i = 0;
+        // A window may close while others are drawn (a popup whose owner went), so the
+        // length is looked at each time.
+        while i < self.windows.len() {
             if self.windows[i].configured
                 && (self.windows[i].needs.update || self.windows[i].needs.all)
             {
                 self.render(p, i);
             }
+            i += 1;
         }
-        self.update_titles(p);
     }
 
     fn update_titles(&mut self, p: &mut dyn Platform) {
