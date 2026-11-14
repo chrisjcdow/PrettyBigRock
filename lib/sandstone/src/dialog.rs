@@ -15,7 +15,7 @@ use crate::element::Element;
 use crate::element::Identify;
 use crate::event::Role;
 use crate::theme::Theme;
-use crate::widget::{Button, Column, Label, Row, Space, Stretch};
+use crate::widget::{Button, Column, Label, Row, Space, Stretch, TextField};
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -52,7 +52,6 @@ pub(crate) enum Answer {
     /// Button `n` was chosen.
     Button(usize),
     /// The line to type changed.
-    #[expect(dead_code, reason = "sent by the text field, which comes with its own brief")]
     Text(String),
 }
 
@@ -174,6 +173,8 @@ pub(crate) fn first_focus<M>(d: &Dialog<M>) -> &'static str {
 const TEXT_WIDTH: i32 = 360;
 /// A dialog's buttons, as 1.3's: 96 by 26.
 const BUTTON_WIDTH: i32 = 96;
+/// The line to type in an input dialog.
+const INPUT_WIDTH: i32 = 300;
 
 /// The dialog's window contents.
 pub(crate) fn view<'a, M>(d: &'a Dialog<M>, theme: &Theme) -> Element<'a, Answer> {
@@ -184,10 +185,17 @@ pub(crate) fn view<'a, M>(d: &'a Dialog<M>, theme: &Theme) -> Element<'a, Answer
     if !d.message.is_empty() {
         column = column.push(Label::new(&d.message).wrap().max_width(TEXT_WIDTH));
     }
-    // The line to type: a text field once sandstone has one (M6 stage 7's text field brief);
-    // until then the value is shown.
+    // The line to type: its text is selected, so typing replaces it. It has no `on_submit`,
+    // so Enter goes on to the default button (OK). Its id is what the runtime gives the focus
+    // to when the dialog opens.
     if let Some(input) = &d.input {
-        column = column.push(Label::new(&input.value));
+        column = column.push(
+            TextField::new(&input.value)
+                .select_all()
+                .on_input(Answer::Text)
+                .width(Length::Fixed(INPUT_WIDTH))
+                .id(INPUT_ID),
+        );
     }
     let mut buttons = Row::new().spacing(8).push(Stretch::new());
     for (i, b) in d.buttons.iter().enumerate() {
