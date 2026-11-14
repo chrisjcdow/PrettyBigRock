@@ -74,6 +74,12 @@ impl<'s, M> Shell<'s, M> {
         self.asks.focus == Some(id)
     }
 
+    /// The state number of the widget with the focus of this window, if any (a container can
+    /// tell whether the focus is inside it with [`Tree::contains`](crate::Tree::contains)).
+    pub fn focused(&self) -> Option<u64> {
+        self.asks.focus
+    }
+
     /// Whether the widget has the focus and the window has the keyboard.
     pub fn has_keyboard(&self, id: u64) -> bool {
         self.asks.window_focused && self.is_focused(id)
