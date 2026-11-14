@@ -16,7 +16,10 @@ use std::rc::Rc;
 /// the test keep a handle on what the viewer changes (`Rc` shares, `RefCell` lets the shared
 /// thing be changed).
 #[derive(Clone, Default)]
-struct Fake(Rc<RefCell<Vec<(AppDetails, Vec<Grant>)>>>);
+struct Fake(Rc<RefCell<Vec<Running>>>);
+
+/// One pretend app: its details and grants.
+type Running = (AppDetails, Vec<Grant>);
 
 impl Apps for Fake {
     fn list(&mut self) -> Result<Vec<AppInfo>, String> {
