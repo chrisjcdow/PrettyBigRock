@@ -31,6 +31,7 @@ mod kernel12;
 mod kernel13;
 #[cfg(target_arch = "x86_64")]
 mod phys;
+mod pickerparts;
 mod power;
 mod sandboxtest;
 mod seattest;

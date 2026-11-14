@@ -122,6 +122,28 @@ impl View {
     }
 }
 
+/// A point in the content of the window titled `title` that no window above it covers (the
+/// description lists windows from the bottom up), with room for their frames.
+fn visible_point(v: &View, title: &str) -> Option<(i32, i32)> {
+    let at = v.windows.iter().position(|w| v.window(title) == Some(w))?;
+    let w = &v.windows[at];
+    let above = &v.windows[at + 1..];
+    let covered = |x: i32, y: i32| {
+        above.iter().any(|o| {
+            x >= o.x - 8 && x < o.x + o.width + 8 && y >= o.y - 32 && y < o.y + o.height + 8
+        })
+    };
+    for fy in [2, 1, 3] {
+        for fx in [2, 1, 3] {
+            let (x, y) = (w.x + w.width * fx / 4, w.y + w.height * fy / 4);
+            if !covered(x, y) {
+                return Some((x, y));
+            }
+        }
+    }
+    None
+}
+
 /// What the display server writes in front of each description line (the kernel puts the
 /// program's name in front of each line it logs).
 const PREFIX: &str = "[display] ";
@@ -232,12 +254,15 @@ pub struct WidgetLine {
     pub value: String,
 }
 
-/// The gallery's last whole description: its windows (its own number and the display
-/// server's) and their widgets.
+/// A sandstone program's last whole description (the gallery's, the file picker's, the
+/// permissions viewer's): its windows (its own number and the display server's), their
+/// widgets, and any other lines the program adds (what the picker's lists hold, what the
+/// viewer shows an app holds).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GalleryView {
     pub windows: Vec<(u32, u32)>,
     pub widgets: Vec<WidgetLine>,
+    pub other: Vec<String>,
 }
 
 impl GalleryView {
@@ -260,6 +285,17 @@ impl GalleryView {
     /// The display server's number for the gallery's window `window`.
     fn display(&self, window: u32) -> Option<u32> {
         self.windows.iter().find(|(g, _)| *g == window).map(|(_, d)| *d)
+    }
+
+    /// The rest of the other line that starts with `start`.
+    fn other(&self, start: &str) -> Option<&str> {
+        self.other.iter().find_map(|l| l.strip_prefix(start))
+    }
+
+    /// The names a picker line lists (`folder PATH: a|b|c`, `places a|b`), if `start` is there.
+    fn names(&self, start: &str) -> Option<Vec<String>> {
+        let rest = self.other(start)?;
+        Some(if rest.is_empty() { Vec::new() } else { rest.split('|').map(String::from).collect() })
     }
 }
 
@@ -338,8 +374,15 @@ fn widget_line(rest: &str) -> Option<WidgetLine> {
 /// Reads the last whole description the gallery wrote: `gallery: view N` to `gallery: view N
 /// done`.
 pub fn last_gallery_view(text: &str) -> Option<GalleryView> {
+    last_program_view(text, "gallery")
+}
+
+/// Reads the last whole description `program` wrote: `[program] program: view N` to `...
+/// view N done`.
+pub fn last_program_view(text: &str, program: &str) -> Option<GalleryView> {
+    let prefix = format!("[{program}] {program}: ");
     let lines: Vec<&str> =
-        text.lines().filter_map(|l| l.split_once("gallery: ").map(|(_, r)| r)).collect();
+        text.lines().filter_map(|l| l.split_once(prefix.as_str()).map(|(_, r)| r)).collect();
     let end = lines.iter().rposition(|l| l.starts_with("view ") && l.ends_with(" done"))?;
     let n = lines[end].strip_prefix("view ")?.strip_suffix(" done")?;
     let start = lines[..end].iter().rposition(|l| *l == format!("view {n}"))?;
@@ -350,6 +393,8 @@ pub fn last_gallery_view(text: &str) -> Option<GalleryView> {
             view.windows.push((num(g)?, num(d)?));
         } else if let Some(rest) = l.strip_prefix("widget ") {
             view.widgets.push(widget_line(rest)?);
+        } else {
+            view.other.push(l.to_string());
         }
     }
     Some(view)
@@ -896,6 +941,361 @@ impl Run<'_> {
         }
     }
 
+    /// Waits for a description from `program` (`picker`, `permissions`) that `ok` accepts.
+    fn program_view(
+        &mut self,
+        program: &str,
+        what: &str,
+        ok: impl Fn(&GalleryView) -> bool,
+    ) -> Result<GalleryView, String> {
+        eprintln!("  (waiting for the {program} to show: {what})");
+        let text = self.wait(what, |t| last_program_view(t, program).is_some_and(|v| ok(&v)))?;
+        last_program_view(&text, program)
+            .ok_or_else(|| format!("no description from the {program}"))
+    }
+
+    /// The display server's line for `program`'s window `window`, given the line of its main
+    /// window (titled `title`).
+    fn program_window(
+        &mut self,
+        g: &GalleryView,
+        title: &str,
+        window: u32,
+    ) -> Result<(View, WindowLine), String> {
+        let number = g.display(window).ok_or(format!("{title} has no window {window}"))?;
+        let v = self.view(&format!("{title}'s window {window}"), |v| {
+            v.window(title).is_some_and(|main| {
+                v.windows.iter().any(|w| w.app == main.app && w.number == number)
+            })
+        })?;
+        let main = v.window(title).cloned().ok_or(format!("no {title}"))?;
+        let w = v
+            .windows
+            .iter()
+            .find(|w| w.app == main.app && w.number == number)
+            .cloned()
+            .ok_or(format!("no window {number} of {title}"))?;
+        Ok((v, w))
+    }
+
+    /// Clicks the middle of `program`'s widget `name`, in whichever of its windows it is; its
+    /// main window is titled `title`.
+    fn click_program_widget(
+        &mut self,
+        program: &str,
+        title: &str,
+        name: &str,
+    ) -> Result<(), String> {
+        let g =
+            self.program_view(program, &format!("a widget {name}"), |g| g.widget(name).is_some())?;
+        let w = g.widget(name).cloned().ok_or(format!("no widget {name}"))?;
+        let (_, win) = self.program_window(&g, title, w.window)?;
+        self.click_at(win.x + w.x + w.width / 2, win.y + w.y + w.height / 2)
+    }
+
+    /// Clicks row `row` of `program`'s list `list` (in its main window, titled `title`): one
+    /// pixel of edge, the heading's 21, then rows of 20 (sandstone's `List`).
+    fn click_row(
+        &mut self,
+        program: &str,
+        title: &str,
+        list: &str,
+        row: usize,
+    ) -> Result<(), String> {
+        let g =
+            self.program_view(program, &format!("the list {list}"), |g| g.widget(list).is_some())?;
+        let l = g.widget(list).cloned().ok_or(format!("no list {list}"))?;
+        let (_, win) = self.program_window(&g, title, l.window)?;
+        let y = l.y + 1 + 21 + 20 * row as i32 + 10;
+        if y > l.y + l.height - 4 {
+            return Err(format!("row {row} of {list} is out of sight"));
+        }
+        self.click_at(win.x + l.x + 40, win.y + y)
+    }
+
+    /// Keeps a picture of what the screen shows of window `w` beside the log, as
+    /// `NAME.png`: for people to look at (it isn't compared with anything).
+    fn keep_window(&mut self, v: &View, w: &WindowLine, name: &str) -> Result<(), String> {
+        let s = v.screen(w.screen).cloned().ok_or(format!("no screen holds {}", w.title))?;
+        let (device, head) = self.qemu_screen(v, s.number)?;
+        let f = (s.scale / 100).max(1) as i32;
+        // Give the window a moment to finish drawing.
+        std::thread::sleep(Duration::from_secs(2));
+        let shot_file = self.log.with_extension(format!("{name}.ppm"));
+        self.qmp.screendump(device, head, &shot_file)?;
+        let bytes = fs::read(&shot_file).map_err(|e| format!("{}: {e}", shot_file.display()))?;
+        let _ = fs::remove_file(&shot_file);
+        let shot = pictures::read_ppm(&bytes)?;
+        // The window with its frame: the title bar (27) above, and a few pixels round it.
+        let (ox, oy) = (((w.x - s.x - 4) * f).max(0), ((w.y - s.y - 31) * f).max(0));
+        let cw = ((w.width + 8) * f).min(shot.width as i32 - ox);
+        let ch = ((w.height + 35) * f).min(shot.height as i32 - oy);
+        if cw <= 0 || ch <= 0 {
+            return Err(format!("{} isn't on its screen ({w:?})", w.title));
+        }
+        let mut got =
+            pbr_testpng::Picture { width: cw as u32, height: ch as u32, pixels: Vec::new() };
+        for y in 0..ch {
+            for x in 0..cw {
+                got.pixels.push(
+                    shot.pixels[((oy + y) as u32 * shot.width + (ox + x) as u32) as usize]
+                        | 0xFF00_0000,
+                );
+            }
+        }
+        let png = pbr_testpng::encode(&got)?;
+        fs::write(self.log.with_extension(format!("{name}.png")), png).map_err(|e| e.to_string())
+    }
+
+    /// Drags window `w` by its title bar so that its content's corner is at (`x`, `y`).
+    fn drag_window(&mut self, w: &WindowLine, x: i32, y: i32) -> Result<(), String> {
+        self.move_to(w.x + 60, w.y - 13)?;
+        self.button(true)?;
+        self.move_to(x + 60, y - 13)?;
+        self.button(false)
+    }
+
+    /// Types `text` (lower-case letters and digits) one key at a time.
+    fn type_text(&mut self, text: &str) -> Result<(), String> {
+        for c in text.chars() {
+            self.chord(&[&c.to_string()])?;
+        }
+        Ok(())
+    }
+
+    /// How many times `line` has been written so far.
+    fn count(&self, line: &str) -> usize {
+        self.text().matches(line).count()
+    }
+
+    /// Gives the gallery the keyboard, with a click on its status bar.
+    fn focus_gallery(&mut self) -> Result<(), String> {
+        self.click_widget("status bar")?;
+        self.view("the gallery focused", |v| v.window("Gallery").is_some_and(|w| w.is("focused")))
+            .map(|_| ())
+    }
+
+    /// The gallery asks the picker (Ctrl+S, Ctrl+O): waits for its window, over the gallery's.
+    fn ask_picker(
+        &mut self,
+        keys: &[&str],
+        what: &str,
+    ) -> Result<(GalleryView, WindowLine), String> {
+        let opened = self.count("picker: open for app");
+        self.focus_gallery()?;
+        self.chord(keys)?;
+        self.lines("picker: open for app", opened + 1)?;
+        let g = self.program_view("picker", what, |g| {
+            g.windows.len() == 1 && g.other("places ").is_some()
+        })?;
+        let title = "File picker";
+        let v = self.view("the picker's window", |v| {
+            v.window(title).is_some_and(|w| w.is("drawn") && w.is("system"))
+        })?;
+        let w = v.window(title).cloned().ok_or("no picker window")?;
+        Ok((g, w))
+    }
+
+    /// Saves the gallery's text through the picker as `name` (`.txt` is added): typed over the
+    /// name offered, then Enter. With `replace`, the file is there already, and the picker asks
+    /// first.
+    fn save_as(
+        &mut self,
+        name: &str,
+        replace: bool,
+        pictures: bool,
+        first: &ScreenLine,
+    ) -> Result<(), String> {
+        let given = self.count(&format!("was given /Home/Documents/{name}.txt"));
+        let saved = self.count(&format!("to /Home/Documents/{name}.txt"));
+        let (_, w) = self.ask_picker(&["ctrl", "s"], "saving")?;
+        self.program_view("picker", "the name field focused", |g| {
+            g.widget("name").is_some_and(|w| w.focused && w.value == "Gallery.txt")
+        })?;
+        if pictures {
+            // For people: the picker as it opened, at 1x and, dragged there, at 2x. The pointer
+            // is moved off it first, so that it hovers nothing.
+            self.move_to(first.x + first.width - 8, first.y + 8)?;
+            let v = self.view("the picker", |v| v.window("File picker").is_some())?;
+            self.keep_window(&v, &w, "picker-1x")?;
+            if self.cfg.screens == Screens::TwoVirtioGpu {
+                let second =
+                    v.screens.iter().find(|s| s.number != 1).cloned().ok_or("no screen 2")?;
+                self.drag_window(&w, second.x + 20, second.y + 40)?;
+                self.move_to(first.x + first.width - 8, first.y + 8)?;
+                let v = self.view("the picker at 2x", |v| {
+                    v.window("File picker")
+                        .is_some_and(|p| p.scale == 200 && p.screen == second.number)
+                })?;
+                let w2 = v.window("File picker").cloned().ok_or("no picker")?;
+                self.keep_window(&v, &w2, "picker-2x")?;
+                self.drag_window(&w2, w.x, w.y)?;
+                self.view("the picker back", |v| {
+                    v.window("File picker").is_some_and(|p| p.scale == 100)
+                })?;
+            }
+        }
+        // Select what is offered, type over it, Enter.
+        self.chord(&["ctrl", "a"])?;
+        self.type_text(name)?;
+        self.program_view("picker", "the name typed", |g| {
+            g.widget("name").is_some_and(|w| w.value == name)
+        })?;
+        self.chord(&["ret"])?;
+        if replace {
+            self.program_view("picker", "Replace?", |g| {
+                g.widget("Replace").is_some_and(|w| w.window != 0)
+            })?;
+            self.chord(&["ret"])?;
+        }
+        self.lines(&format!("was given /Home/Documents/{name}.txt"), given + 1)?;
+        self.lines(&format!("to /Home/Documents/{name}.txt"), saved + 1)
+    }
+
+    /// In the open picker, opens folder or file `name` of the folder `folder` shown: a click on
+    /// its row, then Enter.
+    fn pick_row(&mut self, folder: &str, name: &str) -> Result<(), String> {
+        let start = format!("folder {folder}: ");
+        let g = self
+            .program_view("picker", &format!("{folder} listed"), |g| g.other(&start).is_some())?;
+        let names = g.names(&start).unwrap_or_default();
+        let row = names
+            .iter()
+            .position(|n| n == name)
+            .ok_or(format!("no {name} in {folder}: {names:?}"))?;
+        self.click_row("picker", "File picker", "files", row)?;
+        self.program_view("picker", &format!("{name} picked"), |g| {
+            g.widget("files").is_some_and(|w| w.value.starts_with(&format!("{name}|")))
+        })?;
+        self.chord(&["ret"])
+    }
+
+    /// The file picker (note 0025, section 5), from the gallery: Save as (with pictures of the
+    /// picker), saving again over the same name (it asks first), opening what was saved, and
+    /// opening a file on 1.3's disk (an administrator has every volume among the places).
+    fn picker(&mut self, first: &ScreenLine) -> Result<(), String> {
+        self.save_as("saved", false, true, first)?;
+        self.save_as("saved", true, false, first)?;
+        // Open: Documents is where it saved last, and the file is there.
+        let read = self.count("gallery: read ");
+        self.ask_picker(&["ctrl", "o"], "opening")?;
+        self.pick_row("/Home/Documents", "saved.txt")?;
+        self.lines("gallery: read ", read + 1)?;
+        self.line("gallery: read 5 bytes from /Home/Documents/saved.txt")?;
+        // 1.3's disk: the place named after its volume, Data.
+        let (g, _) = self.ask_picker(&["ctrl", "o"], "opening again")?;
+        let places = g.names("places ").unwrap_or_default();
+        let row =
+            places.iter().position(|p| p == "Data").ok_or(format!("no Data among {places:?}"))?;
+        self.click_row("picker", "File picker", "places", row)?;
+        self.pick_row("/Volumes/Data", "Documents")?;
+        self.pick_row("/Volumes/Data/Documents", "letter.txt")?;
+        self.line("gallery: read 76 bytes from /Volumes/Data/Documents/letter.txt")?;
+        Ok(())
+    }
+
+    /// The permissions viewer (note 0025, sections 4 and 5), from the gallery's window menu:
+    /// what it shows the gallery holds is what the sandbox manager says; Take back takes the
+    /// file the gallery saved; Stop stops the gallery.
+    fn permissions(&mut self, first: &ScreenLine) -> Result<(), String> {
+        let v = self.view("the gallery", |v| v.window("Gallery").is_some())?;
+        let g = v.window("Gallery").cloned().ok_or("no Gallery")?;
+        let app = g.app;
+        self.move_to(g.x + 40, g.y - 13)?;
+        let right =
+            |down: bool| format!(r#"{{"type":"btn","data":{{"button":"right","down":{down}}}}}"#);
+        self.qmp.send(true, &[right(true)])?;
+        std::thread::sleep(Duration::from_millis(150));
+        self.qmp.send(true, &[right(false)])?;
+        let reach = "What can this app reach?";
+        let v = self.view("the gallery's window menu", |v| {
+            v.menu.as_ref().is_some_and(|m| m.rows.iter().any(|r| r == reach))
+        })?;
+        let (mx, my) = v.menu.as_ref().and_then(|m| m.row(reach)).ok_or("no row for the viewer")?;
+        self.click_at(mx, my)?;
+        self.line(&format!("permissions: open on app {app}"))?;
+        // What it shows is what the sandbox manager says (the root program logs each change).
+        let holds = format!("app {app} holds ");
+        let text = self.line(&format!("Desktop test: app {app} grants: "))?;
+        let grants_line = text
+            .lines()
+            .rev()
+            .find_map(|l| {
+                l.split_once(&format!("Desktop test: app {app} grants: "))
+                    .map(|(_, r)| r.to_string())
+            })
+            .unwrap_or_default();
+        let wanted: Vec<(String, bool)> = grants_line
+            .split("; ")
+            .filter(|g| !g.is_empty())
+            .filter_map(|g| {
+                let mut w = g.rsplitn(3, ' ');
+                let (_, rights, path) = (w.next()?, w.next()?, w.next()?);
+                Some((path.to_string(), rights == "rw"))
+            })
+            .collect();
+        let pv = self.program_view("permissions", "what the gallery holds", |p| {
+            p.other.iter().filter(|l| l.starts_with(&holds)).count() == wanted.len() + 2
+        })?;
+        let shown: Vec<&str> =
+            pv.other.iter().filter_map(|l| l.strip_prefix(holds.as_str())).collect();
+        for (path, rw) in &wanted {
+            let words = if *rw { "read and change" } else { "read" };
+            let line = format!("{path}: {words}, you chose it");
+            if !shown.contains(&line.as_str()) {
+                return Err(format!("the viewer doesn't show \"{line}\": it shows {shown:?}"));
+            }
+        }
+        for service in ["Windows", "The file picker"] {
+            if !shown.contains(&service) {
+                return Err(format!("the viewer doesn't show {service}: it shows {shown:?}"));
+            }
+        }
+        // For people: the viewer at 1x and, dragged there, at 2x.
+        let v =
+            self.view("the viewer", |v| v.window("Permissions").is_some_and(|w| w.is("system")))?;
+        let w = v.window("Permissions").cloned().ok_or("no viewer")?;
+        self.move_to(first.x + first.width - 8, first.y + 8)?;
+        self.keep_window(&v, &w, "permissions-1x")?;
+        if self.cfg.screens == Screens::TwoVirtioGpu {
+            let second = v.screens.iter().find(|s| s.number != 1).cloned().ok_or("no screen 2")?;
+            self.drag_window(&w, second.x + 20, second.y + 40)?;
+            self.move_to(first.x + first.width - 8, first.y + 8)?;
+            let v = self.view("the viewer at 2x", |v| {
+                v.window("Permissions").is_some_and(|p| p.scale == 200 && p.screen == second.number)
+            })?;
+            let w2 = v.window("Permissions").cloned().ok_or("no viewer")?;
+            self.keep_window(&v, &w2, "permissions-2x")?;
+            self.drag_window(&w2, w.x, w.y)?;
+            self.view("the viewer back", |v| {
+                v.window("Permissions").is_some_and(|p| p.scale == 100)
+            })?;
+        }
+        // Take back the file it saved: it goes from the sandbox manager's record.
+        let saved = "/Home/Documents/saved.txt: read and change, you chose it";
+        let row = shown.iter().position(|l| *l == saved).ok_or("no row for the saved file")?;
+        self.click_row("permissions", "Permissions", "held", row)?;
+        self.click_program_widget("permissions", "Permissions", "takeback")?;
+        self.line("permissions: took /Home/Documents/saved.txt back from gallery")?;
+        self.line("took /Home/Documents/saved.txt back from gallery.")?;
+        self.wait("the grant gone from the sandbox manager's record", |t| {
+            t.lines()
+                .rev()
+                .find_map(|l| {
+                    l.split_once(&format!("Desktop test: app {app} grants: "))
+                        .map(|(_, r)| r.to_string())
+                })
+                .is_some_and(|r| !r.contains("/Home/Documents/saved.txt"))
+        })?;
+        // Stop the gallery.
+        self.click_program_widget("permissions", "Permissions", "stop")?;
+        self.line("permissions: stopped gallery")?;
+        self.line("sandbox (chris): stopped gallery.")?;
+        self.click_program_widget("permissions", "Permissions", "close")?;
+        self.line("permissions: closing")?;
+        Ok(())
+    }
+
     /// The gallery (note 0023, section 6; `tests/programs/gallery`): every sandstone widget in
     /// one window, beside a test window `Other` for the clipboard. Its look is compared with the
     /// pictures its host tests drew, at 1x and (on two screens) at 2x; then it is driven: a
@@ -1025,12 +1425,17 @@ impl Run<'_> {
         self.wheel(3)?;
         self.gallery_view("scrolled", |g| g.widget("scroll").is_some_and(|w| w.value != "0,0"))?;
 
-        // Keep a picture of it as the user left it, then close both windows with Ctrl+W.
+        // Keep a picture of it as the user left it.
         self.keep_screens("gallery")?;
-        self.click_widget("status bar")?;
-        self.view("the gallery focused", |v| v.window("Gallery").is_some_and(|w| w.is("focused")))?;
-        self.chord(&["ctrl", "w"])?;
-        self.line("gallery: closing")?;
+
+        // ---- The file picker and the permissions viewer (note 0025). ----
+        self.picker(&first)?;
+        self.permissions(&first)?;
+
+        // The gallery was stopped from the permissions viewer; Other is closed with Ctrl+W.
+        let v = self.view("Other", |v| v.window("Other").is_some())?;
+        let o = v.window("Other").cloned().ok_or("no Other")?;
+        self.click_at(o.x + 10, o.y + o.height - 10)?;
         self.view("Other focused", |v| v.window("Other").is_some_and(|w| w.is("focused")))?;
         self.chord(&["ctrl", "w"])?;
         self.line("wintest Other: closing")?;
@@ -1169,6 +1574,21 @@ impl Run<'_> {
         self.view("Hung not responding", |v| {
             v.window("Hung").is_some_and(|w| w.is("not-responding"))
         })?;
+        // The hostile app tries the file picker (note 0025): asks without a press, then, once
+        // clicked, a second while the first is open; the first is cancelled with Escape.
+        self.line("windowprobe: click me")?;
+        let v = self.view("the probe's window", |v| v.window("probe").is_some())?;
+        let (px, py) = visible_point(&v, "probe").ok_or("the probe's window is covered")?;
+        let opened = self.count("picker: open for app");
+        self.click_at(px, py)?;
+        self.lines("picker: open for app", opened + 1)?;
+        self.line("windowprobe: refused: a second picker while one is open (Busy)")?;
+        self.view("the picker over the probe", |v| {
+            v.window("File picker").is_some_and(|w| w.is("drawn") && w.is("focused"))
+        })?;
+        self.chord(&["esc"])?;
+        self.line("windowprobe: the first picker was cancelled")?;
+
         // The rest carry on: Beta takes a click and keys.
         let v = self.view("Beta", |v| v.window("Beta").is_some())?;
         let b = v.window("Beta").cloned().ok_or("no Beta")?;

@@ -493,6 +493,10 @@ mod program {
             }
             let mut lines = Vec::new();
             if let Some(o) = &self.open {
+                // What the lists hold: their descriptions say only which row is picked.
+                let p = o.rt.app();
+                lines.push(format!("places {}", p.place_titles().join("|")));
+                lines.push(format!("folder {}: {}", p.folder(), p.names().join("|")));
                 for (id, win) in o.rt.windows() {
                     lines.push(format!("window {} is {}", id.0, win.number()));
                     for d in o.rt.describe(id) {

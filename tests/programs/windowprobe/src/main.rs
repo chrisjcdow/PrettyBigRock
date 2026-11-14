@@ -13,22 +13,31 @@
 //!
 //! Most calls go straight to the interface (`Connection::client`), since `lib/window` is
 //! written to make the right calls, not the wrong ones.
+//!
+//! It also tries the file picker's rules (note 0025, section 1): asking without a press in its
+//! window, or for a window it hasn't got, is refused; and once the runner has clicked its
+//! window (it logs `windowprobe: click me` and waits), a second picker while the first is open
+//! is refused as busy. The runner then cancels the first.
 
 #![no_std]
 #![no_main]
 
 extern crate alloc;
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt::Debug;
+use granite::endpoint::Endpoint;
 use granite::interface::CallError;
+use granite::lock::Lock;
 use granite::memory::Memory;
 use granite::notification::Notification;
 use granite::time;
+use pbr_interfaces::pbr_picker::{self as picker, PickerError, Place};
 use pbr_interfaces::pbr_window::{
     ClipForm, Edge, Point, Size, WindowError, WindowFlags, WindowKind,
 };
-use pbr_window::{Connection, Event, Win};
+use pbr_window::{Connection, Event, PointerKind, Win};
 
 granite::main!(main);
 
@@ -90,8 +99,13 @@ fn main(mut start: granite::Start) -> i32 {
             return 100;
         }
     };
+    // Its capability for the file picker (its manifest asks for `picker`), at role 1004.
+    let Some(pk) = start.take(1004) else {
+        granite::println!("windowprobe: FAILED: no file picker at role 1004");
+        return 109;
+    };
     let mut probe = Probe { attempts: 0 };
-    match run(&mut probe, &mut conn) {
+    match run(&mut probe, &mut conn, Endpoint(pk)) {
         Ok(()) => {
             granite::println!("windowprobe: all {} attempts were refused", probe.attempts);
             0
@@ -117,7 +131,89 @@ fn size(width: u32, height: u32) -> Size {
     Size { width, height }
 }
 
-fn run(p: &mut Probe, conn: &mut Connection) -> Result<(), i32> {
+/// Waits up to two minutes for a button press in `win`: its serial.
+fn wait_press(conn: &mut Connection, win: Win) -> Option<u32> {
+    let deadline = time::after_ms(120_000);
+    loop {
+        if let Event::Pointer(e) = conn.next_event(deadline)?
+            && e.window == win
+            && matches!(e.what, PointerKind::Button { pressed: true, .. })
+        {
+            return Some(e.serial);
+        }
+    }
+}
+
+/// The picker's rules (note 0025, section 1), from window `w`.
+fn the_picker(p: &mut Probe, conn: &mut Connection, w: Win, pk: Endpoint) -> Result<(), i32> {
+    let mut pk = picker::Client::new(pk);
+    pk.set_timeout_ms(10_000);
+    let n = w.number();
+    let open = |c: &picker::Client, window: u32, serial: u32| {
+        c.open(window, serial, "", Place::Documents, &[], false, false)
+    };
+    let refused = |p: &mut Probe,
+                   what: &str,
+                   got: Result<picker::open::Results, CallError<PickerError>>,
+                   want: PickerError| {
+        match got {
+            Err(CallError::Service(e)) if e == want => {
+                p.attempts += 1;
+                granite::println!("windowprobe: refused: {what} ({e:?})");
+                Ok(())
+            }
+            other => p.failed(what, &other.map(|r| r.path)),
+        }
+    };
+    refused(p, "the picker with serial 0", open(&pk, n, 0), PickerError::NotAllowed)?;
+    refused(p, "the picker with a made-up serial", open(&pk, n, 12345), PickerError::NotAllowed)?;
+    refused(
+        p,
+        "the picker for a window it hasn't",
+        open(&pk, 999, 12345),
+        PickerError::NotAllowed,
+    )?;
+    let r = pk.save(n, 12345, "", Place::Documents, "x.txt", &[]);
+    refused(
+        p,
+        "saving with a made-up serial",
+        r.map(|r| picker::open::Results { path: r.path, node: r.node }),
+        PickerError::NotAllowed,
+    )?;
+    // A real press: the runner clicks the window. The first picker opens (the runner cancels
+    // it); a second, asked while it is open, is refused.
+    granite::println!("windowprobe: click me");
+    let serial = wait_press(conn, w).ok_or_else(|| {
+        granite::println!("windowprobe: FAILED: nobody clicked its window");
+        110
+    })?;
+    // The first waits for the user, so it is asked on a thread of its own. (`Arc` shares the
+    // client between the two threads; `Lock` the place the answer is left.)
+    pk.set_timeout_ms(300_000);
+    let pk = Arc::new(pk);
+    let answer: Arc<Lock<Option<Result<(), PickerError>>>> = Arc::new(Lock::new(None));
+    let (theirs, slot) = (pk.clone(), answer.clone());
+    let first = granite::thread::spawn(move || {
+        let r = open(&theirs, n, serial).map(|_| ()).map_err(|e| match e {
+            CallError::Service(e) => e,
+            _ => PickerError::Failed,
+        });
+        *slot.lock() = Some(r);
+    })
+    .map_err(|_| 111)?;
+    granite::time::sleep_ms(500);
+    refused(p, "a second picker while one is open", open(&pk, n, serial), PickerError::Busy)?;
+    let _ = first.join();
+    match answer.lock().take() {
+        Some(Err(PickerError::Cancelled)) => {
+            granite::println!("windowprobe: the first picker was cancelled");
+            Ok(())
+        }
+        other => p.failed("the first picker", &other),
+    }
+}
+
+fn run(p: &mut Probe, conn: &mut Connection, pk: Endpoint) -> Result<(), i32> {
     let none = WindowFlags::default();
     let origin = Point { x: 0, y: 0 };
 
@@ -220,6 +316,9 @@ fn run(p: &mut Probe, conn: &mut Connection) -> Result<(), i32> {
         granite::println!("windowprobe: FAILED: destroying the big window: got {e:?}");
         107
     })?;
+
+    // 9b. The file picker's rules, from its own window, while events can still be read.
+    the_picker(p, conn, win, pk)?;
 
     // 10. Scribbling over the ring's bookkeeping (its first 64 bytes: the header the server
     // checks). The display server must go on answering. After this the probe does not rely

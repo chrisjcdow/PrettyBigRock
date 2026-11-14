@@ -5,4 +5,5 @@
 title "Probe"
 budget 8M
 windows
+picker
 hidden

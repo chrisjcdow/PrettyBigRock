@@ -153,7 +153,7 @@ pub(crate) struct Disk {
 }
 
 impl Disk {
-    fn open(&self, path: &str, rights: FileRights) -> Result<file::Client, String> {
+    pub(crate) fn open(&self, path: &str, rights: FileRights) -> Result<file::Client, String> {
         let mut c = self.root.open(path, rights).map_err(|e| format!("opening {path}: {e}"))?.node;
         c.set_timeout_ms(30_000);
         Ok(c)
@@ -264,7 +264,8 @@ fn with_system_volume(sup: &Supervisor, u: &Users, storage: &Storage) -> Result<
     trust(&chris, &alice, &disk, storage)?;
     let added = adding(u, &chris, &disk, storage)?;
     let desktop = crate::desktopparts::run(sup, u, &chris, &disk)?;
-    Ok(format!("{places}, {revoked}, trust and rules, {added}, {desktop}"))
+    let picker = crate::pickerparts::run(u, &chris, &alice, &disk, storage)?;
+    Ok(format!("{places}, {revoked}, trust and rules, {added}, {desktop}, {picker}"))
 }
 
 /// Chris's rules (`distrust sandboxed`, `deny sandboxed music`): the app gets the places its

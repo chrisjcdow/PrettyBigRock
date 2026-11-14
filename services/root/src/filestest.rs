@@ -52,6 +52,10 @@ impl host::Server for Host {
     fn failed(&mut self, _reason: FsFailure, reply: host::failed::Reply) {
         let _ = reply.ok();
     }
+    // (Servers here are never started to check their volumes.)
+    fn checked(&mut self, _report: String, _problems: u32, reply: host::checked::Reply) {
+        let _ = reply.err(host::HostError::BadState);
+    }
 }
 
 fn spawn(

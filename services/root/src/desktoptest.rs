@@ -153,6 +153,48 @@ fn check_desktop(s: &Session) -> Result<(), String> {
     Ok(())
 }
 
+/// While `app` runs, follows what the sandbox manager says it holds: each time that changes it
+/// is written to the log (`Desktop test: app N grants: PATH rw Chosen; …`), for the runner to
+/// compare with what the permissions viewer shows. Answers whether `path` was given to it, read
+/// and write and chosen, and whether it was then taken back while the app still ran.
+fn watch_grants(s: &Session, app: u32, p: &Process, path: &str) -> Result<(bool, bool), String> {
+    let end = time::after_ms(STEP_SECS * 1000);
+    let (mut given, mut taken) = (false, false);
+    let mut last = String::new();
+    while matches!(p.info().map(|i| i.state), Ok(State::Running)) {
+        if time::now() > end {
+            return Err(format!("app {app} was still running after {STEP_SECS} seconds"));
+        }
+        if let Ok(page) = s.sandbox.grants(app, 0) {
+            let line: Vec<String> = page
+                .grants
+                .iter()
+                .map(|g| {
+                    let rw = if g.rights.0 & FileRights::WRITE.0 != 0 { "rw" } else { "r" };
+                    format!("{} {rw} {:?}", g.path, g.reason)
+                })
+                .collect();
+            let line = line.join("; ");
+            if line != last {
+                granite::println!("Desktop test: app {app} grants: {line}");
+                last = line;
+            }
+            let has = page.grants.iter().any(|g| {
+                g.path == path
+                    && g.reason == GrantReason::Chosen
+                    && g.rights.0 == FileRights::READ.0 | FileRights::WRITE.0
+            });
+            if has {
+                given = true;
+            } else if given {
+                taken = true;
+            }
+        }
+        time::sleep_ms(200);
+    }
+    Ok((given, taken))
+}
+
 fn all(sup: &Supervisor) -> Result<String, String> {
     let mut done: Vec<&str> = Vec::new();
     let s = Session::find(sup, 300)?;
@@ -226,14 +268,29 @@ fn all(sup: &Supervisor) -> Result<String, String> {
 
     // Step 4b: the widget gallery (note 0023, section 6), with a test window beside it for the
     // clipboard. The runner clicks, types, tabs, opens a menu and a dialog, copies to and from
-    // the other window, scrolls, and moves the gallery to the 2x screen; then it closes both.
-    let (_, gallery) = s.launch("gallery", "")?;
+    // the other window, scrolls, and moves the gallery to the 2x screen. Then (note 0025) it
+    // saves the gallery's text through the file picker, saves again over it, opens it and a
+    // file on 1.3's disk, looks at what the gallery holds in the permissions viewer, takes the
+    // saved file back, and stops the gallery from there; then closes the other window.
+    let (gallery_id, gallery) = s.launch("gallery", "")?;
     time::sleep_ms(500);
     let (_, other) = s.launch("wintest", "name=Other colour=a0a0a0 size=200x120")?;
     granite::println!("Desktop test: the gallery");
-    ended(&gallery, "gallery", Some(0), STEP_SECS)?;
+    let (given, taken) = watch_grants(&s, gallery_id, &gallery, "/Home/Documents/saved.txt")?;
+    if !given || !taken {
+        return Err(format!(
+            "the gallery was {}given the file it saved, and it was {}taken back",
+            if given { "" } else { "never " },
+            if taken { "" } else { "never " }
+        ));
+    }
+    ended(&gallery, "gallery", None, STEP_SECS)?;
     ended(&other, "Other", Some(0), STEP_SECS)?;
     done.push("the widget gallery driven by the pointer and the keyboard, at 1x and 2x");
+    done.push(
+        "the file picker saving, replacing and opening for an app, the permissions viewer \
+         showing what it holds, taking a file back and stopping it",
+    );
 
     // A note in an app's own folder, for the second boot to find.
     let (_, saver) = s.launch("wintest", "name=Saver save")?;

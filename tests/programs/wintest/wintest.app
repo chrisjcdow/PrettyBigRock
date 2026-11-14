@@ -5,4 +5,5 @@
 title "Test window"
 budget 4M
 windows
+picker
 data

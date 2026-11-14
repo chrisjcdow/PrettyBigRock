@@ -106,6 +106,14 @@ mod program {
             }
             if describe {
                 let mut lines = Vec::new();
+                // What the app shown holds, row by row (the list's description says only which
+                // row is picked): the runner compares it with what the sandbox manager says.
+                let v = rt.app();
+                if let Some(app) = v.shown() {
+                    for h in v.held() {
+                        lines.push(format!("app {app} holds {}", h.text));
+                    }
+                }
                 for (id, win) in rt.windows() {
                     lines.push(format!("window {} is {}", id.0, win.number()));
                     for d in rt.describe(id) {

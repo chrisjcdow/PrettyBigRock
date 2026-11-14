@@ -13,7 +13,8 @@
 //!
 //! Two more flags test its own folder (note 0024, section 4), across a restart: `save` writes
 //! a note there and ends (status 0); `load` reads it and ends with status 10 if it is there,
-//! 0 if not. Neither opens a window.
+//! 0 if not. Neither opens a window. And `wait` opens none and waits until it is stopped: an
+//! app for the self-test to give things to through the file picker's `grant` (note 0025).
 
 #![no_std]
 #![no_main]
@@ -43,6 +44,7 @@ struct Config {
     resizable: bool,
     save: bool,
     load: bool,
+    wait: bool,
 }
 
 impl Config {
@@ -56,6 +58,7 @@ impl Config {
             resizable: false,
             save: false,
             load: false,
+            wait: false,
         };
         for word in args.split_whitespace() {
             if let Some(n) = word.strip_prefix("name=") {
@@ -77,6 +80,7 @@ impl Config {
                     "resizable" => c.resizable = true,
                     "save" => c.save = true,
                     "load" => c.load = true,
+                    "wait" => c.wait = true,
                     _ => {}
                 }
             }
@@ -99,6 +103,12 @@ fn main(mut start: granite::Start) -> i32 {
     let config = Config::parse(start.args());
     if config.save || config.load {
         return own_folder(&mut start, &config);
+    }
+    if config.wait {
+        say!(config.name, "waiting");
+        loop {
+            granite::time::sleep_ms(60_000);
+        }
     }
     let mut conn = match Connection::from_start(&mut start) {
         Ok(c) => c,

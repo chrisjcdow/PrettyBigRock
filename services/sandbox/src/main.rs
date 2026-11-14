@@ -877,8 +877,10 @@ impl Sandbox {
                 return Err(SandboxError::TooMany);
             }
             let app = self.app(id)?;
-            // Only an app that holds the picker can be given what was chosen in it.
-            if app.services.0 & AppServices::PICKER.0 == 0 {
+            // Only an app granted the picker can be given what was chosen in it. (Its manifest's
+            // grant, not the service itself: the self-test, with no display, has no picker to
+            // hand out, and stands in for it.)
+            if !app.extras.picker {
                 return Err(SandboxError::NotAllowed);
             }
             // Something it holds already covers the path: the answer comes through that.

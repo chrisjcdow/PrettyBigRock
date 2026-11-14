@@ -94,7 +94,7 @@ fn own_folder(chris: &Session, disk: &Disk) -> Result<(), String> {
 }
 
 /// A `pbr.sandbox` capability for chris's session, as `kind`'s holders have it.
-fn sandbox_as(u: &Users, kind: SandboxKind) -> Result<sandbox::Client, String> {
+pub(crate) fn sandbox_as(u: &Users, kind: SandboxKind) -> Result<sandbox::Client, String> {
     let h = u.debug.sandbox("chris", kind).map_err(|e| format!("a {kind:?} capability: {e}"))?;
     let mut c = sandbox::Client::new(Endpoint(h));
     c.set_timeout_ms(30_000);
@@ -120,6 +120,8 @@ fn each_kind(u: &Users) -> Result<(), String> {
         let launches = matches!(kind, Trusted | Desktop);
         let views = matches!(kind, Trusted | Viewer);
         let lists = !matches!(kind, Picker);
+        // The picker may ask `details`, for the title of the app asking (note 0025).
+        let details = true;
         let expect = [
             ("prepare", not_allowed(c.prepare("nothing", "")), !launches),
             ("choose", not_allowed(c.choose(9999, "/Home/x", chosen)), !launches),
@@ -127,7 +129,7 @@ fn each_kind(u: &Users) -> Result<(), String> {
             ("cancel", not_allowed(c.cancel(9999)), !launches),
             ("apps", not_allowed(c.apps()), !launches),
             ("list", not_allowed(c.list()), !lists),
-            ("details", not_allowed(c.details(9999)), !lists),
+            ("details", not_allowed(c.details(9999)), !details),
             ("stop", not_allowed(c.stop(9999)), !lists),
             ("grants", not_allowed(c.grants(9999, 0)), !views),
             ("revoke", not_allowed(c.revoke(9999, "/Home")), !views),

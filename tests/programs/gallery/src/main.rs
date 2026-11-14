@@ -70,6 +70,8 @@ mod program {
             return 3;
         }
         let mut last: Vec<String> = Vec::new();
+        // Whether the picker was last asked to save (or to open).
+        let mut saving = false;
         let mut views = 0u32;
         conn.run(|c, event| {
             if let Event::Configure { size, scale, focused, .. } = event {
@@ -89,6 +91,7 @@ mod program {
                     } else {
                         Ask::open("").filter("Text", "txt md")
                     };
+                    saving = wish.save;
                     match p.open(wish.window, wish.serial, &ask) {
                         Ok(()) => {
                             say!("asked the picker to {}", if wish.save { "save" } else { "open" })
@@ -98,7 +101,7 @@ mod program {
                 }
                 if picked && let Some(answer) = p.take() {
                     let save = rt.app().text().as_bytes().to_vec();
-                    use_answer(&mut files, &mut rt, answer, save);
+                    use_answer(&mut files, &mut rt, answer, saving.then_some(save));
                 }
             }
             let lines = describe(&rt);
@@ -118,12 +121,12 @@ mod program {
     }
 
     /// What the picker answered: what was chosen is put in the gallery's tree; a file to save
-    /// gets the field's text, and one opened puts its first line in the field.
+    /// gets `save` (the field's text), and one opened puts its first line in the field.
     fn use_answer(
         files: &mut Files,
         rt: &mut Runtime<Gallery>,
         answer: Result<pbr_sandstone::picker::Chosen, PickError>,
-        text: Vec<u8>,
+        save: Option<Vec<u8>>,
     ) {
         let chosen = match answer {
             Ok(c) => c,
@@ -137,13 +140,12 @@ mod program {
         };
         say!("picked {path}");
         let rw = FileRights(FileRights::READ.0 | FileRights::WRITE.0);
-        // Saving: the file was given read and write; opening: read only, so it is read.
-        match files.open(&path, rw) {
-            Ok(f) => match f.save(&text) {
+        match save {
+            Some(text) => match files.open(&path, rw).and_then(|f| f.save(&text)) {
                 Ok(()) => say!("saved {} bytes to {path}", text.len()),
                 Err(e) => say!("can't save {path}: {}", pbr_files::describe(e)),
             },
-            Err(_) => match files.open(&path, FileRights::READ).and_then(|f| f.read_all()) {
+            None => match files.open(&path, FileRights::READ).and_then(|f| f.read_all()) {
                 Ok(data) => {
                     let text = alloc::string::String::from_utf8_lossy(&data);
                     rt.app_mut().set_text(&text);
