@@ -10,7 +10,6 @@
 //! ACPI tables are in physical memory the kernel doesn't manage, so they are read through the
 //! device memory capability, a page at a time (as the device manager reads the MCFG table).
 
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::ManuallyDrop;
@@ -40,25 +39,27 @@ fn copy(start: &granite::Start, r: u32) -> Option<Handle> {
 /// The power service's capabilities: (role, capability, rights to give), and its arguments.
 pub fn caps(start: &granite::Start) -> (Vec<(u32, Handle, u32)>, String) {
     let mut caps = Vec::new();
-    let mut args = String::new();
     match copy(start, role::POWER) {
         Some(m) => caps.push((role::POWER, m, rights::ALL)),
         None => granite::println!("The root program has no machine capability to pass on."),
     }
     #[cfg(target_arch = "x86_64")]
-    if let Err(e) = x86(start, &mut caps, &mut args) {
+    let args = x86(start, &mut caps).unwrap_or_else(|e| {
         granite::println!("The power service won't be able to turn the computer off: {e}");
-    }
+        String::new()
+    });
+    // (ARM64 is turned off through the firmware, by the kernel: the machine capability is all.)
+    #[cfg(not(target_arch = "x86_64"))]
+    let args = String::new();
     (caps, args)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn x86(
-    start: &granite::Start,
-    caps: &mut Vec<(u32, Handle, u32)>,
-    args: &mut String,
-) -> Result<(), String> {
+/// The x86 parts, added to `caps`; answers the power service's arguments.
+fn x86(start: &granite::Start, caps: &mut Vec<(u32, Handle, u32)>) -> Result<String, String> {
+    use alloc::format;
     use granite::device::{DeviceMemory, IoPorts};
+    let mut args = String::new();
     use granite::memory::Memory;
     use pbr_platform::acpi;
 
@@ -108,5 +109,5 @@ fn x86(
             Err(e) => granite::println!("The root program can't slice an ACPI table: {e}"),
         }
     }
-    Ok(())
+    Ok(args)
 }

@@ -553,7 +553,7 @@ impl Run<'_> {
 
     /// Opens the start menu with the Windows key and clicks `item` in it (the desktop says
     /// where each is).
-    fn from_start_menu(&mut self, item: &str, times: usize) -> Result<(), String> {
+    fn choose_from_start_menu(&mut self, item: &str, times: usize) -> Result<(), String> {
         self.chord(&["meta_l"])?;
         self.lines("desktop: start menu open", times)?;
         // The desktop says where each choice is after it says the menu is open, Shut down
@@ -604,7 +604,7 @@ impl Run<'_> {
         self.desktop_ready(1)?;
         self.line("Desktop test: after restarting")?;
         self.line("Desktop test passed")?;
-        self.from_start_menu("Shut down", 1)?;
+        self.choose_from_start_menu("Shut down", 1)?;
         self.line("users: chris asked to turn the computer off")?;
         self.stopped("guest-shutdown")
     }
@@ -791,7 +791,7 @@ impl Run<'_> {
 
         // ---- Step 4: the start menu launches the test window, focused. ----
         self.line("Desktop test: the start menu")?;
-        self.from_start_menu("wintest", 2)?;
+        self.choose_from_start_menu("wintest", 2)?;
         self.view("the window from the start menu, focused", |v| {
             v.window("test").is_some_and(|w| w.is("drawn") && w.is("focused"))
         })?;
