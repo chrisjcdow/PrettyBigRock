@@ -264,4 +264,8 @@ pub enum Event {
     PopupClosed,
     /// The window got (true) or lost the keyboard.
     WindowFocus(bool),
+    /// The window was laid out at a new size or scale (and once when it first shows): a
+    /// widget whose content depends on its size (a terminal's columns and rows) tells the app
+    /// now, since layout itself can't send messages.
+    Resized,
 }

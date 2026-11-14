@@ -94,6 +94,8 @@ struct Window<M> {
     last_press: Option<(u64, Point, Button, u32)>,
     /// Its open popup.
     popup: Option<WindowId>,
+    /// Its size or scale changed: once laid out again, its widgets hear `Event::Resized`.
+    resized: bool,
 }
 
 impl<M> Window<M> {
@@ -116,6 +118,7 @@ impl<M> Window<M> {
             cursor: Cursor::Arrow,
             last_press: None,
             popup: None,
+            resized: false,
         }
     }
 }
@@ -389,6 +392,7 @@ impl<A: App> Runtime<A> {
         let factor = pbr_window::frames::pixel_scale(scale);
         if !w.configured || size != w.size || factor != w.factor {
             w.needs = Needs { update: true, all: true };
+            w.resized = true;
         }
         w.size = size;
         w.factor = factor;
