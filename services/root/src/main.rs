@@ -20,6 +20,7 @@ extern crate alloc;
 mod blocktest;
 mod classictest;
 mod crashtest;
+mod desktopparts;
 mod desktoptest;
 mod devtest;
 mod displaytest;

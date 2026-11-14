@@ -198,6 +198,8 @@ struct Service {
     shut_down: bool,
     /// Started for a boot test (`selftest` or `desktoptest`): `pbr.users.debug` is served.
     selftest: bool,
+    /// The last number given to a self-test's `pbr.sandbox` capability (`sandbox`).
+    next_test_badge: u32,
     /// The input service, through the capability that can set the keyboard layout and nothing
     /// else (note 0021, section 5), while it is known and answering.
     input: Option<seat::Client>,
@@ -254,6 +256,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         ended,
         shut_down: false,
         selftest,
+        next_test_badge: 0,
         input: None,
         layout_set: false,
     };
@@ -1466,7 +1469,11 @@ impl debug_if::Server for Service {
             debug_if::SandboxKind::Viewer => 3,
             debug_if::SandboxKind::Picker => 4,
         };
-        let cap = s.test_minter.as_ref().map(|m| m.mint(kind << SANDBOX_KIND_SHIFT, CLIENT));
+        // Each with a badge of its own (the top bit of its number says it is a test's), so the
+        // sandbox manager counts each as a separate caller.
+        self.next_test_badge += 1;
+        let badge = (kind << SANDBOX_KIND_SHIFT) | (1 << 31) | u64::from(self.next_test_badge);
+        let cap = s.test_minter.as_ref().map(|m| m.mint(badge, CLIENT));
         answered(match cap {
             Some(Ok(c)) => reply.ok(OutCap::Cap(c.0)),
             _ => reply.err(DebugError::Failed),

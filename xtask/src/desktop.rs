@@ -556,6 +556,9 @@ impl Run<'_> {
     fn from_start_menu(&mut self, item: &str, times: usize) -> Result<(), String> {
         self.chord(&["meta_l"])?;
         self.lines("desktop: start menu open", times)?;
+        // The desktop says where each choice is after it says the menu is open, Shut down
+        // last: wait for all of them.
+        self.lines("desktop: menu Shut down at ", times)?;
         if times == 2 {
             self.keep_screens("start-menu")?;
         }

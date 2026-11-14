@@ -110,8 +110,11 @@ const APP_TERMINAL: u32 = 1002;
 const APP_WINDOW: u32 = 1003;
 
 /// The badges on `pbr.sandbox` capabilities: the kind of holder in the top byte, the app's
-/// number below (0 for the capabilities the users service mints itself, for the self-test).
+/// number below. The users service mints some itself for the self-test: their number is 0, or
+/// has the top bit set ([`badge::TEST`]), so each is a caller of its own.
 mod badge {
+    /// Set in the number of the self-test's capabilities: never an app's.
+    pub const TEST: u32 = 1 << 31;
     /// Trusted apps: the shell, Terminal, Files. Everything but `grant`.
     pub const TRUSTED: u64 = 1;
     /// The desktop: launching, `list`, `details`, `stop`, `apps`.
@@ -411,7 +414,9 @@ fn serve(s: &mut Sandbox) {
                 // Who is calling, and may they call this operation? A badge of a kind this
                 // program doesn't hand out, or of an app that has ended, isn't served at all.
                 let b = msg.badge;
-                let known = badge::app(b) == 0 || s.apps.iter().any(|a| a.id == badge::app(b));
+                let app = badge::app(b);
+                let known =
+                    app == 0 || app & badge::TEST != 0 || s.apps.iter().any(|a| a.id == app);
                 let unknown = if known && badge::kind(b) != 0 {
                     sandbox::dispatch(s, msg, &buffer, reply)
                 } else {

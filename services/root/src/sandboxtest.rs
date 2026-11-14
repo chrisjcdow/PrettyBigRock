@@ -84,7 +84,7 @@ fn tree(items: &[(&str, bool)]) -> String {
 }
 
 /// Expects `r` to be the service error `want`.
-fn refused<T: core::fmt::Debug, E: core::fmt::Debug + PartialEq>(
+pub(crate) fn refused<T: core::fmt::Debug, E: core::fmt::Debug + PartialEq>(
     what: &str,
     r: Result<T, CallError<E>>,
     want: E,
@@ -148,7 +148,7 @@ fn grants(s: &Session, id: u32) -> Result<Vec<(String, u32, GrantReason)>, Strin
 }
 
 /// The system volume, seen directly through `pbr.storage`.
-struct Disk {
+pub(crate) struct Disk {
     root: file::Client,
 }
 
@@ -163,12 +163,12 @@ impl Disk {
         self.root.open(path, R).is_ok()
     }
 
-    fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+    pub(crate) fn read(&self, path: &str) -> Result<Vec<u8>, String> {
         self.open(path, R)?.read(0, 65536).map_err(|e| format!("reading {path}: {e}"))
     }
 
     /// Replaces the file at `path` (made if need be) with `text`.
-    fn write(&self, path: &str, text: &str) -> Result<(), String> {
+    pub(crate) fn write(&self, path: &str, text: &str) -> Result<(), String> {
         let f = match self.root.create(path, NodeKind::File, RW) {
             Ok(r) => r.node,
             Err(CallError::Service(FileError::AlreadyExists)) => self.open(path, RW)?,
@@ -204,7 +204,7 @@ fn user(name: &str, kind: UserKind, display: &str) -> User {
 /// The users and sandbox self-test. Returns a short summary.
 pub fn run(sup: &Supervisor, storage: &Storage) -> Result<String, String> {
     let u = start(sup, "")?;
-    let r = with_system_volume(&u, storage).map_err(|e| {
+    let r = with_system_volume(sup, &u, storage).map_err(|e| {
         let state = u.process.info().map(|i| i.state);
         format!("{e} (the users service: {state:?})")
     });
@@ -214,7 +214,7 @@ pub fn run(sup: &Supervisor, storage: &Storage) -> Result<String, String> {
     Ok(summary)
 }
 
-fn with_system_volume(u: &Users, storage: &Storage) -> Result<String, String> {
+fn with_system_volume(sup: &Supervisor, u: &Users, storage: &Storage) -> Result<String, String> {
     // The system volume is the GPT disk's RockFS volume, `Home`.
     let list = storage.admin.list().map_err(|e| format!("listing volumes: {e}"))?;
     let home = list
@@ -263,7 +263,8 @@ fn with_system_volume(u: &Users, storage: &Storage) -> Result<String, String> {
     let revoked = revoking(&chris, &disk)?;
     trust(&chris, &alice, &disk, storage)?;
     let added = adding(u, &chris, &disk, storage)?;
-    Ok(format!("{places}, {revoked}, trust and rules, {added}"))
+    let desktop = crate::desktopparts::run(sup, u, &chris, &disk)?;
+    Ok(format!("{places}, {revoked}, trust and rules, {added}, {desktop}"))
 }
 
 /// Chris's rules (`distrust sandboxed`, `deny sandboxed music`): the app gets the places its
