@@ -700,7 +700,25 @@ impl Run<'_> {
     /// Opens the start menu with the Windows key and clicks `item` in it (the desktop says
     /// where each is).
     fn choose_from_start_menu(&mut self, item: &str, times: usize) -> Result<(), String> {
-        self.chord(&["meta_l"])?;
+        // The desktop opens the menu as a popup, which needs the key's serial within a second;
+        // a desktop still busy redrawing its wallpapers (the screens changed just before)
+        // can miss that, and the menu doesn't open. A person presses the key again, and so
+        // does the runner, up to three times.
+        let mut tries = 0;
+        loop {
+            self.chord(&["meta_l"])?;
+            tries += 1;
+            let end = Instant::now() + Duration::from_secs(20);
+            while self.text().matches("desktop: start menu open").count() < times
+                && Instant::now() < end
+            {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            if self.text().matches("desktop: start menu open").count() >= times || tries == 3 {
+                break;
+            }
+            eprintln!("  (the start menu didn't open: pressing the key again)");
+        }
         self.lines("desktop: start menu open", times)?;
         // The desktop says where each choice is after it says the menu is open, Shut down
         // last: wait for all of them.
