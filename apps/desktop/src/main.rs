@@ -34,7 +34,7 @@ use alloc::vec::Vec;
 use granite::endpoint::Endpoint;
 use granite::time;
 use pbr_desktop::icons::Icon;
-use pbr_desktop::menu::{Choice, Heading, Item, StartMenu};
+use pbr_desktop::menu::{Choice, Item, StartMenu};
 use pbr_desktop::screens::Arrangement;
 use pbr_desktop::shortcuts::{self, Shortcut};
 use pbr_desktop::taskbar::{self, Part, TaskButton, Taskbar};
@@ -66,8 +66,9 @@ const BOTTOM: i32 = 2;
 const CLOCK: u32 = 1;
 /// Two clicks on the same icon within this long are a double click (nanoseconds).
 const DOUBLE_CLICK: u64 = 500_000_000;
-/// The start menu's heading style, until Chris has chosen one (M6 stage 6).
-const HEADING: Heading = Heading::Size2;
+/// The start menu's heading: the theme's heading style, which sandstone's dialogs use too, so
+/// the two always match (note 0023; Chris is still to choose it).
+const HEADING: pbr_draw::TextStyle = pbr_sandstone::theme::HEADING;
 /// The left button.
 const LEFT: u16 = 1;
 

@@ -30,28 +30,6 @@ const RIGHT_MARGIN: i32 = 12;
 /// What the banner says, down its length, one letter every 12 pixels (as 1.3).
 const NAME: &str = "PRETTY BIG ROCK";
 
-/// How the heading (the user's name) is drawn. All three are offered so that the person this
-/// system is for can choose.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Heading {
-    /// The font at twice its size.
-    Size2,
-    /// The font at three times its size.
-    Size3,
-    /// The ordinary size, in 1.3's bold.
-    Bold,
-}
-
-impl Heading {
-    fn text_style(self) -> TextStyle {
-        match self {
-            Heading::Size2 => TextStyle::PLAIN.sized(2),
-            Heading::Size3 => TextStyle::PLAIN.sized(3),
-            Heading::Bold => TextStyle::BOLD,
-        }
-    }
-}
-
 /// What a click on the menu can choose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Choice {
@@ -78,8 +56,10 @@ pub struct StartMenu<'a> {
     /// The user's display name, shown as a heading at the top of the item column (new in 2.0:
     /// 1.3 had no users). An empty one leaves the heading out.
     pub heading: &'a str,
-    /// How the heading is drawn.
-    pub style: Heading,
+    /// How the heading is drawn: the theme's heading style (`pbr_sandstone::theme::HEADING`),
+    /// which Chris is still to choose (note 0023): the font at twice or three times its size,
+    /// or bold.
+    pub style: TextStyle,
     /// The apps, in order; then the separator, Restart and Shut down (fixed, as 1.3).
     pub apps: &'a [Item<'a>],
     /// The row under the pointer or the keyboard's choice, drawn highlighted.
@@ -93,7 +73,7 @@ impl StartMenu<'_> {
         if self.heading.is_empty() {
             return 0;
         }
-        let size = self.style.text_style().size as i32;
+        let size = self.style.size as i32;
         10 + 9 * size + 6
     }
 
@@ -107,7 +87,7 @@ impl StartMenu<'_> {
             needed = needed.max(wanted.saturating_add(RIGHT_MARGIN));
         }
         if !self.heading.is_empty() {
-            let wanted = (COLUMN_X + 6).saturating_add(self.style.text_style().width(self.heading));
+            let wanted = (COLUMN_X + 6).saturating_add(self.style.width(self.heading));
             needed = needed.max(wanted.saturating_add(RIGHT_MARGIN));
         }
         needed.min(MAX_WIDTH)
@@ -213,14 +193,7 @@ impl StartMenu<'_> {
         if !self.heading.is_empty() {
             let column = Rect::new(COLUMN_X, 0, width - COLUMN_X - 8, self.heading_height());
             let mut inside = canvas.clipped(column);
-            crate::text(
-                &mut inside,
-                COLUMN_X + 6,
-                10,
-                self.heading,
-                look::C_MENU_TEXT,
-                self.style.text_style(),
-            );
+            crate::text(&mut inside, COLUMN_X + 6, 10, self.heading, look::C_MENU_TEXT, self.style);
             let line_y = self.heading_height() - 1;
             canvas.fill_rect(
                 Rect::new(BANNER + 10, line_y, width - BANNER - 20, 1),

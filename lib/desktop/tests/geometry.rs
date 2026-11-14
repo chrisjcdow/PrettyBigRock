@@ -8,17 +8,18 @@ mod common;
 
 use common::Sheet;
 use pbr_desktop::icons::{self, Icon};
-use pbr_desktop::menu::{Choice, Heading, Item, StartMenu};
+use pbr_desktop::menu::{Choice, Item, StartMenu};
 use pbr_desktop::shortcuts::{self, Shortcut};
 use pbr_desktop::taskbar::{self, Part, TaskButton, Taskbar};
 use pbr_desktop::wallpaper;
+use pbr_draw::TextStyle;
 use pbr_draw::{Canvas, Rect};
 
 fn items(n: usize) -> Vec<Item<'static>> {
     (0..n).map(|_| Item { icon: Icon::App, label: "App" }).collect()
 }
 
-fn menu<'a>(apps: &'a [Item<'a>], style: Heading) -> StartMenu<'a> {
+fn menu<'a>(apps: &'a [Item<'a>], style: TextStyle) -> StartMenu<'a> {
     StartMenu { heading: "Chris", style, apps, hovered: None }
 }
 
@@ -26,30 +27,31 @@ fn menu<'a>(apps: &'a [Item<'a>], style: Heading) -> StartMenu<'a> {
 fn the_menus_size_follows_1_3() {
     let apps = items(7);
     // No heading: 1.3's width, and its height (9 rows of 30, the line's 10 and 12 of padding).
-    let m = StartMenu { heading: "", style: Heading::Bold, apps: &apps, hovered: None };
+    let m = StartMenu { heading: "", style: TextStyle::BOLD, apps: &apps, hovered: None };
     assert_eq!(m.size(), (236, 9 * 30 + 10 + 12));
     // A heading adds its block: 10 + 9 x size + 6.
-    assert_eq!(menu(&apps, Heading::Bold).size(), (236, 292 + 25));
-    assert_eq!(menu(&apps, Heading::Size2).size(), (236, 292 + 34));
-    assert_eq!(menu(&apps, Heading::Size3).size(), (236, 292 + 43));
+    assert_eq!(menu(&apps, TextStyle::BOLD).size(), (236, 292 + 25));
+    assert_eq!(menu(&apps, TextStyle::PLAIN.sized(2)).size(), (236, 292 + 34));
+    assert_eq!(menu(&apps, TextStyle::PLAIN.sized(3)).size(), (236, 292 + 43));
 }
 
 #[test]
 fn the_menu_grows_for_a_long_label_up_to_a_limit() {
     let long = [Item { icon: Icon::App, label: "A rather long name for an app" }];
-    let m = menu(&long, Heading::Bold);
+    let m = menu(&long, TextStyle::BOLD);
     // 64 for the label's start, 29 letters of 6, 12 of margin.
     assert_eq!(m.size().0, 64 + 29 * 6 + 12);
     let huge = String::from("x").repeat(10_000);
     let apps = [Item { icon: Icon::App, label: &huge }];
-    assert_eq!(menu(&apps, Heading::Bold).size().0, 360);
-    let m = StartMenu { heading: &huge, style: Heading::Size3, apps: &[], hovered: None };
+    assert_eq!(menu(&apps, TextStyle::BOLD).size().0, 360);
+    let m =
+        StartMenu { heading: &huge, style: TextStyle::PLAIN.sized(3), apps: &[], hovered: None };
     assert_eq!(m.size().0, 360);
 }
 
 #[test]
 fn choice_at_finds_every_row_and_not_the_gaps() {
-    for style in [Heading::Size2, Heading::Size3, Heading::Bold] {
+    for style in [TextStyle::PLAIN.sized(2), TextStyle::PLAIN.sized(3), TextStyle::BOLD] {
         let apps = items(7);
         let m = menu(&apps, style);
         let (w, h) = m.size();
@@ -96,7 +98,7 @@ fn choice_at_finds_every_row_and_not_the_gaps() {
 
 #[test]
 fn a_menu_with_no_apps_and_no_heading_has_just_restart_and_shut_down() {
-    let m = StartMenu { heading: "", style: Heading::Bold, apps: &[], hovered: None };
+    let m = StartMenu { heading: "", style: TextStyle::BOLD, apps: &[], hovered: None };
     assert_eq!(m.size(), (236, 2 * 30 + 10 + 12));
     assert_eq!(m.choice_at(100, 5), None);
     assert_eq!(m.choice_at(100, 6), None);
@@ -310,7 +312,7 @@ fn the_taskbar_survives_anything() {
 fn the_menu_survives_anything() {
     let huge = String::from("w").repeat(5000);
     for scale in [1, 2, 5] {
-        for style in [Heading::Size2, Heading::Size3, Heading::Bold] {
+        for style in [TextStyle::PLAIN.sized(2), TextStyle::PLAIN.sized(3), TextStyle::BOLD] {
             for count in [0, 1, 7, 100] {
                 for title in TITLES.iter().copied().chain([huge.as_str()]) {
                     let apps: Vec<Item> =
@@ -342,7 +344,7 @@ fn the_menu_survives_anything() {
     }
     // Millions of apps: the size and a hit test don't loop, and nothing wraps round.
     let many: Vec<Item> = (0..2_000_000).map(|_| Item { icon: Icon::App, label: "x" }).collect();
-    let m = menu(&many, Heading::Bold);
+    let m = menu(&many, TextStyle::BOLD);
     assert!(m.size().1 > 0);
     // The heading's block is 25 tall and the padding 6: the last app's row starts at 31 + 30 x 1999999.
     assert_eq!(m.choice_at(100, 31 + 30 * 1_999_999), Some(Choice::App(1_999_999)));

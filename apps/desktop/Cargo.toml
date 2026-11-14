@@ -22,6 +22,7 @@ pbr-files = { path = "../../lib/files" }
 pbr-granite = { path = "../../lib/granite" }
 pbr-interfaces = { path = "../../lib/interfaces" }
 pbr-manifest = { path = "../../lib/manifest" }
+pbr-sandstone = { path = "../../lib/sandstone" }
 pbr-window = { path = "../../lib/window" }
 
 [lints]

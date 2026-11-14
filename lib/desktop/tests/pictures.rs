@@ -9,11 +9,12 @@ mod common;
 
 use common::Sheet;
 use pbr_desktop::icons::{self, Icon};
-use pbr_desktop::menu::{Choice, Heading, Item, StartMenu};
+use pbr_desktop::menu::{Choice, Item, StartMenu};
 use pbr_desktop::shortcuts::{self, Shortcut};
 use pbr_desktop::taskbar::{self, TaskButton, Taskbar};
 use pbr_desktop::wallpaper;
 use pbr_draw::Rect;
+use pbr_draw::TextStyle;
 
 fn wall(width: u32, height: u32, scale: u32) -> Sheet {
     let mut sheet = Sheet::new(width, height, 0);
@@ -106,7 +107,7 @@ const APPS: [(Icon, &str); 7] = [
     (Icon::About, "About"),
 ];
 
-fn menu_picture(style: Heading, scale: u32) -> Sheet {
+fn menu_picture(style: TextStyle, scale: u32) -> Sheet {
     let items: Vec<Item> = APPS.iter().map(|&(icon, label)| Item { icon, label }).collect();
     let menu = StartMenu { heading: "Chris", style, apps: &items, hovered: Some(Choice::App(1)) };
     let (w, h) = menu.size();
@@ -118,22 +119,22 @@ fn menu_picture(style: Heading, scale: u32) -> Sheet {
 
 #[test]
 fn start_menu_with_a_size_2_heading() {
-    menu_picture(Heading::Size2, 1).check("start-menu-size2");
+    menu_picture(TextStyle::PLAIN.sized(2), 1).check("start-menu-size2");
 }
 
 #[test]
 fn start_menu_with_a_size_3_heading() {
-    menu_picture(Heading::Size3, 1).check("start-menu-size3");
+    menu_picture(TextStyle::PLAIN.sized(3), 1).check("start-menu-size3");
 }
 
 #[test]
 fn start_menu_with_a_bold_heading() {
-    menu_picture(Heading::Bold, 1).check("start-menu-bold");
+    menu_picture(TextStyle::BOLD, 1).check("start-menu-bold");
 }
 
 #[test]
 fn start_menu_at_2x() {
-    menu_picture(Heading::Size2, 2).check("start-menu-2x");
+    menu_picture(TextStyle::PLAIN.sized(2), 2).check("start-menu-2x");
 }
 
 #[test]
