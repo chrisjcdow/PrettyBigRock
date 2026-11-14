@@ -462,6 +462,15 @@ descriptors (the front end turns them into capabilities).
 - Accessibility: a screen reader needs a way to read windows' contents that the sandbox allows.
 
 ## Changes
+- 14 November 2026, M6 stage 6: the start-menu key's event to the desktop carries a serial,
+  recorded as a press on the desktop's panel, so the desktop can open its start menu as a
+  popup of the panel (a popup needs a press's serial, and a panel never has the keyboard). A
+  popup of a panel may be as tall and wide as its screen (an app's popups stay within half), so
+  the start menu fits on a small or 2x screen. `pbr.display.sessions` gains `@5 halted`, the
+  farewell screen's last words when the computer can't be turned off by software. The window
+  menu's description line gives its place and rows (`menu for window W of app A at X,Y size
+  WxH: Minimise|...|Stop|Close`) so the desktop boot's runner can click Stop. A panel's `at`
+  is (screen, edge) with 1 top, 2 bottom, 3 left, 4 right: not `pbr.window`'s resize `Edge`.
 - 13 November 2026, building (M6 stage 5). The design held; what building settled or changed:
   - **The rules live in `lib/compositor`** (host-tested, like `lib/shell`): the space of
     screens, sessions, clients and windows with every check on what a client asks, input

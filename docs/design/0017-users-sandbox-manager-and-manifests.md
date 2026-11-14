@@ -267,6 +267,12 @@ For an app launched by the sandbox manager, M5's tests (note 0018) check that:
 
 ## Changes
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
+- 14 November 2026 (M6 stage 6, note 0024): the sandbox manager no longer drops a caller's
+  oldest launch to make room: each caller may have 4 waiting and there are 16 in all
+  (`TooMany`), with `cancel`; a chosen capability's server is asked on a helper thread with a
+  2-second limit; `pbr.sandbox` capabilities are badged with what their holder may do; the
+  users service watches what it holds instead of looking every 500 ms; a session's budget is
+  48 MiB. Note 0024's Changes say more.
 - 7 November 2026, stage 6 (built): decisions the note left open, settled while building.
   - **The rules file in the session's tree** is at `/System/rules.txt`, read only. Trusted apps
     see it there too, which is how "a session can read its own rules" shows.

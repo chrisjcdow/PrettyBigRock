@@ -243,6 +243,14 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 14 November 2026 (stage 6): the root program's stand-in is gone: the desktop boot runs the
+  users service, the sandbox manager and the desktop app, and the root program's test thread
+  launches the test programs as apps through `pbr.users.debug` (they are `apps/wintest` and
+  `apps/windowprobe` now, with manifests). The desktop boot is three boots on each
+  configuration (note 0024, Changes): fresh disks, the same disks again, and the fourth image
+  `prettybigrock-texttest.img` (`text desktoptest`). The runner keeps screenshots of the
+  desktop and the start menu beside the log. Section 6's live mirroring check waits for the
+  Screens dialog.
 - 13 November 2026 (stage 5): **the desktop boot runs from stage 5**, with test programs:
   - The build tool makes a third disk image, `prettybigrock-desktoptest.img`, with
     `desktoptest` on the kernel's command line. `cargo xtask qemu-test` boots each

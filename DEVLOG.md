@@ -873,3 +873,67 @@ reviewed in full.
     That it is about 10 s more than usual suggests a time-out somewhere, but a starved runner
     explains it as well. **Left open**; if it comes back, the device manager's and driver's
     threads at that moment are what to look at.
+
+## Session 18: 13 and 14 November 2026, M6 stage 6 (the session's desktop)
+
+Chris asked for stage 6 as note 0026 defines it, with the same rules. Built by the session's
+model (Claude Opus 5.5); the desktop's drawing by a Sonnet subagent to a written brief, reviewed
+(its pictures looked at). Paused overnight for Chris's usage limit; carried on the next morning.
+
+- **Manifests** (`lib/manifest`): the keys `windows`, `data`, `picker`, `sysinfo`, `system`,
+  `desktop`, `sandbox view`, `hidden`, `icon`, `opens`; rules about `data`; `decide` refuses an
+  app that isn't a system app but asks for `system`, `desktop` or `sandbox view`.
+- **The sandbox manager**: `pbr.sandbox` capabilities badged with what their holder may do
+  (trusted apps, the desktop, the permissions viewer, the picker), watched so that a caller's
+  launches go with it; `cancel`, `details`, `apps`; 4 waiting launches per caller and 16 in
+  all; a chosen capability's server asked on a helper thread with a 2-second limit, its
+  `choose` answered later; each app's windows through its own copy of the session's display
+  capability, revoked when it is stopped; apps' own folders, `/Home/Apps/APP`; the desktop kept
+  running as the shell is.
+- **The users service**: a display session for the user at the screen, shown at once; a
+  limited `pbr.users` for the desktop; receiver watches instead of a look every 500 ms;
+  `power_off` and `restart`; the console's terminal when there is no display server.
+- **The power service** and its parts from the root program; `lib/platform`'s FADT and table
+  helpers, and the `_S5_` scan as a stopgap in a file of its own (`s5.rs`).
+- **The root program**: the desktop is the default; `text` starts the console instead; the
+  console is started in the display server's place if that is given up on; `lookup` answers
+  `Stopped` for a service not running in this boot.
+- **The display server**: the start-menu key comes with a serial, so the desktop can open its
+  menu as a popup of its panel; the "turn it off now" screen; the window menu described with its
+  rows.
+- **The desktop** (`apps/desktop`, `lib/desktop`): 1.3's wallpaper, icons, taskbar and start
+  menu; `screens.txt`; the clock in the user's time zone; launching through the sandbox
+  manager; Stop from a window's menu; Restart and Shut down. The shell gains `poweroff` and
+  `reboot`.
+- **Tests**: `desktopparts.rs` in the self-test (apps' own folders and `deny APP data`, every
+  operation through each kind of capability, the limits and `cancel`, a chosen capability that
+  never answers, a setting read back, the power service for the users service alone; all passed
+  first time). The desktop boot is now three boots (note 0024, Changes): the real desktop with
+  stage 5's steps, the start menu, Stop and falling back to the shell, which restarts; the same
+  disks again, then Shut down from the start menu; and `text`, then `poweroff`.
+
+Found on the way:
+- The taskbar first appeared at the top: a panel's edge is 2 for the bottom, not `pbr.window`'s
+  resize `Edge` value.
+- The hostile test app's clipboard checks assumed its window didn't have the focus; launched
+  as the user's now, it would, so it waits 2.5 s before opening it.
+- Sessions ran out of memory with the real desktop and four test apps: 48 MiB now. Restarting a
+  session straight after stopping the old one also failed for memory (the old one's budget
+  comes back only once it has ended): the users service now waits for it, and retries rather
+  than losing the session.
+- The power service didn't start: the root program sliced its I/O ports and tables with only
+  the rights to pass on, not the rights to pass them on with.
+- The debug start-up archive passed 16 MiB: the BIOS boot partition is 32 MiB now (note 0004).
+- Stress 43492390969 (on `b36eaaa`): 28 of 30 runs passed; the two failures were the runner
+  reading the start menu's places before the desktop had written them all (fixed). No QEMU
+  crashes there. Here (QEMU 8.2.2) QEMU crashed with SIGSEGV on x86-64 UEFI in 4 of about 9
+  boots in session 18, early, in both kinds of boot: more often than before. **Left open**:
+  Stress's QEMU doesn't show it, so it may be this workspace's QEMU.
+
+Chris's questions: the heading font (pictures sent; size 2 until he chooses). A lock-order
+checker for plain `SpinLock`s: worth adding before M7, which brings more drivers and more
+locks. The `IrqSpinLock` checker's levels and per-core record already exist; plain spin locks
+(21 places) would need levels for the object locks (endpoints, notifications, capability
+tables, processes, address spaces...), a rule for the few places two locks of one kind are held
+together, and the check in debug builds only. About half a session, most of it settling the real
+order. The virtio-gpu 11.4 s restart wasn't seen again.

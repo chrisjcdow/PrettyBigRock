@@ -295,6 +295,67 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 14 November 2026, built (M6 stage 6): sections 1 to 4 and 6 to 11, except what the note
+  leaves to later stages (the picker and `grant`, stage 8; the Screens dialog, which needs
+  sandstone, stage 7; the permissions viewer, stage 8: the window menu's "What can this app
+  reach?" is passed to the desktop, which only logs it for now). Settled while building:
+  - **`pbr.sandbox` gains `@11 apps`**: the start-up archive's apps whose manifest reads and
+    whose program is there, with title, `icon`, `windows` and `hidden`, so that the desktop,
+    which holds no files, can list them. Trusted apps and the desktop may call it. `@10` is
+    kept for `grant`. `details` answers `AppDetails` (id, app, title, trusted, system,
+    `AppServices` bits, started).
+  - **Badges**: the kind of holder in the top byte (1 trusted, 2 desktop, 3 permissions
+    viewer, 4 file picker), the app's number below; app badges are minted *watched*, so a
+    caller's waiting launches go when every copy of its capability has. The self-test's
+    capabilities, minted by the users service, have number 0 or the top bit set.
+  - **Roles**: the sandbox manager gets the session's display capability at 1003 and the
+    desktop's limited `pbr.users` at 1006; an app gets `pbr.sandbox` 1000, `pbr.users` 1001,
+    the terminal 1002, its window capability 1003. The desktop's `pbr.users` has the session's
+    badge plus 1<<40 and may only call `whoami`, `settings`, `set`, `power_off`, `restart`.
+  - **A manifest asking for `system`, `desktop` or `sandbox view` refuses an app that isn't a
+    system app** (`decide` answers `Refused::SystemOnly`, launching answers `BadManifest`),
+    rather than quietly not granting them. `data`, `picker`, `sysinfo` as section 3; rules
+    gain the target `data` (`deny snake data`, `allow snake data read`).
+  - **When the display server restarts, the users service starts the session again** with
+    the new display server's session capability, rather than handing the sandbox manager a
+    new one: everything in a desktop session has windows (or is the desktop), so the result is
+    the same, and it is far simpler. The sandbox manager still watches the display server and
+    stops the apps with windows at once when it goes. A session restarted for the screen's
+    sake isn't charged to its restart policy; the users service waits for the old one to end
+    (up to two seconds, so its memory is back) and retries in half a second if the new one
+    can't start yet.
+  - **The supervisor's `lookup` gains the error `Stopped`**: the service wasn't started in
+    this boot (the console when the display server runs, and the other way round) or was given
+    up on. The users service tries `display`, then `console`.
+  - **Who launched it**: the sandbox manager tells the display server that the user launched an
+    app (`launched` = now) when a trusted app or the desktop asked, not for the apps it starts
+    itself. The hostile test app therefore waits 2.5 seconds before its first window, so that
+    the window doesn't take the focus its clipboard checks rely on not having.
+  - **Budgets**: a session 48 MiB (the desktop 8, the test apps 4 to 8 each), the users service
+    160 MiB, the power service 1 MiB.
+  - **Power**: `pbr.power` (`off`, `restart`; `NotSupported`, `NotAllowed`); the display
+    server's `halted` says on every screen that the computer can be turned off by hand. On x86
+    the root program gives the power service the FADT's PM1a/PM1b control ports (roles 1001,
+    1002) and read-only slices of the DSDT and every SSDT (from role 1010, where each table is
+    in its slice passed as `table=ROLE,OFFSET,LENGTH` arguments); the `_S5_` scan is
+    `lib/platform/src/s5.rs`. QEMU's sleep type for off is 0. The shell gains `poweroff` and
+    `reboot`.
+  - **The desktop's start menu** is a popup of its panel, opened with the serial the display
+    server now sends with the start-menu key (note 0022, Changes); it may be as tall as the
+    screen. Keys don't reach it (a panel never has the keyboard): the Windows key opens and
+    closes it, a click outside closes it. The heading is the user's display name, at size 2
+    until Chris chooses (note 0023).
+  - **`screens.txt`**: `screen "IDENTITY" at X,Y scale S [rotation R] [mirrors "IDENTITY"]
+    [main]`, `pointer SPEED`, `tablet "NAME" "IDENTITY"` (`lib/desktop/src/screens.rs`);
+    applied at start and whenever the screens change. A screen's identity is the display
+    server's (`RHT-1234-00000000 Virtual-1` for QEMU's virtio-gpu).
+  - **Tests**: section 11's self-tests are `services/root/src/desktopparts.rs`. The desktop
+    boot is three boots: the desktop on fresh disks ending in falling back to the shell and
+    `reboot`; the same disks again, finding what the first saved, ending with Shut down from the
+    start menu; and `text desktoptest` (a fourth image), the shell and `poweroff`. The desktop
+    boot no longer checks mirroring live (stage 5's test desktop did it on the start menu key):
+    that comes back with the Screens dialog; mirroring stays host-tested.
+  - The BIOS boot partition grew to 32 MiB (note 0004, Changes).
 - 13 November 2026, built ahead of the rest (M6 stage 5): section 1's lookup table rows for the
   display server (`devices`, and `input` as a consumer of the seat) and for the users service
   (`display`, badged for `pbr.display.sessions`). The users service doesn't use its row until
