@@ -6,6 +6,7 @@
 
 use crate::geometry::Point;
 use crate::platform::Platform;
+use crate::theme::Theme;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -40,6 +41,8 @@ pub(crate) struct Asks {
     pub window_focused: bool,
     /// The clipboard has text, a picture (as the last clipboard event said).
     pub clipboard: (bool, bool),
+    /// The look in use (its font decides where a click lands in text).
+    pub theme: Theme,
 }
 
 /// What a widget's [`on_event`](crate::Widget::on_event) is given to answer through.
@@ -122,6 +125,12 @@ impl<'s, M> Shell<'s, M> {
     /// its place (Left and Right in a menu move along the menu bar).
     pub fn step_popup(&mut self, step: i32) {
         self.asks.popup = Some(PopupAsk::Step(step));
+    }
+
+    /// The look in use: what a widget's layout and drawing were given, for working out where
+    /// a click landed.
+    pub fn theme(&self) -> &Theme {
+        &self.asks.theme
     }
 
     /// The serial of the key or button press being handled, 0 for any other event.

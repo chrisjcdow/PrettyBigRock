@@ -641,6 +641,7 @@ impl<A: App> Runtime<A> {
             now: p.now(),
             window_focused: w.focused || matches!(w.role, Purpose::Popup { .. }),
             clipboard: self.clipboard,
+            theme: self.theme,
             ..Asks::default()
         };
         let mut messages: Vec<Msg<A::Message>> = Vec::new();

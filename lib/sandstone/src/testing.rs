@@ -686,6 +686,46 @@ where
         self.click_in(WindowId::MAIN, x, y);
     }
 
+    /// Clicks with modifier keys held (Shift+click extends a selection): the modifier keys are
+    /// pressed first and let go after, as a person does.
+    pub fn click_with(&mut self, x: i32, y: i32, modifiers: Modifiers) {
+        self.hold(modifiers, true);
+        self.click(x, y);
+        self.hold(modifiers, false);
+    }
+
+    /// Presses (or lets go of) the keys for `modifiers`, which the runtime notes for the
+    /// pointer events that follow (the display server's pointer events carry no modifiers).
+    fn hold(&mut self, modifiers: Modifiers, down: bool) {
+        let Some(win) = self.display.focus_stack.last().copied() else {
+            return;
+        };
+        let keys = [
+            (Modifiers::SHIFT, input::KEY_LEFT_SHIFT),
+            (Modifiers::CTRL, input::KEY_LEFT_CTRL),
+            (Modifiers::ALT, input::KEY_LEFT_ALT),
+        ];
+        let mut held = if down { 0 } else { modifiers.0 };
+        for (bit, code) in keys {
+            if modifiers.0 & bit == 0 {
+                continue;
+            }
+            held = if down { held | bit } else { held & !bit };
+            let serial = if down { self.display.press_serial() } else { 0 };
+            let value = if down { input::VALUE_PRESSED } else { input::VALUE_RELEASED };
+            let ev = KeyEvent {
+                window: win,
+                code: code as u16,
+                modifiers: held,
+                value,
+                ch: None,
+                typed: false,
+                serial,
+            };
+            self.send(Incoming::Key(ev));
+        }
+    }
+
     /// Two quick clicks.
     pub fn double_click(&mut self, x: i32, y: i32) {
         self.click(x, y);
