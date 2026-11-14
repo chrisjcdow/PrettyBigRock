@@ -248,9 +248,14 @@ impl<A: App> Runtime<A> {
             flags = flags | WindowFlags::RESIZABLE;
         }
         let title = self.app.title();
-        // The file picker's window is a `System` window over the app that asked (note 0025).
+        // The file picker's window is a `System` window over the app that asked, and the
+        // permissions viewer's a `System` window of its own (note 0025).
         let new = NewWindow {
-            kind: if s.over.is_some() { WindowKind::System } else { WindowKind::Normal },
+            kind: if s.over.is_some() || s.system {
+                WindowKind::System
+            } else {
+                WindowKind::Normal
+            },
             parent: None,
             title: title.clone(),
             size: s.size,

@@ -536,7 +536,7 @@ pub struct Pick {
 
 /// The window as the app wants it: 560 by 380 logical pixels, not resizable.
 pub fn settings() -> Settings {
-    Settings { size: (560, 380), resizable: false, min_size: (0, 0), over: None }
+    Settings { size: (560, 380), resizable: false, min_size: (0, 0), over: None, system: false }
 }
 
 impl Default for Gallery {

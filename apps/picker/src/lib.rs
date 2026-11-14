@@ -181,7 +181,13 @@ pub enum Message {
 /// The window's size: big enough for the places, a list, and the buttons at 1x on a 1024 x 768
 /// screen with room around it.
 pub fn settings(over: (u32, u32)) -> Settings {
-    Settings { size: (600, 400), resizable: true, min_size: (440, 300), over: Some(over) }
+    Settings {
+        size: (600, 400),
+        resizable: true,
+        min_size: (440, 300),
+        over: Some(over),
+        system: true,
+    }
 }
 
 /// The picker's window, browsing `F`.

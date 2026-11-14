@@ -82,7 +82,7 @@ impl App for Counter {
 }
 
 fn settings() -> Settings {
-    Settings { size: (320, 140), resizable: false, min_size: (0, 0), over: None }
+    Settings { size: (320, 140), resizable: false, min_size: (0, 0), over: None, system: false }
 }
 
 #[test]

@@ -134,7 +134,7 @@ impl App for Term {
 }
 
 fn settings() -> Settings {
-    Settings { size: (200, 100), resizable: true, min_size: (0, 0), over: None }
+    Settings { size: (200, 100), resizable: true, min_size: (0, 0), over: None, system: false }
 }
 
 /// A terminal window with a few lines in it, focused (a click on empty paper), messages
@@ -407,8 +407,10 @@ fn odd_sizes_and_cells_do_not_panic() {
     let mut t = Term::new(300, 300);
     t.grid.set(299, "end");
     t.grid.cursor = Some((299, 299));
-    let mut h =
-        Harness::new(t, Settings { size: (10, 10), resizable: true, min_size: (0, 0), over: None });
+    let mut h = Harness::new(
+        t,
+        Settings { size: (10, 10), resizable: true, min_size: (0, 0), over: None, system: false },
+    );
     h.click(5, 5);
     h.drag((0, 0), (9, 9));
     h.resize(1, 1);
@@ -509,7 +511,7 @@ fn board() -> Board {
 }
 
 fn board_settings() -> Settings {
-    Settings { size: (200, 76), resizable: false, min_size: (0, 0), over: None }
+    Settings { size: (200, 76), resizable: false, min_size: (0, 0), over: None, system: false }
 }
 
 fn pixel(h: &Harness<Board>, x: u32, y: u32) -> u32 {
