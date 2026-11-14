@@ -12,6 +12,10 @@ interface pbr.fs.host version 1;
 /// The volume can't be served.
 @2 fn failed(reason: FsFailure) -> () error HostError;
 
+/// A server started to check its volume (`check`, or `check repair`; note 0026, section 2)
+/// says what it found, then ends: a report in plain words, and how many problems.
+@3 fn checked(report: string<4000>, problems: u32) -> () error HostError;
+
 /// Why not.
 flexible enum FsFailure {
     /// Its structures are damaged.

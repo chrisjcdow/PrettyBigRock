@@ -116,6 +116,17 @@ struct Volume {
     history: History,
     /// When its server is due to be started again (milliseconds), after a crash.
     due: Option<u64>,
+    /// A `check` under way (note 0026, section 2).
+    check: Option<Check>,
+}
+
+/// A `check` of a volume: first its server is asked to unmount, then a server is started to
+/// check it, which reports and ends; then the volume is served again and the caller answered.
+struct Check {
+    repair: bool,
+    reply: storage::check::Reply,
+    /// What the checking server reported.
+    report: Option<(String, u32)>,
 }
 
 /// A filesystem server this service started.
@@ -133,6 +144,8 @@ struct Server {
     /// It said it couldn't serve the volume (damaged, or not a filesystem it knows): ending
     /// then is no crash, and it isn't restarted.
     gave_up: bool,
+    /// It was started to check the volume, not to serve it.
+    checker: bool,
 }
 
 /// A `shutdown` waiting for servers to finish saving.
@@ -312,6 +325,7 @@ impl Storage {
             server: None,
             history: History::new(),
             due: None,
+            check: None,
         });
         id
     }
@@ -321,10 +335,15 @@ impl Storage {
     }
 
     /// Starts a filesystem server for volume `id` if it holds RockFS or FAT32, or, with
-    /// `format`, puts a new RockFS volume labelled `format` on it first. The server gets three capabilities: an
+    /// `format`, puts a new RockFS volume labelled `format` on it first. With `check`, a RockFS
+    /// server is started to check the volume (and repair it, with `Some(true)`) and report. The server gets three capabilities: an
     /// endpoint of its own; the volume's `pbr.block`; and `pbr.fs.host` here, under a *watched*
     /// badge (note 0013), so that when the server ends for any reason this service hears of it.
     fn start_server(&mut self, id: u32, format: Option<&str>) {
+        self.start_server_for(id, format, None);
+    }
+
+    fn start_server_for(&mut self, id: u32, format: Option<&str>, check: Option<bool>) {
         let Some(v) = self.volume(id) else { return };
         if v.server.is_some() {
             return;
@@ -336,10 +355,12 @@ impl Storage {
         };
         let Some(program) = program else { return };
         let read_only = v.read_only;
-        let args = match format {
-            Some(label) => alloc::format!("volume {id} format {label}"),
-            None if read_only => alloc::format!("volume {id} readonly"),
-            None => alloc::format!("volume {id}"),
+        let args = match (format, check) {
+            (_, Some(true)) => alloc::format!("volume {id} check repair"),
+            (_, Some(false)) => alloc::format!("volume {id} check"),
+            (Some(label), None) => alloc::format!("volume {id} format {label}"),
+            (None, None) if read_only => alloc::format!("volume {id} readonly"),
+            (None, None) => alloc::format!("volume {id}"),
         };
         let stop = match Notification::create() {
             Ok(n) => n,
@@ -391,6 +412,7 @@ impl Storage {
                     _control: None,
                     unmounting: false,
                     gave_up: false,
+                    checker: check.is_some(),
                 });
             }
             Err(e) => {
@@ -409,6 +431,9 @@ impl Storage {
         let stopping = self.shut_down || self.shutting_down.is_some();
         let Some(v) = self.volume_mut(id) else { return };
         let Some(server) = v.server.take() else { return };
+        if server.checker {
+            return self.checked(id);
+        }
         let status = exit_status(&server.spawned);
         // A server that never mounted its volume (it said it couldn't) had nothing to save.
         let served = server.root.is_some();
@@ -443,6 +468,78 @@ impl Storage {
         if !saved && let Some(sd) = &mut self.shutting_down {
             sd.failed = true;
         }
+        // A check was waiting for this server to go: now the volume can be checked.
+        if let Some(repair) = self.volume(id).and_then(|v| v.check.as_ref()).map(|c| c.repair) {
+            if let Some(v) = self.volume_mut(id) {
+                v.due = None;
+                v.state = VolumeState::Starting;
+            }
+            self.start_server_for(id, None, Some(repair));
+            if self.volume(id).is_some_and(|v| v.server.is_none()) {
+                self.checked(id);
+            }
+        }
+    }
+
+    /// Starts a `check` of volume `id` (note 0026, section 2): its server is asked to unmount;
+    /// once it has gone (`server_gone`), the checking server is started. A volume with no
+    /// server running (damaged, or failed too often) is checked at once.
+    fn check(&mut self, id: u32, repair: bool, reply: storage::check::Reply) {
+        let stopping = self.shut_down || self.shutting_down.is_some();
+        let early = match self.volume(id) {
+            None => Err(StorageError::NoSuchVolume),
+            Some(_) if stopping => Err(StorageError::ShutDown),
+            Some(v) if v.check.is_some() => Err(StorageError::NotReady),
+            Some(v) if v.filesystem != Filesystem::RockFs || (repair && v.read_only) => {
+                Err(StorageError::Unsupported)
+            }
+            Some(v) if self.disks.real.get(&v.disk).is_some_and(|d| d.failed) => {
+                Err(StorageError::DiskError)
+            }
+            Some(_) => Ok(()),
+        };
+        if let Err(e) = early {
+            return answered(reply.err(e));
+        }
+        let Some(v) = self.volume_mut(id) else { return };
+        granite::println!(
+            "storage: volume {id}: {} it.",
+            if repair { "checking and repairing" } else { "checking" }
+        );
+        v.check = Some(Check { repair, reply, report: None });
+        v.state = VolumeState::Starting;
+        match &mut v.server {
+            Some(server) => {
+                if !server.unmounting {
+                    if let Err(e) = server.stop.signal(STOP_BIT) {
+                        granite::println!("storage: volume {id}: can't ask it to unmount: {e}");
+                    }
+                    server.unmounting = true;
+                }
+            }
+            None => {
+                v.due = None;
+                self.start_server_for(id, None, Some(repair));
+                if self.volume(id).is_some_and(|v| v.server.is_none()) {
+                    self.checked(id);
+                }
+            }
+        }
+    }
+
+    /// The checking server for volume `id` has ended (or couldn't start): answers the `check`
+    /// with its report, and serves the volume again. Its restart history starts afresh: it is a
+    /// new start, not a crash.
+    fn checked(&mut self, id: u32) {
+        let Some(v) = self.volume_mut(id) else { return };
+        let Some(c) = v.check.take() else { return };
+        v.history = History::new();
+        v.state = VolumeState::Starting;
+        answered(match c.report {
+            Some((report, problems)) => c.reply.ok(&report, problems),
+            None => c.reply.err(StorageError::DiskError),
+        });
+        self.start_server(id, None);
     }
 
     /// Asks every server to unmount, without waiting: each saves its volume, marks it clean
@@ -801,6 +898,10 @@ impl storage::Server for Admin<'_> {
         })
     }
 
+    fn check(&mut self, id: u32, repair: bool, reply: storage::check::Reply) {
+        self.0.check(id, repair, reply);
+    }
+
     fn shutdown(&mut self, reply: storage::shutdown::Reply) {
         let s = &mut *self.0;
         if s.shut_down {
@@ -900,6 +1001,20 @@ impl host::Server for Host<'_> {
         v.label = label;
         granite::println!("storage: volume {} is ready: {:?} \"{}\".", v.id, v.filesystem, v.label);
         answered(reply.ok());
+    }
+
+    fn checked(&mut self, report: String, problems: u32, reply: host::checked::Reply) {
+        let Some(v) = self.s.volume_mut(self.id) else {
+            return answered(reply.err(HostError::BadState));
+        };
+        // Only a server started to check may report, and once.
+        match (&v.server, &mut v.check) {
+            (Some(Server { checker: true, .. }), Some(c)) if c.report.is_none() => {
+                c.report = Some((report, problems));
+                answered(reply.ok())
+            }
+            _ => answered(reply.err(HostError::BadState)),
+        }
     }
 
     fn failed(&mut self, reason: FsFailure, reply: host::failed::Reply) {

@@ -11,8 +11,10 @@
 //!
 //! Start-up roles: its own endpoint ([`role::OWN`], every right, to serve and mint from), the
 //! storage service's `pbr.fs.host` ([`role::PARENT`]), the volume's `pbr.block` ([`BLOCK`]) and
-//! a notification the storage service signals to have it unmount ([`STOP`]). Arguments: `volume ID`, then `readonly` to mount it read-only, or
-//! `format LABEL...` to put a new, empty RockFS volume on it first.
+//! a notification the storage service signals to have it unmount ([`STOP`]). Arguments:
+//! `volume ID`, then `readonly` to mount it read-only, `format LABEL...` to put a new, empty
+//! RockFS volume on it first, or `check` (`check repair`) to check (and repair) it, report what
+//! it found through `pbr.fs.host`, and end without serving it (note 0026, section 2).
 
 #![no_std]
 #![no_main]
@@ -118,6 +120,8 @@ fn main(mut start: granite::Start) -> i32 {
     };
     let read_only = args.get(2) == Some(&"readonly");
     let format: Option<String> = (args.get(2) == Some(&"format")).then(|| args[3..].join(" "));
+    let check = args.get(2) == Some(&"check");
+    let repair = check && args.get(3) == Some(&"repair");
 
     let mut host = host::Client::new(Endpoint(parent));
     host.set_timeout_ms(30_000);
@@ -141,6 +145,9 @@ fn main(mut start: granite::Start) -> i32 {
     {
         return fail(&host, FsFailure::Disk, &alloc::format!("formatting: {e:?}"));
     }
+    if check {
+        return check_volume(&host, dev, id, repair);
+    }
     let fs = match RockFs::mount(dev, time::wall_seconds, read_only) {
         Ok(fs) => fs,
         Err(e) => {
@@ -161,4 +168,70 @@ fn main(mut start: granite::Start) -> i32 {
     // ready, then answers `pbr.file` until it is unmounted.
     let stop = start.take(STOP).map(Notification);
     pbr_fsserve::serve::run(fs, Endpoint(own), host.into_endpoint(), &label, stop)
+}
+
+/// The longest report `pbr.fs.host`'s `checked` carries.
+const MAX_REPORT: usize = 4000;
+
+/// Checks the volume (and with `repair` repairs it), tells the storage service what was found,
+/// and ends: the exit status for the program. A volume that wasn't shut down cleanly is
+/// repaired as it is mounted for a repair; what that fixed is in the report too.
+fn check_volume(host: &host::Client, dev: Volume, id: u32, repair: bool) -> i32 {
+    let mut report = String::new();
+    let mut problems = 0u32;
+    let add = |report: &mut String, line: &str| {
+        // A report that is too long ends with a line saying so, rather than in mid-word.
+        if report.len() + line.len() + 1 > MAX_REPORT - 40 {
+            if !report.ends_with("(more not shown)\n") {
+                report.push_str("(more not shown)\n");
+            }
+            return;
+        }
+        report.push_str(line);
+        report.push('\n');
+    };
+    let status = match RockFs::mount(dev, time::wall_seconds, !repair) {
+        Err(e) => {
+            add(&mut report, &alloc::format!("The volume can't be mounted: {e}."));
+            problems = 1;
+            1
+        }
+        Ok(mut fs) => {
+            let mut found: Vec<pbr_rockfs::Problem> = fs.mount_report().to_vec();
+            match fs.check(repair) {
+                Ok(more) => found.extend(more),
+                Err(e) => {
+                    add(&mut report, &alloc::format!("The check stopped: {e:?}."));
+                    problems += 1;
+                }
+            }
+            for p in &found {
+                let fixed = if p.fixed { " (fixed)" } else { "" };
+                let harmless = if p.harmless { " (harmless)" } else { "" };
+                add(&mut report, &alloc::format!("{}{harmless}{fixed}", p.text));
+            }
+            problems += found.len() as u32;
+            // A repaired volume is saved and marked clean before the server ends.
+            let saved = !repair || pbr_fs::Filesystem::unmount(&mut fs).is_ok();
+            if !saved {
+                add(&mut report, "The repaired volume couldn't be saved.");
+                problems += 1;
+            }
+            let label = fs.info().label;
+            let fixed = found.iter().filter(|p| p.fixed).count();
+            let summary = match (problems, repair) {
+                (0, _) => alloc::format!("\"{label}\": no problems found."),
+                (1, false) => alloc::format!("\"{label}\": 1 problem found."),
+                (n, false) => alloc::format!("\"{label}\": {n} problems found."),
+                (n, true) => alloc::format!("\"{label}\": {n} problems found, {fixed} repaired."),
+            };
+            report.insert_str(0, &alloc::format!("{summary}\n"));
+            if saved { 0 } else { 1 }
+        }
+    };
+    granite::println!("rockfs: volume {id} checked: {problems} problems.");
+    if let Err(e) = host.checked(&report, problems) {
+        granite::println!("rockfs: volume {id}: the report wasn't taken: {e}");
+    }
+    status
 }

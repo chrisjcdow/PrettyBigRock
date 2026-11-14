@@ -94,6 +94,14 @@ struct Setting {
 /// Restarts the computer, in the same order as `power_off`.
 @11 fn restart() -> () error UsersError;
 
+/// Checks a RockFS volume, and with `repair` repairs what it can (administrators only;
+/// docs/design/0026-apps-m6-tests-and-stages.md, section 2). Volume 0 is the system volume.
+/// The volume's filesystem server is stopped while it is checked, so whatever was opened
+/// through it fails, as when a server restarts: sessions that hold the volume (every session,
+/// for the system volume) are started again afterwards. Answers with the report and how many
+/// problems were found. FAT32: `NotSupported`.
+@12 fn check(volume: u32, repair: bool) -> (report: string<4000>, problems: u32) error UsersError;
+
 /// What can go wrong.
 flexible enum UsersError {
     /// Only administrators may.

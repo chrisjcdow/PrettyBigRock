@@ -68,6 +68,14 @@ struct VolumeInfo {
 /// operations fail with `ShutDown`.
 @5 fn shutdown() -> () error StorageError;
 
+/// Checks a RockFS volume and, with `repair`, repairs what it can
+/// (docs/design/0026-apps-m6-tests-and-stages.md, section 2): its filesystem server is stopped
+/// (everything opened through it fails, as when a server restarts), a server is started to
+/// check it and report, then the volume is served again. Answers with the report and how many
+/// problems were found. FAT32 volumes, and repairing a read-only one: `Unsupported`; a check
+/// already under way: `NotReady`.
+@6 fn check(id: u32, repair: bool) -> (report: string<4000>, problems: u32) error StorageError;
+
 /// What can go wrong.
 flexible enum StorageError {
     NoSuchVolume @1,

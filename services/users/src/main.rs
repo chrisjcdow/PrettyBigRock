@@ -1377,6 +1377,22 @@ impl users_if::Server for Calls<'_> {
         });
     }
 
+    fn check(&mut self, volume: u32, repair: bool, reply: users_if::check::Reply) {
+        let id = if volume == 0 { self.s.system.volume } else { volume };
+        let r = self.admin().and_then(|()| {
+            // A volume in memory without a system volume (`owner`'s) is RockFS too, and can be
+            // checked like any other.
+            self.s.storage.check(id, repair).map_err(|e| match e {
+                CallError::Service(StorageError::Unsupported) => UsersError::NotSupported,
+                e => storage_error(e),
+            })
+        });
+        answered(match r {
+            Ok(c) => reply.ok(&c.report, c.problems),
+            Err(e) => reply.err(e),
+        });
+    }
+
     fn power_off(&mut self, reply: users_if::power_off::Reply) {
         let who = self.s.sessions[self.session].user.name.clone();
         answered(match self.s.power(&who, false) {
