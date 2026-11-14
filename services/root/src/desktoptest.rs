@@ -224,6 +224,17 @@ fn all(sup: &Supervisor) -> Result<String, String> {
     }
     done.push("an app launched from the start menu");
 
+    // Step 4b: the widget gallery (note 0023, section 6), with a test window beside it for the
+    // clipboard. The runner clicks, types, tabs, opens a menu and a dialog, copies to and from
+    // the other window, scrolls, and moves the gallery to the 2x screen; then it closes both.
+    let (_, gallery) = s.launch("gallery", "")?;
+    time::sleep_ms(500);
+    let (_, other) = s.launch("wintest", "name=Other colour=a0a0a0 size=200x120")?;
+    granite::println!("Desktop test: the gallery");
+    ended(&gallery, "gallery", Some(0), STEP_SECS)?;
+    ended(&other, "Other", Some(0), STEP_SECS)?;
+    done.push("the widget gallery driven by the pointer and the keyboard, at 1x and 2x");
+
     // A note in an app's own folder, for the second boot to find.
     let (_, saver) = s.launch("wintest", "name=Saver save")?;
     ended(&saver, "wintest save", Some(0), 120)?;

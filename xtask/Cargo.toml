@@ -14,6 +14,7 @@ pbr-archive = { path = "../lib/archive" }
 pbr-devices = { path = "../lib/devices" }
 pbr-interface-compiler = { path = "../lib/interface-compiler" }
 pbr-elf = { path = "../lib/elf", features = ["alloc"] }
+pbr-testpng = { path = "../lib/testpng" }
 
 [dev-dependencies]
 pbr-partition = { path = "../lib/partition" }

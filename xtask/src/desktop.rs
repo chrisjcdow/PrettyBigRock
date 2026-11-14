@@ -23,7 +23,7 @@
 use crate::pictures;
 use crate::qemu::{self, Config, Qmp, Screens};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
@@ -50,7 +50,10 @@ pub struct ScreenLine {
 pub struct WindowLine {
     /// The screen holding most of it (0 for none).
     pub screen: u32,
+    /// The window's number, which its app knows it by (each app counts its own).
     pub number: u32,
+    /// The app's number.
+    pub app: u32,
     pub title: String,
     pub x: i32,
     pub y: i32,
@@ -199,6 +202,7 @@ fn window_line(l: &str) -> Option<WindowLine> {
     Some(WindowLine {
         screen: num(h.get(1)?)?,
         number: num(h.get(3)?)?,
+        app: num(t.first()?)?,
         title: title.to_string(),
         x,
         y,
@@ -207,6 +211,147 @@ fn window_line(l: &str) -> Option<WindowLine> {
         scale: num(t.get(6)?)?,
         words: t[7..].iter().map(|w| w.to_string()).collect(),
     })
+}
+
+/// One widget of the gallery, as `tests/programs/gallery` describes it in the log (sandstone's
+/// `Description::line`): `gallery: widget W ROLE "LABEL" at X,Y size WxH [id KEY] [focused]
+/// [disabled] [checked|unchecked] [value "VALUE"]`, positions in window W's logical pixels.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WidgetLine {
+    /// The gallery's own number for the window (0 is its main window).
+    pub window: u32,
+    pub role: String,
+    pub label: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub key: Option<String>,
+    pub focused: bool,
+    pub checked: Option<bool>,
+    pub value: String,
+}
+
+/// The gallery's last whole description: its windows (its own number and the display
+/// server's) and their widgets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GalleryView {
+    pub windows: Vec<(u32, u32)>,
+    pub widgets: Vec<WidgetLine>,
+}
+
+impl GalleryView {
+    /// The widget with id `name`, or else the one labelled `name` (not a plain label), or else a
+    /// label saying it.
+    fn widget(&self, name: &str) -> Option<&WidgetLine> {
+        let w = &self.widgets;
+        w.iter()
+            .find(|w| w.key.as_deref() == Some(name))
+            .or_else(|| w.iter().find(|w| w.label == name && w.role != "label"))
+            .or_else(|| w.iter().find(|w| w.label == name))
+    }
+
+    /// The focused widget of the main window.
+    fn focused(&self) -> Option<&WidgetLine> {
+        self.widgets.iter().find(|w| w.window == 0 && w.focused)
+    }
+
+    /// The display server's number for the gallery's window `window`.
+    fn display(&self, window: u32) -> Option<u32> {
+        self.windows.iter().find(|(g, _)| *g == window).map(|(_, d)| *d)
+    }
+}
+
+/// Undoes Rust's `escape_debug` for the characters the gallery's labels and values may hold.
+fn unescape(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some(other) => out.push(other),
+                None => {}
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The text between a quote at the start of `s` and the next quote that isn't escaped, and
+/// what follows it.
+fn quoted(s: &str) -> Option<(String, &str)> {
+    let s = s.strip_prefix('"')?;
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        match c {
+            '\\' if !escaped => escaped = true,
+            '"' if !escaped => return Some((unescape(&s[..i]), &s[i + 1..])),
+            _ => escaped = false,
+        }
+    }
+    None
+}
+
+fn widget_line(rest: &str) -> Option<WidgetLine> {
+    let (window, rest) = rest.split_once(' ')?;
+    let q = rest.find('"')?;
+    let role = rest[..q].trim().to_string();
+    let (label, tail) = quoted(&rest[q..])?;
+    let (tail, value) = match tail.find(" value \"") {
+        Some(at) => (&tail[..at], quoted(&tail[at + 7..]).map(|(v, _)| v).unwrap_or_default()),
+        None => (tail, String::new()),
+    };
+    let t: Vec<&str> = tail.split_whitespace().collect();
+    // t: at X,Y size WxH words...
+    let (x, y) = pair(t.get(1)?, ',')?;
+    let (width, height) = pair(t.get(3)?, 'x')?;
+    let words = &t[4..];
+    let key =
+        words.iter().position(|w| *w == "id").and_then(|i| words.get(i + 1)).map(|k| k.to_string());
+    let checked = if words.contains(&"checked") {
+        Some(true)
+    } else if words.contains(&"unchecked") {
+        Some(false)
+    } else {
+        None
+    };
+    Some(WidgetLine {
+        window: num(window)?,
+        role,
+        label,
+        x,
+        y,
+        width,
+        height,
+        key,
+        focused: words.contains(&"focused"),
+        checked,
+        value,
+    })
+}
+
+/// Reads the last whole description the gallery wrote: `gallery: view N` to `gallery: view N
+/// done`.
+pub fn last_gallery_view(text: &str) -> Option<GalleryView> {
+    let lines: Vec<&str> =
+        text.lines().filter_map(|l| l.split_once("gallery: ").map(|(_, r)| r)).collect();
+    let end = lines.iter().rposition(|l| l.starts_with("view ") && l.ends_with(" done"))?;
+    let n = lines[end].strip_prefix("view ")?.strip_suffix(" done")?;
+    let start = lines[..end].iter().rposition(|l| *l == format!("view {n}"))?;
+    let mut view = GalleryView::default();
+    for l in &lines[start + 1..end] {
+        if let Some(rest) = l.strip_prefix("window ") {
+            let (g, d) = rest.split_once(" is ")?;
+            view.windows.push((num(g)?, num(d)?));
+        } else if let Some(rest) = l.strip_prefix("widget ") {
+            view.widgets.push(widget_line(rest)?);
+        }
+    }
+    Some(view)
 }
 
 /// A running desktop boot.
@@ -617,6 +762,250 @@ impl Run<'_> {
         self.stopped("guest-shutdown")
     }
 
+    /// Waits for a description from the gallery that `ok` accepts, and returns it.
+    fn gallery_view(
+        &mut self,
+        what: &str,
+        ok: impl Fn(&GalleryView) -> bool,
+    ) -> Result<GalleryView, String> {
+        eprintln!("  (waiting for the gallery to show: {what})");
+        let text = self.wait(what, |t| last_gallery_view(t).is_some_and(|v| ok(&v)))?;
+        last_gallery_view(&text).ok_or_else(|| "no description from the gallery".into())
+    }
+
+    /// The display server's line for the gallery's window `window` (`main` is the line of its
+    /// main window: windows are numbered by each app, so the app's number tells them apart).
+    fn gallery_window(
+        v: &View,
+        g: &GalleryView,
+        main: &WindowLine,
+        window: u32,
+    ) -> Option<WindowLine> {
+        let number = g.display(window)?;
+        v.windows.iter().find(|w| w.app == main.app && w.number == number).cloned()
+    }
+
+    /// Clicks the middle of the gallery's widget `name` (an id or a label), in whichever of its
+    /// windows it is.
+    fn click_widget(&mut self, name: &str) -> Result<(), String> {
+        let g = self.gallery_view(&format!("a widget {name}"), |g| g.widget(name).is_some())?;
+        let w = g.widget(name).cloned().ok_or(format!("no widget {name}"))?;
+        let v = self.view("the gallery", |v| v.window("Gallery").is_some())?;
+        let main = v.window("Gallery").cloned().ok_or("no Gallery")?;
+        let win = Self::gallery_window(&v, &g, &main, w.window)
+            .ok_or(format!("the display server doesn't show the gallery's window {}", w.window))?;
+        self.click_at(win.x + w.x + w.width / 2, win.y + w.y + w.height / 2)
+    }
+
+    /// Turns the wheel `steps` towards the user where the pointer is.
+    fn wheel(&mut self, steps: u32) -> Result<(), String> {
+        for _ in 0..steps {
+            for down in [true, false] {
+                let b =
+                    format!(r#"{{"type":"btn","data":{{"button":"wheel-down","down":{down}}}}}"#);
+                self.qmp.send(true, &[b])?;
+                std::thread::sleep(Duration::from_millis(60));
+            }
+        }
+        Ok(())
+    }
+
+    /// Compares what the screen shows of window `w` with the reference picture `name`
+    /// (`tests/pictures/sandstone/NAME.png`, drawn on the host by the gallery's own tests),
+    /// pixel for pixel, over the part of the window that is on its screen. The screenshot is
+    /// kept beside the log as a PNG either way, for people to look at.
+    fn compare_window(&mut self, v: &View, w: &WindowLine, name: &str) -> Result<(), String> {
+        let s = v.screen(w.screen).cloned().ok_or(format!("no screen holds {}", w.title))?;
+        let (device, head) = self.qemu_screen(v, s.number)?;
+        let f = (s.scale / 100).max(1) as i32;
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../tests/pictures/sandstone/{name}.png"));
+        let want =
+            pbr_testpng::decode(&fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?)?;
+        let shot_file = self.log.with_extension(format!("{name}.ppm"));
+        let kept = self.log.with_extension(format!("{name}.png"));
+        let end = Instant::now() + PICTURE;
+        loop {
+            let _ = fs::remove_file(&shot_file);
+            self.qmp.screendump(device, head, &shot_file)?;
+            let bytes =
+                fs::read(&shot_file).map_err(|e| format!("{}: {e}", shot_file.display()))?;
+            let shot = pictures::read_ppm(&bytes)?;
+            let _ = fs::remove_file(&shot_file);
+            // The window's content in the screenshot's pixels, and the part of it on the screen.
+            let (ox, oy) = ((w.x - s.x) * f, (w.y - s.y) * f);
+            let (cw, ch) = (
+                (w.width * f).min(shot.width as i32 - ox),
+                (w.height * f).min(shot.height as i32 - oy),
+            );
+            if ox < 0 || oy < 0 || cw <= 0 || ch <= 0 || want.width as i32 != w.width * f {
+                return Err(format!(
+                    "{} isn't where a picture of it can be taken ({w:?})",
+                    w.title
+                ));
+            }
+            let mut got =
+                pbr_testpng::Picture { width: cw as u32, height: ch as u32, pixels: Vec::new() };
+            let mut differ = None;
+            for y in 0..ch {
+                for x in 0..cw {
+                    let p = shot.pixels[((oy + y) as u32 * shot.width + (ox + x) as u32) as usize]
+                        | 0xFF00_0000;
+                    let r = want.pixels[(y as u32 * want.width + x as u32) as usize] | 0xFF00_0000;
+                    if p != r && differ.is_none() {
+                        differ = Some((x, y, p, r));
+                    }
+                    got.pixels.push(p);
+                }
+            }
+            if let Ok(png) = pbr_testpng::encode(&got) {
+                let _ = fs::write(&kept, png);
+            }
+            match differ {
+                None => return Ok(()),
+                Some((x, y, p, r)) if Instant::now() > end => {
+                    return Err(format!(
+                        "the gallery on screen differs from {name}.png at {x},{y}: {:06x}, not {:06x} \
+                         (the screenshot is kept: {})",
+                        p & 0xFF_FFFF,
+                        r & 0xFF_FFFF,
+                        kept.display()
+                    ));
+                }
+                Some(_) => std::thread::sleep(Duration::from_millis(500)),
+            }
+        }
+    }
+
+    /// The gallery (note 0023, section 6; `tests/programs/gallery`): every sandstone widget in
+    /// one window, beside a test window `Other` for the clipboard. Its look is compared with the
+    /// pictures its host tests drew, at 1x and (on two screens) at 2x; then it is driven: a
+    /// click, typing, Tab, a menu, a dialog, the clipboard both ways, the wheel; then both
+    /// windows are closed.
+    fn gallery(&mut self, first: ScreenLine) -> Result<(), String> {
+        let two = self.cfg.screens == Screens::TwoVirtioGpu;
+        self.line("Desktop test: the gallery")?;
+        let v = self.view("the gallery and Other drawn", |v| {
+            v.window("Gallery").is_some_and(|w| w.is("drawn"))
+                && v.window("Other").is_some_and(|w| w.is("drawn"))
+        })?;
+        self.gallery_view("its widgets", |g| g.widget("field").is_some())?;
+        let g = v.window("Gallery").cloned().ok_or("no Gallery")?;
+
+        // As it opened, with the keyboard (Other, launched after it, took it: a click on its
+        // heading gives it back without focusing a widget), and the pointer out of the way (it
+        // is drawn on the screen, and would hover a widget).
+        self.click_widget("heading")?;
+        self.view("the gallery focused", |v| v.window("Gallery").is_some_and(|w| w.is("focused")))?;
+        self.move_to(first.x + first.width - 8, first.y + 8)?;
+        let v = self.view("the gallery", |v| v.window("Gallery").is_some())?;
+        self.compare_window(&v, &g, "gallery-1x")?;
+
+        // On the 2x screen: dragged by its title bar, it is told the new scale and draws itself
+        // twice as fine.
+        if two {
+            let second =
+                v.screens.iter().find(|s| s.number != 1).cloned().ok_or("no second screen")?;
+            self.move_to(g.x + 60, g.y - 13)?;
+            self.button(true)?;
+            self.move_to(second.x + 60, second.y + 14)?;
+            self.button(false)?;
+            self.line("gallery: configure 560x380 scale 200")?;
+            self.move_to(first.x + first.width - 8, first.y + 8)?;
+            let v = self.view("the gallery on the 2x screen", |v| {
+                v.window("Gallery").is_some_and(|w| w.scale == 200 && w.screen == second.number)
+            })?;
+            let g2 = v.window("Gallery").cloned().ok_or("no Gallery")?;
+            self.compare_window(&v, &g2, "gallery-2x")?;
+            // And back where it was.
+            self.move_to(g2.x + 60, g2.y - 13)?;
+            self.button(true)?;
+            self.move_to(g.x + 60, g.y - 13)?;
+            self.button(false)?;
+            self.lines("gallery: configure 560x380 scale 100", 2)?;
+        }
+
+        // A click.
+        self.click_widget("click")?;
+        self.line("gallery: message Clicked")?;
+        // Typing into the text field.
+        self.click_widget("field")?;
+        for k in ["h", "e", "l", "l", "o"] {
+            self.chord(&[k])?;
+        }
+        self.gallery_view("hello typed", |g| {
+            g.widget("field").is_some_and(|w| w.value == "hello" && w.focused)
+        })?;
+        // Tab and Shift+Tab move the focus in order; Space ticks the check box.
+        self.chord(&["tab"])?;
+        self.gallery_view("the check box focused", |g| {
+            g.focused().is_some_and(|w| w.key.as_deref() == Some("wrap"))
+        })?;
+        self.chord(&["tab"])?;
+        self.gallery_view("the toggle focused", |g| {
+            g.focused().is_some_and(|w| w.key.as_deref() == Some("pen"))
+        })?;
+        self.chord(&["shift", "tab"])?;
+        self.gallery_view("the check box focused again", |g| {
+            g.focused().is_some_and(|w| w.key.as_deref() == Some("wrap"))
+        })?;
+        self.chord(&["spc"])?;
+        self.line("gallery: message Wrap(true)")?;
+
+        // A menu: F10 opens File, Right moves to Edit, and Copy (clicked) copies the field.
+        self.chord(&["f10"])?;
+        self.gallery_view("the File menu", |g| g.widget("New").is_some_and(|w| w.window != 0))?;
+        self.chord(&["right"])?;
+        self.gallery_view("the Edit menu", |g| g.widget("Copy").is_some_and(|w| w.window != 0))?;
+        self.click_widget("Copy")?;
+        self.line("gallery: message Copy")?;
+        self.view("the clipboard holding text", |v| {
+            v.windows.iter().all(|w| !w.words.iter().any(|x| x == "popup"))
+        })?;
+
+        // The clipboard, to the other window and back.
+        let v = self.view("Other", |v| v.window("Other").is_some())?;
+        let o = v.window("Other").cloned().ok_or("no Other")?;
+        self.click_at(o.x + 10, o.y + o.height - 10)?;
+        self.view("Other focused", |v| v.window("Other").is_some_and(|w| w.is("focused")))?;
+        self.chord(&["ctrl", "v"])?;
+        self.line("wintest Other: pasted hello")?;
+        self.chord(&["ctrl", "c"])?;
+        self.line("wintest Other: copied")?;
+        self.click_widget("field")?;
+        self.chord(&["ctrl", "a"])?;
+        self.chord(&["ctrl", "v"])?;
+        self.gallery_view("Other pasted", |g| {
+            g.widget("field").is_some_and(|w| w.value == "Other")
+        })?;
+
+        // A dialog: a question, answered with a click.
+        self.click_widget("ask")?;
+        self.gallery_view("the question", |g| g.widget("Yes").is_some_and(|w| w.window != 0))?;
+        self.click_widget("Yes")?;
+        self.line("gallery: message Answer(true)")?;
+
+        // The wheel over the scrolled column.
+        let gv = self.gallery_view("the scroll area", |g| g.widget("scroll").is_some())?;
+        let sc = gv.widget("scroll").cloned().ok_or("no scroll area")?;
+        let v = self.view("the gallery", |v| v.window("Gallery").is_some())?;
+        let g = v.window("Gallery").cloned().ok_or("no Gallery")?;
+        self.move_to(g.x + sc.x + sc.width / 2, g.y + sc.y + sc.height / 2)?;
+        self.wheel(3)?;
+        self.gallery_view("scrolled", |g| g.widget("scroll").is_some_and(|w| w.value != "0,0"))?;
+
+        // Keep a picture of it as the user left it, then close both windows with Ctrl+W.
+        self.keep_screens("gallery")?;
+        self.click_widget("heading")?;
+        self.view("the gallery focused", |v| v.window("Gallery").is_some_and(|w| w.is("focused")))?;
+        self.chord(&["ctrl", "w"])?;
+        self.line("gallery: closing")?;
+        self.view("Other focused", |v| v.window("Other").is_some_and(|w| w.is("focused")))?;
+        self.chord(&["ctrl", "w"])?;
+        self.line("wintest Other: closing")?;
+        Ok(())
+    }
+
     /// The first boot: the desktop, two windows the runner drives, a hung and a hostile app,
     /// the display server's crash, the start menu, and falling back to the shell.
     fn first(&mut self) -> Result<(), String> {
@@ -798,6 +1187,9 @@ impl Run<'_> {
         self.chord(&["ctrl", "w"])?;
         self.line("wintest test: closing")?;
 
+        // ---- Step 4b: the widget gallery (note 0023, section 6). ----
+        self.gallery(first)?;
+
         // ---- Step 5: falling back to the shell, which restarts the machine. ----
         self.line("Desktop test: falling back")?;
         self.line("Desktop test passed")?;
@@ -810,6 +1202,24 @@ impl Run<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reading_the_gallerys_description() {
+        let text = "[gallery] gallery: view 1\n[gallery] gallery: window 0 is 7\n\
+            [gallery] gallery: widget 0 text field \"Type \\\"here\\\"\" at 8,40 size 200x24 id field focused value \"a \\\"b\\\"\"\n\
+            [gallery] gallery: widget 0 check box \"Wrap\" at 8,70 size 60x24 id wrap unchecked\n\
+            [gallery] gallery: view 1 done\n[gallery] gallery: view 2\n";
+        let g = last_gallery_view(text).expect("a view");
+        assert_eq!(g.windows, vec![(0, 7)]);
+        let f = g.widget("field").unwrap();
+        assert_eq!(
+            (f.role.as_str(), f.label.as_str(), f.value.as_str()),
+            ("text field", "Type \"here\"", "a \"b\"")
+        );
+        assert_eq!((f.x, f.y, f.width, f.height, f.focused), (8, 40, 200, 24, true));
+        assert_eq!(g.widget("Wrap").unwrap().checked, Some(false));
+        assert_eq!(g.focused().unwrap().key.as_deref(), Some("field"));
+    }
 
     #[test]
     fn reading_the_last_whole_description() {
