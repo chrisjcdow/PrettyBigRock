@@ -112,11 +112,15 @@ pub struct Settings {
     pub resizable: bool,
     /// The smallest the user may make it (0 for no limit).
     pub min_size: (u32, u32),
+    /// Open the main window as a `System` window over another app's window, which it blocks
+    /// input to while it is open: that app's number and its own number for the window. Only
+    /// the file picker may (note 0025); the display server refuses anyone else.
+    pub over: Option<(u32, u32)>,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { size: (480, 360), resizable: true, min_size: (0, 0) }
+        Settings { size: (480, 360), resizable: true, min_size: (0, 0), over: None }
     }
 }
 

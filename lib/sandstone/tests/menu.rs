@@ -85,7 +85,7 @@ impl App for Notes {
 }
 
 fn settings() -> Settings {
-    Settings { size: (400, 200), resizable: true, min_size: (0, 0) }
+    Settings { size: (400, 200), resizable: true, min_size: (0, 0), over: None }
 }
 
 fn app() -> Harness<Notes> {
@@ -414,8 +414,10 @@ impl App for Odd {
 fn odd_input_does_not_panic() {
     for huge in [false, true] {
         for size in [(1, 1), (30, 20), (300, 100)] {
-            let mut h =
-                Harness::new(Odd { huge }, Settings { size, resizable: true, min_size: (0, 0) });
+            let mut h = Harness::new(
+                Odd { huge },
+                Settings { size, resizable: true, min_size: (0, 0), over: None },
+            );
             for (x, y) in [(0, 0), (5, 5), (20, 10), (100, 12), (-5, -5), (100000, 3)] {
                 h.click(x, y);
                 h.right_click_in(WindowId::MAIN, x, y);

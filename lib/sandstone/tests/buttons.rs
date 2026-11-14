@@ -116,7 +116,7 @@ impl App for Demo {
 }
 
 fn settings() -> Settings {
-    Settings { size: (340, 118), resizable: false, min_size: (0, 0) }
+    Settings { size: (340, 118), resizable: false, min_size: (0, 0), over: None }
 }
 
 fn demo() -> Harness<Demo> {
@@ -341,8 +341,10 @@ fn nothing_panics_at_odd_sizes() {
         fn update(&mut self, _m: (), _cx: &mut Context<'_, ()>) {}
     }
     for size in [(1, 1), (40, 20), (200, 40)] {
-        let mut h =
-            Harness::new(Odd(icon_pixels()), Settings { size, resizable: true, min_size: (0, 0) });
+        let mut h = Harness::new(
+            Odd(icon_pixels()),
+            Settings { size, resizable: true, min_size: (0, 0), over: None },
+        );
         h.click(3, 3);
         h.key(Key::Tab);
         h.key(Key::Space);

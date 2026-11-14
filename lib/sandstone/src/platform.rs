@@ -28,6 +28,9 @@ pub struct NewWindow {
     pub at: (i32, i32),
     /// For a popup, the input event that asked for it.
     pub serial: u32,
+    /// For a `System` window over another app's window: that app and its window (see
+    /// [`crate::Settings::over`]).
+    pub over: Option<(u32, u32)>,
 }
 
 /// The display server, as sandstone uses it. Failures that need no answer are ignored (a
@@ -79,6 +82,9 @@ impl Platform for Connection {
     }
 
     fn create(&mut self, w: &NewWindow) -> Option<Win> {
+        if let Some((app, window)) = w.over {
+            return self.create_over(app, window, &w.title, w.size, w.flags).ok();
+        }
         let parent = w.parent.unwrap_or(Win(0));
         self.create_child(w.kind, parent, &w.title, w.size, w.flags, w.at, w.serial).ok()
     }

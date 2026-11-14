@@ -252,6 +252,34 @@ impl Connection {
             &at,
             serial,
         )?;
+        Ok(self.track(n))
+    }
+
+    /// A `System` window placed over another app's window, which it blocks input to while it
+    /// is open: the file picker's (note 0025). `app` is that app's number, as the sandbox
+    /// manager gave it, and `window` its own number for its window. `System` clients only.
+    pub fn create_over(
+        &mut self,
+        app: u32,
+        window: u32,
+        title: &str,
+        size: (u32, u32),
+        flags: WindowFlags,
+    ) -> Result<Win, Error> {
+        let size = Size { width: size.0, height: size.1 };
+        let n = self.client.create_over(app, window, frames::clip_title(title), &size, flags)?;
+        Ok(self.track(n))
+    }
+
+    /// Whether `serial` is a key or button press delivered to another app's window in the
+    /// last second (`System` clients only): how the picker knows it was asked in answer to the
+    /// user (note 0025, section 1).
+    pub fn check_serial(&self, app: u32, window: u32, serial: u32) -> Result<bool, Error> {
+        Ok(self.client.check_serial(app, window, serial)?)
+    }
+
+    /// Starts keeping a new window's frames and events.
+    fn track(&mut self, n: u32) -> Win {
         self.windows.retain(|w| w.number != n);
         self.windows.push(WindowState {
             number: n,
@@ -261,7 +289,7 @@ impl Connection {
             drawn: false,
             pointer: (0, 0),
         });
-        Ok(Win(n))
+        Win(n)
     }
 
     /// Destroys a window.

@@ -68,7 +68,7 @@ impl App for Scrolled {
 }
 
 fn small() -> Settings {
-    Settings { size: (160, 120), resizable: true, min_size: (0, 0) }
+    Settings { size: (160, 120), resizable: true, min_size: (0, 0), over: None }
 }
 
 /// The scroll area's offsets, "x,y".
@@ -492,7 +492,7 @@ impl App for Files {
 }
 
 fn list_settings() -> Settings {
-    Settings { size: (300, 140), resizable: true, min_size: (0, 0) }
+    Settings { size: (300, 140), resizable: true, min_size: (0, 0), over: None }
 }
 
 /// Where the middle of row `n` is, when nothing is scrolled (the list's rows start at 22, and

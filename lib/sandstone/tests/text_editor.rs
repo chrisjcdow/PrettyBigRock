@@ -835,7 +835,7 @@ impl App for Ed {
 }
 
 fn settings() -> Settings {
-    Settings { size: (240, 120), resizable: true, min_size: (0, 0) }
+    Settings { size: (240, 120), resizable: true, min_size: (0, 0), over: None }
 }
 
 fn editor(text: &str) -> Harness<Ed> {
@@ -1397,7 +1397,7 @@ fn a_hundred_thousand_lines_draw_and_type_as_fast_as_a_few() {
 #[test]
 fn tiny_windows_and_odd_events_do_not_panic() {
     for size in [(4, 4), (13, 13), (37, 20), (50, 100), (300, 8)] {
-        let s = Settings { size, resizable: true, min_size: (0, 0) };
+        let s = Settings { size, resizable: true, min_size: (0, 0), over: None };
         let mut h = Harness::new(Ed::new("héllo\n\tworld\n\n"), s);
         h.key(Key::Tab);
         h.type_text("abc\n\t");
@@ -1451,7 +1451,7 @@ fn lines_app() -> Ed {
 }
 
 fn picture_settings() -> Settings {
-    Settings { size: (240, 100), resizable: true, min_size: (0, 0) }
+    Settings { size: (240, 100), resizable: true, min_size: (0, 0), over: None }
 }
 
 #[test]

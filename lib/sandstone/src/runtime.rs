@@ -248,14 +248,16 @@ impl<A: App> Runtime<A> {
             flags = flags | WindowFlags::RESIZABLE;
         }
         let title = self.app.title();
+        // The file picker's window is a `System` window over the app that asked (note 0025).
         let new = NewWindow {
-            kind: WindowKind::Normal,
+            kind: if s.over.is_some() { WindowKind::System } else { WindowKind::Normal },
             parent: None,
             title: title.clone(),
             size: s.size,
             flags,
             at: (0, 0),
             serial: 0,
+            over: s.over,
         };
         let Some(win) = p.create(&new) else {
             return false;
@@ -794,6 +796,7 @@ impl<A: App> Runtime<A> {
                 flags: WindowFlags(0),
                 at: (at.x, at.y),
                 serial,
+                over: None,
             })
         });
         match created {
@@ -863,6 +866,7 @@ impl<A: App> Runtime<A> {
                 flags: WindowFlags::MODAL,
                 at: (0, 0),
                 serial: 0,
+                over: None,
             };
             match p.create(&new) {
                 Some(win) => {
@@ -908,6 +912,7 @@ impl<A: App> Runtime<A> {
             flags,
             at: (0, 0),
             serial: 0,
+            over: None,
         };
         if let Some(win) = p.create(&new) {
             let mut w = Window::new(id, win, Purpose::Other);

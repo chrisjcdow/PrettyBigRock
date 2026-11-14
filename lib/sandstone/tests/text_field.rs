@@ -88,7 +88,7 @@ impl App for Form {
 }
 
 fn settings() -> Settings {
-    Settings { size: (200, 80), resizable: false, min_size: (0, 0) }
+    Settings { size: (200, 80), resizable: false, min_size: (0, 0), over: None }
 }
 
 fn harness(text: &str) -> Harness<Form> {
