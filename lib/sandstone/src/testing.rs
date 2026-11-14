@@ -848,8 +848,12 @@ where
         self.verify();
     }
 
-    /// Checks that every window shows what drawing it whole would.
+    /// Checks that every window shows what drawing it whole would. Not once the app has ended:
+    /// its windows are going, and aren't drawn again.
     fn verify(&self) {
+        if self.rt.finished() {
+            return;
+        }
         for (id, win) in self.rt.windows() {
             let Some(w) = self.display.windows.iter().find(|w| w.win == win) else {
                 continue;
