@@ -46,6 +46,7 @@ members = [
     "lib/platform",
     "lib/ranges",
     "lib/rockfs",
+    "lib/sandstone",
     "lib/seat",
     "lib/shell",
     "lib/supervise",
@@ -111,6 +112,11 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.pbr-compositor]
+opt-level = 2
+
+# Sandstone builds, lays out and compares every window's view after each event, and its text
+# editor and lists walk long texts: emulated and unoptimised, that is too slow to test with.
+[profile.dev.package.pbr-sandstone]
 opt-level = 2
 
 # The desktop's wallpaper is worked out pixel by pixel, at each screen's full size.

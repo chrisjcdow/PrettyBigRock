@@ -90,6 +90,7 @@ dependencies = [
  "pbr-granite",
  "pbr-interfaces",
  "pbr-manifest",
+ "pbr-sandstone",
  "pbr-window",
 ]
 
@@ -388,6 +389,19 @@ dependencies = [
  "pbr-interfaces",
  "pbr-manifest",
  "pbr-supervise",
+]
+
+[[package]]
+name = "pbr-sandstone"
+version = "0.0.0"
+dependencies = [
+ "pbr-draw",
+ "pbr-font",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-sandstone",
+ "pbr-testpng",
+ "pbr-window",
 ]
 
 [[package]]

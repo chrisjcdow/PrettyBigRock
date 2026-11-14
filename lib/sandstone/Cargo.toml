@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MPL-2.0
+[package]
+name = "pbr-sandstone"
+description = "Sandstone, the toolkit apps are written with: widgets, layout, focus, menus and dialogs, on lib/window (note 0023, section 5)"
+version.workspace = true
+edition.workspace = true
+license = "MPL-2.0"
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# `sandstone::testing`: the harness that runs an app against a pretend display server, on the
+# host (note 0023, section 6). It needs the standard library, and `lib/testpng` (GPL, a test's
+# helper only) to compare with reference pictures.
+testing = ["dep:pbr-testpng"]
+
+[dependencies]
+pbr-draw = { path = "../draw" }
+pbr-font = { path = "../font" }
+pbr-granite = { path = "../granite" }
+pbr-interfaces = { path = "../interfaces" }
+pbr-testpng = { path = "../testpng", optional = true }
+pbr-window = { path = "../window" }
+
+[dev-dependencies]
+# The tests use the harness: a package may name itself here to turn a feature on for its tests.
+pbr-sandstone = { path = ".", features = ["testing"] }
+
+[lints]
+workspace = true
