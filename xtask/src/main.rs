@@ -1034,6 +1034,7 @@ fn licence_for(rel: &Path) -> &'static str {
         || under("lib/font/")
         || under("lib/draw/")
         || under("lib/window/")
+        || under("lib/sandstone/")
         || under("targets/")
     {
         "MPL-2.0"
@@ -1107,6 +1108,7 @@ mod tests {
         assert_eq!(licence_for(Path::new("lib/font/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/draw/src/canvas.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/window/src/lib.rs")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("lib/sandstone/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/testpng/src/lib.rs")), "GPL-3.0-or-later");
         assert_eq!(licence_for(Path::new("interfaces/echo.pbi")), "MIT");
         assert_eq!(licence_for(Path::new("lib/interfaces/build.rs")), "MIT");
