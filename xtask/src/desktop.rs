@@ -242,13 +242,14 @@ pub struct GalleryView {
 
 impl GalleryView {
     /// The widget with id `name`, or else the one labelled `name` (not a plain label), or else a
-    /// label saying it.
+    /// label saying it, or else the first of that role (`status bar`).
     fn widget(&self, name: &str) -> Option<&WidgetLine> {
         let w = &self.widgets;
         w.iter()
             .find(|w| w.key.as_deref() == Some(name))
             .or_else(|| w.iter().find(|w| w.label == name && w.role != "label"))
             .or_else(|| w.iter().find(|w| w.label == name))
+            .or_else(|| w.iter().find(|w| w.role == name && w.window == 0))
     }
 
     /// The focused widget of the main window.
@@ -890,12 +891,24 @@ impl Run<'_> {
                 && v.window("Other").is_some_and(|w| w.is("drawn"))
         })?;
         self.gallery_view("its widgets", |g| g.widget("field").is_some())?;
+        // Other opened over the gallery's corner: it is dragged by its title bar to the bottom
+        // right of the first screen, clear of the gallery, for the clipboard later.
+        let o = v.window("Other").cloned().ok_or("no Other")?;
+        let (tx, ty) =
+            (first.x + first.width - o.width - 20, first.y + first.height - o.height - 70);
+        self.move_to(o.x + 60, o.y - 13)?;
+        self.button(true)?;
+        self.move_to(tx + 60, ty - 13)?;
+        self.button(false)?;
+        let v = self
+            .view("Other moved", |v| v.window("Other").is_some_and(|w| (w.x, w.y) == (tx, ty)))?;
         let g = v.window("Gallery").cloned().ok_or("no Gallery")?;
 
-        // As it opened, with the keyboard (Other, launched after it, took it: a click on its
-        // heading gives it back without focusing a widget), and the pointer out of the way (it
-        // is drawn on the screen, and would hover a widget).
-        self.click_widget("heading")?;
+        // As it opened, on top and with the keyboard (Other, launched after it, opened over its
+        // corner and took the keyboard: a click on its status bar, which Other never covers,
+        // gives both back without focusing a widget), and the pointer out of the way (it is
+        // drawn on the screen, and would hover a widget).
+        self.click_widget("status bar")?;
         self.view("the gallery focused", |v| v.window("Gallery").is_some_and(|w| w.is("focused")))?;
         self.move_to(first.x + first.width - 8, first.y + 8)?;
         let v = self.view("the gallery", |v| v.window("Gallery").is_some())?;
@@ -996,7 +1009,7 @@ impl Run<'_> {
 
         // Keep a picture of it as the user left it, then close both windows with Ctrl+W.
         self.keep_screens("gallery")?;
-        self.click_widget("heading")?;
+        self.click_widget("status bar")?;
         self.view("the gallery focused", |v| v.window("Gallery").is_some_and(|w| w.is("focused")))?;
         self.chord(&["ctrl", "w"])?;
         self.line("gallery: closing")?;
