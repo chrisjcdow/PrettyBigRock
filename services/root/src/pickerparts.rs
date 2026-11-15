@@ -47,7 +47,7 @@ pub fn run(
     grants(u, chris, disk)?;
     limits(disk)?;
     facts(u)?;
-    check(u, chris, alice, storage)?;
+    check(chris, alice, storage)?;
     Ok(String::from(
         "grants through the picker, records per grant, checking volumes, and system information",
     ))
@@ -284,18 +284,15 @@ fn soon<T>(what: &str, f: impl Fn() -> Result<T, CallError<FileError>>) -> Resul
     }
 }
 
-/// `check VOLUME [fix]` (note 0026, section 2), on the storage self-test's volume in memory,
-/// `Scratch`. It runs last: chris's session holds that volume (an administrator holds every
-/// volume), so it is started again afterwards, as when a server restarts. (A new volume in
-/// memory would leave another filesystem server running, whose budget the storage service
-/// needs free to restart a server in the supervision self-test.)
-fn check(u: &Users, chris: &Session, alice: &Session, storage: &Storage) -> Result<(), String> {
+/// `check VOLUME [fix]` (note 0026, section 2), on a volume in memory made for it, which no
+/// session holds (checking one a session holds starts that session again, as a server
+/// restarting does).
+fn check(chris: &Session, alice: &Session, storage: &Storage) -> Result<(), String> {
+    let id = storage
+        .admin
+        .create_ram_volume(1 << 20, "Checked")
+        .map_err(|e| format!("making a volume to check: {e}"))?;
     let list = storage.admin.list().map_err(|e| format!("listing: {e}"))?;
-    let id = list
-        .iter()
-        .find(|v| v.label == "Scratch" && v.in_memory)
-        .map(|v| v.id)
-        .ok_or("no Scratch volume to check")?;
     let ready = |what: &str| -> Result<(), String> {
         let end = time::after_ms(60_000);
         loop {
@@ -316,24 +313,11 @@ fn check(u: &Users, chris: &Session, alice: &Session, storage: &Storage) -> Resu
     refused("checking FAT32", chris.users.check(fat.id, false), UsersError::NotSupported)?;
     refused("checking no volume", chris.users.check(9999, false), UsersError::NoSuchVolume)?;
     let r = chris.users.check(id, false).map_err(|e| format!("checking: {e}"))?;
-    if r.problems != 0 || !r.report.starts_with("\"Scratch\": no problems found.") {
+    if r.problems != 0 || !r.report.starts_with("\"Checked\": no problems found.") {
         return Err(format!("the check said {} problems: {}", r.problems, r.report));
     }
     ready("after the check")?;
-    // chris's session held the volume, so it is started again: a new one does the repair.
-    let end = time::after_ms(60_000);
-    let again = loop {
-        if let Ok(s) = crate::sandboxtest::session(u, "chris")
-            && s.users.whoami().is_ok()
-        {
-            break s;
-        }
-        if time::now() > end {
-            return Err("chris's session wasn't started again after the check".into());
-        }
-        time::sleep_ms(100);
-    };
-    let r = again.users.check(id, true).map_err(|e| format!("repairing: {e}"))?;
+    let r = chris.users.check(id, true).map_err(|e| format!("repairing: {e}"))?;
     if r.problems != 0 {
         return Err(format!("the repair said {} problems: {}", r.problems, r.report));
     }
