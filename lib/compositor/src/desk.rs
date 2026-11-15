@@ -1158,10 +1158,24 @@ impl Desk {
             self.create(client, WindowKind::System, 0, title, size, flags, (0, 0), 0, now)?;
         let id = WindowId { client, number };
         let tc = self.windows.get(&target).map(Window::content);
+        // The screen the app's window is mostly on: the system window is kept on it, title bar
+        // and all, even when it is bigger than the app's window it is centred over.
+        let screen = tc.and_then(|r| self.space.holding_most(r)).and_then(|n| self.space.screen(n));
+        let bounds = screen.map(|s| s.rect());
         if let (Some(tc), Some(w)) = (tc, self.windows.get_mut(&id)) {
             w.over = Some(target);
             let old = w.bounds();
             w.place = centred(tc, w.size);
+            if let Some(b) = bounds {
+                let top = decor::TITLE + decor::BORDER;
+                let x = w
+                    .place
+                    .0
+                    .min(b.x + b.width - w.size.0 - decor::BORDER)
+                    .max(b.x + decor::BORDER);
+                let y = w.place.1.min(b.y + b.height - w.size.1 - decor::BORDER).max(b.y + top);
+                w.place = (x, y);
+            }
             let new = w.bounds();
             self.damage(old);
             self.damage(new);

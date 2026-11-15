@@ -116,7 +116,7 @@ const SANDBOX_SYSINFO: u32 = 1007;
 const SANDBOX_KIND_SHIFT: u32 = 56;
 const SANDBOX_TRUSTED: u64 = 1 << SANDBOX_KIND_SHIFT;
 /// A session's budget: the sandbox manager and every app it starts are paid from it.
-const SESSION_BUDGET: u64 = 48 << 20;
+const SESSION_BUDGET: u64 = 64 << 20;
 /// Sandbox managers run at the priority of services.
 const SESSION_PRIORITY: u8 = 2;
 /// The volume in memory used when there is no system volume.

@@ -563,6 +563,11 @@ impl<F: Folders> App for Picker<F> {
         Panel::new(column.push(self.bottom())).width(Length::Fill).height(Length::Fill).into()
     }
 
+    fn title(&self) -> String {
+        // The app's part of the title bar, after the manifest's "File picker".
+        self.request.title()
+    }
+
     fn start(&mut self, cx: &mut Context<'_, Message>) {
         // Saving starts in the name, so the user can type it at once; opening, in the list.
         match self.request.ask {

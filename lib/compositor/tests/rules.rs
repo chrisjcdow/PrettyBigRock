@@ -1003,6 +1003,15 @@ fn system_clients_check_serials_and_open_windows_over_others() {
     // Notepad's window goes: the picker is told to close.
     h.d.destroy(a, w, h.now).unwrap();
     assert!(h.events(picker).iter().any(|e| e.kind == kind::CLOSE));
+    // Over a small window near the screen's corner, a bigger system window is kept on the
+    // screen, title bar and all, rather than centred off it.
+    let small = h.window(a, (100, 80));
+    let (sx, sy, ..) = h.place(7, small);
+    let over =
+        h.d.create_over(picker, 7, small, "Open", (600, 400), WindowFlags(0), h.now).unwrap();
+    let (ox, oy, ow, oh) = h.place(3, over);
+    assert!(ox >= 1 && oy >= 27, "the system window at {ox},{oy}, its app's at {sx},{sy}");
+    assert!(ox + ow <= 1280 && oy + oh <= 800);
 }
 
 #[test]
