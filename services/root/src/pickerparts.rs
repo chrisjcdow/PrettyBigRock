@@ -255,18 +255,33 @@ fn limits(disk: &Disk) -> Result<(), String> {
     let other = timed(folder.limit(R, 2).map_err(|e| format!("a second limit: {e}"))?);
     other.open("letter.txt", R).map_err(|e| format!("the second share: {e}"))?;
     folder.open("letter.txt", R).map_err(|e| format!("the folder itself: {e}"))?;
-    // A share inside a share: never bigger, and counting against both.
+    // A share inside a share: never bigger, and counting against both. (A record goes when
+    // the server hears that its capability has gone, a moment after it is closed here, so what
+    // needs the room is tried again for a while.)
     open.pop();
     refused("a limit above its own", share.limit(R, 6), FileError::BadArgument)?;
-    let inner = timed(share.limit(R, 3).map_err(|e| format!("an inner limit: {e}"))?);
+    let inner = timed(soon("an inner limit", || share.limit(R, 3))?);
     refused(
         "the outer share full through the inner",
         inner.open("letter.txt", R),
         FileError::TooManyOpen,
     )?;
     open.pop();
-    inner.open("letter.txt", R).map_err(|e| format!("the inner share with room: {e}"))?;
+    soon("the inner share with room", || inner.open("letter.txt", R))?;
     Ok(())
+}
+
+/// `f`, tried again for up to five seconds while it answers `TooManyOpen`.
+fn soon<T>(what: &str, f: impl Fn() -> Result<T, CallError<FileError>>) -> Result<T, String> {
+    let end = time::after_ms(5_000);
+    loop {
+        match f() {
+            Err(CallError::Service(FileError::TooManyOpen)) if time::now() < end => {
+                time::sleep_ms(20)
+            }
+            r => return r.map_err(|e| format!("{what}: {e}")),
+        }
+    }
 }
 
 /// `check VOLUME [fix]` (note 0026, section 2), on the storage self-test's volume in memory,
