@@ -897,7 +897,9 @@ impl Sandbox {
                         return Err(SandboxError::Overlaps);
                     }
                     let held = g.cap.as_ref().ok_or(SandboxError::Failed)?;
-                    let held = held.duplicate(rights::SEND).map_err(|_| SandboxError::Failed)?;
+                    // (What is opened through a capability is derived from it, with at most its
+                    // rights: the copy must be able to pass the answer on.)
+                    let held = held.duplicate(CLIENT).map_err(|_| SandboxError::Failed)?;
                     return Ok(Some((Endpoint(held), String::from(rest))));
                 }
                 // A chosen folder may not contain something the app gets: its tree can't hold
