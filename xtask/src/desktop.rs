@@ -574,14 +574,31 @@ impl Run<'_> {
 
     /// Moves the pointer to (`x`, `y`) in the space with the mouse, from where the
     /// description says it is, and waits for it to get there.
+    ///
+    /// A relative move can land somewhere else now and then (seen once in Stress: a long move
+    /// ran into the screen's corner), so it is put right from wherever it landed, a few times.
     fn move_to(&mut self, x: i32, y: i32) -> Result<View, String> {
-        let at = last_view(&self.text()).and_then(|v| v.pointer).unwrap_or((0, 0));
         let rel = |axis: &str, v: i32| {
             format!(r#"{{"type":"rel","data":{{"axis":"{axis}","value":{v}}}}}"#)
         };
-        let (dx, dy) = (x - at.0, y - at.1);
-        if (dx, dy) != (0, 0) {
+        for _ in 0..4 {
+            let at = last_view(&self.text()).and_then(|v| v.pointer).unwrap_or((0, 0));
+            let (dx, dy) = (x - at.0, y - at.1);
+            if (dx, dy) == (0, 0) {
+                break;
+            }
             self.qmp.send(true, &[rel("x", dx), rel("y", dy)])?;
+            // Until the description shows the pointer somewhere new (or a few seconds pass).
+            let end = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < end {
+                let now = last_view(&self.text()).and_then(|v| v.pointer);
+                if now.is_some_and(|p| p != at) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            // Give a move split in parts time to finish before judging where it landed.
+            std::thread::sleep(Duration::from_millis(300));
         }
         self.view(&format!("the pointer at {x},{y}"), |v| v.pointer == Some((x, y)))
     }
