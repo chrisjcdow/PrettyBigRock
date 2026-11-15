@@ -147,8 +147,9 @@ type Answer = (Endpoint, Result<Chosen, PickError>);
 pub struct FilePicker {
     /// The picker's endpoint, while no call is under way (the helper thread has it then).
     endpoint: Option<Endpoint>,
-    /// Signalled with `bit` when an answer is ready.
-    notifier: Notification,
+    /// Signalled with `bit` when an answer is ready. Shared with the helper threads (a copy
+    /// that can only signal can't be copied again).
+    notifier: Arc<Notification>,
     bit: u64,
     answer: Arc<Lock<Option<Answer>>>,
 }
@@ -174,7 +175,7 @@ impl FilePicker {
         }
         Some(FilePicker {
             endpoint: Some(endpoint),
-            notifier,
+            notifier: Arc::new(notifier),
             bit: 1 << bit,
             answer: Arc::new(Lock::new(None)),
         })
@@ -197,21 +198,19 @@ impl FilePicker {
     pub fn open(&mut self, window: Option<Win>, serial: u32, ask: &Ask) -> Result<(), PickError> {
         let Some(window) = window else { return Err(PickError::NoPicker) };
         let Some(endpoint) = self.endpoint.take() else { return Err(PickError::Busy) };
+        // The capability waits in a shared slot until the thread takes it, so that it is still
+        // here if the thread can't be started.
+        let parked = Arc::new(Lock::new(Some(endpoint)));
+        let theirs = parked.clone();
         let ask = ask.clone();
-        let (answer, notifier) = (self.answer.clone(), &self.notifier);
-        let notifier = match notifier.0.duplicate(granite::sys::rights::ALL) {
-            Ok(h) => Notification(h),
-            Err(_) => {
-                self.endpoint = Some(endpoint);
-                return Err(PickError::NoThread);
-            }
-        };
+        let (answer, notifier) = (self.answer.clone(), self.notifier.clone());
         let bit = self.bit;
-        // The thread owns what it uses (`move`): the picker's capability, a copy of the
-        // notification, and the shared place for the answer. `Arc` is a pointer shared between
+        // The thread owns what it uses (`move`): the picker's capability, the notification,
+        // and the shared place for the answer. `Arc` is a pointer shared between
         // threads, counted so that what it points to lives while either has it; `Lock` lets
         // one thread at a time at it.
         let spawned = granite::thread::spawn(move || {
+            let Some(endpoint) = theirs.lock().take() else { return };
             let client = picker::Client::new(endpoint);
             let result = ask_picker(&client, window.number(), serial, &ask);
             *answer.lock() = Some((client.into_endpoint(), result));
@@ -221,7 +220,7 @@ impl FilePicker {
             // The thread runs to its end by itself; nothing waits for it.
             Ok(_) => Ok(()),
             Err(_) => {
-                // The endpoint went with the closure that never ran: there's no picker now.
+                self.endpoint = parked.lock().take();
                 Err(PickError::NoThread)
             }
         }
