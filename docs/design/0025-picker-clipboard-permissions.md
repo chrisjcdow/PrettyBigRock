@@ -183,5 +183,45 @@ The rules are in note 0022, section 5; what they mean in the apps:
 - Previews of pictures in the picker.
 
 ## Changes
+- 14 November 2026, built (M6 stage 8): sections 1, 4 and 5 except what needs the apps of
+  stage 9 (Notepad's and Terminal's parts of the tests; section 2's clipboard in the apps and
+  section 3's "Open with…" come with them). What building settled:
+  - **The picker** (`apps/picker`) is a service and a window. A thread of its own receives
+    `pbr.picker` requests and hands them to the window's event loop through one of its own
+    notification bits, so neither waits for the other; replies are kept until the user has
+    chosen. A request's serial is checked (`check_serial`) as it arrives, while the press is
+    less than a second old. **One picker per app** (`Busy`); other apps' requests wait their
+    turn rather than opening a second window at once. The window is `create_over` the app's.
+  - **The title** is "APP wants to WHAT": APP is the app's manifest title, which the picker
+    asks the sandbox manager for (`details`: the badge carries only the number), and WHAT the
+    app's own `title` argument ("open a picture"), or "open a file", "open a folder", "save a
+    file". With `write` a line above says "Notepad will be able to change the file you choose".
+  - **The window** is a sandstone app over `lib/browse`'s `Folders` trait, tested on the host
+    against a tree in memory: places (an administrator's volumes after the six), the folder's
+    contents with hidden files left out, folders first and sorted naturally, sortable by name,
+    size and modified; the filters as toggle buttons with "All files" last; Up, the path bar,
+    New folder; for saving, a name field (the filter's first extension is added to a name
+    without one) and "Replace?" before saving over a file. The Modified column is in UTC: the
+    picker holds no `pbr.users` to read the time zone from.
+  - **What the app gets**: the picker opens (or, for a new name, creates) the choice in its
+    tree with `Read`, plus `Write` if asked or saving, and calls `grant`; a file it made for a
+    grant that was refused is removed again. Each app's last folder is kept, by the app's
+    name, in `/Home/Apps/picker/last.txt`.
+  - **`sandstone::picker`**: `FilePicker` holds the app's picker capability, asks on a helper
+    thread (taking the capability with it) and answers through one of the event loop's bits;
+    `FilePicker::mount` puts the answer in the app's tree at the path the user saw.
+  - **The permissions viewer** (`apps/permissions`) holds no files and a `sandbox view`
+    capability; its window is a `System` window. It looks again once a second, which is how
+    it follows apps starting and ending. Grants are described as section 4's table says, an
+    app's own folder as "Its own folder (/Home/Apps/APP)", and its services as "Windows", "The
+    file picker", "System information", "The terminal", "Your account and settings" and
+    "Launching and managing apps".
+  - **Tests**: the host tests of section 5 (picker and viewer, with pictures at 1x and 2x).
+    The self-test: `grant` through a picker capability (`services/root/src/pickerparts.rs`).
+    The desktop boot drives the picker from the gallery (Notepad is stage 9): Save as, saving
+    again over the same name, opening what was saved, and `letter.txt` on 1.3's disk; the
+    viewer, from the gallery's window menu, shows what the sandbox manager says (the root
+    program logs it), Take back and Stop; `windowprobe` is refused the picker without a press,
+    for a window it hasn't, and a second while one is open.
 - 9 November 2026: first draft, for discussion with Chris; accepted by Chris the same day
   (he left the walk-through for later and asked for stage 0 to start).

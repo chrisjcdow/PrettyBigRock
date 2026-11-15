@@ -241,7 +241,8 @@ traits, which are settled first.
 - Keyboard layouts other than US (the input service, M6).
 - A filesystem server's records are shared by all its clients: one program can open files until
   the server's limit or budget is reached, and the others are refused (note 0014's open
-  question on limits per program).
+  question on limits per program). Settled in M6 stage 8: each grant has its own share
+  (note 0026, section 4; note 0014, Changes).
 
 ## Changes
 - 12 November 2026 (M6 stage 4, note 0021): the console no longer opens keyboards. It takes

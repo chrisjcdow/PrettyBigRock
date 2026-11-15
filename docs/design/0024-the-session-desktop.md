@@ -197,7 +197,7 @@ badge the sandbox manager mints for each:
 | Trusted apps (Terminal, Files, the shell) | everything below except `grant` |
 | The desktop | launch (`prepare`, `choose`, `start`, `cancel`), `list`, `details`, `stop` |
 | The permissions viewer (`sandbox view`; note 0025) | `list`, `details`, `grants`, `revoke`, `stop` |
-| The file picker (started by the sandbox manager itself; note 0025) | `grant` |
+| The file picker (started by the sandbox manager itself; note 0025) | `grant`, `details` (see Changes) |
 
 Anything else answers `NotAllowed` (a new `SandboxError` value).
 
@@ -295,6 +295,14 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 14 November 2026 (M6 stage 8): **the picker may also call `details`**, to put the asking
+  app's title in its window ("Notepad wants to open a file"): the badge tells it only the
+  app's number. `grant` is given only to an app whose manifest's `picker` was granted (its
+  decision, not the service: the self-test, in text mode, has no picker to hand out). A
+  desktop session keeps the picker running beside the desktop, as section 9 says for the
+  desktop; in test boots it and the permissions viewer are told to describe their windows
+  in the log. The window menu's "What can this app reach?" launches the permissions viewer
+  with the app's number.
 - 14 November 2026 (M6 stage 7): **the Screens dialog moves to stage 9**, with the apps: it is
   an app-sized piece of sandstone work, and stage 7 built sandstone and its gallery only. The
   start menu's heading now takes sandstone's theme setting (`theme::HEADING`, note 0023).

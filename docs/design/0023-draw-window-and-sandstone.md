@@ -239,6 +239,11 @@ testable without a screen.
 - Drag and drop between widgets and apps.
 
 ## Changes
+- 14 November 2026 (M6 stage 8): **`sandstone::picker`** is built as the Changes below
+  planned (`FilePicker`, note 0025's Changes). `Settings` gained `over` (the main window as a
+  `System` window over another app's, through `pbr.window`'s `create_over`: the picker) and
+  `system` (a `System` main window: the permissions viewer); `lib/window`'s `Connection`
+  gained `create_over` and `check_serial`.
 - 14 November 2026, building sandstone (M6 stage 7). Section 5 held: view and update, state kept
   between views, the widgets of the table. The core (the `App` trait, elements and messages,
   the `Context`, the state tree, layout, focus, shortcuts, damage, popups and dialogs) and the

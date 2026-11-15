@@ -237,12 +237,37 @@ while stage 2 is reviewed.
 
 ## Open questions
 
+- Checking a volume while it stays mounted (read-only checks in the volume's own server), so
+  that `check` doesn't restart the sessions that hold it (stage 8, Changes).
 - A text editor for programmers (the "Software development" use), beyond Notepad.
 - Pictures in other formats (PNG reading, for the picker's previews and Paint).
 - Sound for Snake (M13).
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 14 November 2026 (stage 8): built: the picker and the permissions viewer (note 0025,
+  Changes), `lib/browse`, `check`, records per grant, `pbr.sysinfo`. What building settled:
+  - **`check`**: the RockFS server started with `check` (or `check repair`) reports through a
+    new `pbr.fs.host` operation, `@3 checked(report, problems)`, and ends; the storage service
+    then serves the volume again and answers. A volume with no server running (damaged, or
+    failed too often) is checked at once. Repairing a read-only volume, and FAT32, are
+    `Unsupported` (`NotSupported` through `pbr.users`); volume 0 is the system volume.
+    Stopping the volume's server takes everything opened through it, as a server restarting
+    does, so **sessions that hold the volume are started again** (every session, for the
+    system volume): checking the system volume from Terminal restarts the desktop. The
+    self-test checks a volume in memory that no session holds. A check run in the volume's
+    own server, without stopping it, would avoid that; it is an open question below.
+  - **`pbr.sysinfo`** serves one badge to everyone (it says nothing about the caller). Its
+    `VolumeInfo` is its own: label, filesystem name, size, free space (asked of the volume's
+    server, 0 if it doesn't answer in time), read-only, in memory, and whether it is the system
+    volume. The memory is the root program's budget and what of it is unused. The version is
+    `pbr_manifest::VERSION`, `2.0.0-alpha.1` already. Each session's sandbox manager gets it at
+    role 1007 to pass on at 1005.
+  - **Records per grant** as section 4 says, with the limited capability's own record counted
+    in its share (note 0014, Changes).
+  - **`lib/browse`** is MPL-2.0 (Files and the picker share it, and apps may), with `Folders`
+    implemented for `lib/files` on PrettyBigRock and `MemTree` for the host; written by a
+    Sonnet subagent to a brief, reviewed with its icon pictures.
 - 14 November 2026 (stage 7): **the gallery** (`tests/programs/gallery`) is a library (the app,
   host-tested with sandstone's harness) and a program (the app run by sandstone, writing its
   widgets' descriptions and its messages to the log). In the desktop boot's first boot the root

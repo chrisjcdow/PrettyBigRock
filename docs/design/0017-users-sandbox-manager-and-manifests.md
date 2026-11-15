@@ -266,6 +266,14 @@ For an app launched by the sandbox manager, M5's tests (note 0018) check that:
   a limit per caller would settle it.
 
 ## Changes
+- 14 November 2026 (M6 stage 8, notes 0025 and 0026): **`grant`** (`@10`), for the file
+  picker: what the user chose is recorded as `Chosen` with exactly the rights asked for, and the
+  app's capability is derived from the one the sandbox manager keeps, so `revoke` and the
+  permissions viewer treat it like a grant at launch; a path the app already reaches with those
+  rights is answered through its own grant and nothing is recorded; a folder that would contain
+  one of its grants is `Overlaps`. The server is asked on a helper thread, as for `choose`.
+  **Records per grant**: every capability the sandbox manager keeps for a grant is made with
+  `pbr.file`'s `limit` (4096 records; 16384 for each entry of a trusted app's tree).
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
 - 14 November 2026 (M6 stage 6, note 0024): the sandbox manager no longer drops a caller's
   oldest launch to make room: each caller may have 4 waiting and there are 16 in all

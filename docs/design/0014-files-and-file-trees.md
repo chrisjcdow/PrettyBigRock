@@ -286,7 +286,8 @@ in `/Home/Documents`.
 ## Open questions
 
 - Removing a file that is still open, as Unix allows (M9).
-- Limits per program on records, rather than per server (section 3).
+- Limits per program on records, rather than per server (section 3): settled per grant by
+  note 0026, section 4 (see Changes).
 - Being told when a folder changes, for the Files app (M6).
 - Memory-mapped files, and reading without copying through messages.
 - Moving between separately granted folders without copying (note 0013).
@@ -295,6 +296,15 @@ in `/Home/Documents`.
   them yet.
 
 ## Changes
+- 14 November 2026 (M6 stage 8, note 0026, section 4): **records per grant.** `pbr.file`
+  gained `@4 limit(rights, records)`: like `reduce`, but the new capability and whatever is
+  opened, created, reduced or limited through it (and through what that opens) may hold at
+  most `records` records at once, counting its own, and they also count against every limit
+  above. Past it: `TooManyOpen`. A limit within a limit may not be bigger (`BadArgument`). In
+  `lib/fsserve` each record keeps its nearest limit; a limit goes when the last record under
+  it does. Creating through a full share makes nothing. Host tests, one against a model; the
+  self-test nests limits against the system volume's server. The sandbox manager makes every
+  grant's capability with `limit`.
 - 2 November 2026: first draft, for discussion with Chris; accepted by Chris the same day.
 - 2 November 2026, built (M5 stage 3):
   - the program half is `lib/files` (`pbr-files`), not `granite::fs`: `granite` can't call
