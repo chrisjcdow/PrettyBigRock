@@ -1046,3 +1046,20 @@ Found on the way:
   of its own: `FilePicker` shares one. (The first guess, the gallery's budget, was wrong; the
   budgets were raised anyway, a session to 64 MiB, now that the picker and the viewer run in
   it too.)
+- The first Stress run (43672536716) failed on ARM64 every time: the self-test's check made a
+  new volume in memory whose RockFS server took the room the storage service needs to start a
+  server again in the supervision test. Checking the storage test's `Scratch` volume instead
+  started chris's session again (an administrator holds every volume), and on ARM64 the new
+  session couldn't start beside alice's (the users service's budget, which never came back
+  within a minute: **left open**, worth a look). It checks a new volume again, and the storage
+  service's budget is 144 MiB. The same Stress run caught the limits test needing a record's
+  room the instant its capability was closed: the server frees it when the gone notice
+  arrives, so that step now tries again for a while.
+- QEMU 8.2.2 here crashed with SIGSEGV twice in a row on x86-64 UEFI (once before the input
+  devices came up, once after the device manager started, in the text-mode desktop boot): not
+  in the firmware this time. The next runs were clean; core dumps are now kept when it happens
+  (`ulimit -c unlimited`), for a backtrace.
+- At 600 x 400 the picker doesn't fit on the test machine's 2x screen (1024 x 768, so 512 x 384
+  logical): it is kept on the screen's top left and runs off its other edges. A system window
+  bigger than its screen should be made to fit (stage 9, with the apps' own windows).
+
