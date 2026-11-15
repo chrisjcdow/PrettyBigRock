@@ -997,3 +997,52 @@ Results: `cargo xtask ci` passed on all four configurations, every boot (on `35b
 of 30.
 
 Chris's question still open: the heading font (pictures sent again with the gallery's).
+
+## Session 20: 14 and 15 November 2026, M6 stage 8 (the picker and the permissions viewer)
+
+Chris asked for stage 8 as note 0026, section 9 defines it: the file picker, the permissions
+viewer, `lib/browse`, `check`, records per grant and `pbr.sysinfo`, with their tests, ending
+with a Stress run. Built by the session's model (Claude Opus 5.5); `lib/browse`'s listing,
+sorting, places, kinds of file and icons by a Sonnet subagent to a brief, reviewed with its
+pictures.
+
+- **Records per grant** (`lib/fsserve`): `pbr.file`'s `limit(rights, records)`. Each record
+  keeps its nearest limit; limits nest and count upwards; a limit goes with its last record.
+  Host tests, one against a model. The sandbox manager makes every grant's capability with it
+  (4096 records; 16384 for each entry of a trusted app's tree).
+- **`pbr.sysinfo`**, served by the users service (one badge for everyone); the memory from the
+  root program through a new `pbr.supervisor` operation for the users service only.
+- **`check VOLUME [fix]`**: `pbr.storage` and `pbr.users` `check`; the RockFS server's `check`
+  mode reports through `pbr.fs.host checked` and ends, and the volume is served again.
+- **The sandbox manager**: `grant` (`@10`) for the picker, recorded as `Chosen`, the app's
+  capability derived from the one kept; what the app already reaches is answered through its
+  own grant. A desktop session keeps `apps/picker` running beside the desktop, and gives apps
+  with `picker` a watched capability badged with their number.
+- **`lib/browse`** (MPL-2.0): the `Folders` trait (over `lib/files` on PrettyBigRock, `MemTree`
+  on the host), natural sorting, filters, places, kinds of file with 16 x 16 icons, paths,
+  sizes and dates.
+- **The file picker** (`apps/picker`): a receiving thread and a sandstone window over
+  `lib/browse`, a `System` window over the asking app's; serials checked as requests arrive;
+  one picker per app; what is chosen opened or made, granted and answered. **`sandstone::picker`**
+  (`FilePicker`): asks on a helper thread, answers through one of the event loop's own bits.
+- **The permissions viewer** (`apps/permissions`): every running app, what it holds and why in
+  note 0025's words, Take back and Stop app; from the start menu, or the window menu's "What
+  can this app reach?" through the desktop.
+- **Tests**: host tests for all of it (picker and viewer with pictures at 1x and 2x); the
+  self-test (`pickerparts.rs`: grant, limits, check, sysinfo); the desktop boot drives the
+  picker from the gallery (Save as, Replace?, Open, a file on 1.3's disk) and the permissions
+  viewer (what the gallery holds against what the sandbox manager says, Take back, Stop), and
+  `windowprobe` is refused the picker without a press, for a window it hasn't, and a second
+  while one is open.
+
+Found on the way:
+- An app's picker capability can't be copied, so it can't be given to the app as a copy (which
+  needs the right to copy): it is moved. The same for the picker's receiving end.
+- What a covered grant opened through the app's own grant came from a copy without the right
+  to be passed on, so the answer couldn't be sent: the copy has it now.
+- A system window over a small window near the screen's corner was centred off the screen:
+  it is kept on the screen now (a compositor test).
+- `Connection::notifier` gives a copy that may only signal, so a helper thread can't get a copy
+  of its own: `FilePicker` shares one. (The first guess, the gallery's budget, was wrong; the
+  budgets were raised anyway, a session to 64 MiB, now that the picker and the viewer run in
+  it too.)
