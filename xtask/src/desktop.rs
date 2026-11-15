@@ -1163,11 +1163,24 @@ impl Run<'_> {
             .iter()
             .position(|n| n == name)
             .ok_or(format!("no {name} in {folder}: {names:?}"))?;
+        // A click on the same row as the last click, soon after it, is a double click, which
+        // opens the row at once (the folder before had its row in the same place): then there
+        // is nothing to press Enter for.
+        let given = format!("was given {folder}/{name}.");
+        let inside = format!("folder {folder}/{name}: ");
+        let was_given = self.count(&given);
         self.click_row("picker", "File picker", "files", row)?;
-        self.program_view("picker", &format!("{name} picked"), |g| {
-            g.widget("files").is_some_and(|w| w.value.starts_with(&format!("{name}|")))
+        let picked = format!("{name}|");
+        let text = self.wait(&format!("{name} picked"), |t| {
+            t.matches(&given).count() > was_given
+                || last_program_view(t, "picker").is_some_and(|g| {
+                    g.other(&inside).is_some()
+                        || g.widget("files").is_some_and(|w| w.value.starts_with(&picked))
+                })
         })?;
-        self.chord(&["ret"])
+        let opened = text.matches(&given).count() > was_given
+            || last_program_view(&text, "picker").is_some_and(|g| g.other(&inside).is_some());
+        if opened { Ok(()) } else { self.chord(&["ret"]) }
     }
 
     /// The file picker (note 0025, section 5), from the gallery: Save as (with pictures of the
