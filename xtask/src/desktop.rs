@@ -1182,15 +1182,25 @@ impl Run<'_> {
         self.pick_row("/Home/Documents", "saved.txt")?;
         self.lines("gallery: read ", read + 1)?;
         self.line("gallery: read 5 bytes from /Home/Documents/saved.txt")?;
-        // 1.3's disk: the place named after its volume, Data.
+        // 1.3's disk: a volume labelled Data (the storage self-test's disk has a volume called
+        // Data too, so `Data 2` may be 1.3's): the one with 1.3's Documents in it.
         let (g, _) = self.ask_picker(&["ctrl", "o"], "opening again")?;
         let places = g.names("places ").unwrap_or_default();
-        let row =
-            places.iter().position(|p| p == "Data").ok_or(format!("no Data among {places:?}"))?;
-        self.click_row("picker", "File picker", "places", row)?;
-        self.pick_row("/Volumes/Data", "Documents")?;
-        self.pick_row("/Volumes/Data/Documents", "letter.txt")?;
-        self.line("gallery: read 76 bytes from /Volumes/Data/Documents/letter.txt")?;
+        let mut found = None;
+        for (row, name) in places.iter().enumerate().filter(|(_, p)| p.starts_with("Data")) {
+            self.click_row("picker", "File picker", "places", row)?;
+            let start = format!("folder /Volumes/{name}: ");
+            let g = self
+                .program_view("picker", &format!("{name} listed"), |g| g.other(&start).is_some())?;
+            if g.names(&start).unwrap_or_default().iter().any(|n| n == "Documents") {
+                found = Some(name.clone());
+                break;
+            }
+        }
+        let name = found.ok_or(format!("no volume with 1.3's Documents among {places:?}"))?;
+        self.pick_row(&format!("/Volumes/{name}"), "Documents")?;
+        self.pick_row(&format!("/Volumes/{name}/Documents"), "letter.txt")?;
+        self.line(&format!("gallery: read 76 bytes from /Volumes/{name}/Documents/letter.txt"))?;
         Ok(())
     }
 
