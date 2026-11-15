@@ -1062,4 +1062,14 @@ Found on the way:
 - At 600 x 400 the picker doesn't fit on the test machine's 2x screen (1024 x 768, so 512 x 384
   logical): it is kept on the screen's top left and runs off its other edges. A system window
   bigger than its screen should be made to fit (stage 9, with the apps' own windows).
+- Stress 43678518564 (on `1a648d2`): 29 of 30 runs passed. The one failure was the runner's:
+  opening 1.3's `Documents` and then its `letter.txt` clicked the same row twice within the
+  double-click time, so the file opened at once and the runner waited for it to be selected.
+  The runner accepts that now (`75ace14`).
+
+Results: `cargo xtask ci` passed on all four configurations, every boot (on `1a648d2`; the
+runner's double-click fix since passed the desktop boots on x86-64 UEFI). Stress 43678518564: 29
+of 30, as above; Stress 43690338962 on `75ace14` was started to confirm the fix.
+
+Chris's question still open: the heading font (pictures of the picker and the viewer sent).
 
