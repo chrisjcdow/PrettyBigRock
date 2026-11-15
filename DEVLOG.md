@@ -1067,9 +1067,18 @@ Found on the way:
   double-click time, so the file opened at once and the runner waited for it to be selected.
   The runner accepts that now (`75ace14`).
 
+- Stress 43690338962 (on `75ace14`): 2 of 6 jobs stopped early, both the runner's: a long
+  relative pointer move landed in the screen's corner instead of on Beta (ARM64 EL2, x86-64
+  BIOS), each right after the hostile app's picker was cancelled. The runner now puts a move
+  right from wherever it landed (`4e76fb4`). Why the pointer overshot is **left open**.
+- Stress 43692867809 (on `4e76fb4`): 26 of the 27 runs it made passed. The one failure was
+  QEMU itself (SIGSEGV, core dumped, just after "Hello from PrettyBigRock!" on x86-64 UEFI):
+  **the QEMU crash happens on GitHub too**, not only here. Sixteen early boots in a loop here
+  (`ulimit -c unlimited`) didn't crash, so there is no backtrace yet; keeping the Stress
+  workflow's core files as artifacts would give one.
+
 Results: `cargo xtask ci` passed on all four configurations, every boot (on `1a648d2`; the
-runner's double-click fix since passed the desktop boots on x86-64 UEFI). Stress 43678518564: 29
-of 30, as above; Stress 43690338962 on `75ace14` was started to confirm the fix.
+runner's two fixes since passed the desktop boots on x86-64 UEFI). Stress: as above.
 
 Chris's question still open: the heading font (pictures of the picker and the viewer sent).
 
