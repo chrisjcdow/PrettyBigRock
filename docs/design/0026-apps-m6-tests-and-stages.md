@@ -270,8 +270,11 @@ while stage 2 is reviewed.
     picture came from or was saved as, and otherwise asks the picker, offering `Drawing N.bmp` in
     Pictures; **Save as…** always asks. A file the picker chooses inside Pictures is opened
     through Paint's own grant (the tree can't hold an entry inside another). Started with a
-    path as its argument, it opens that file (for 9b's Open with…). At 600 x 400 its window
-    is bigger than the test machine's 2x screen; only system windows are made to fit.
+    path as its argument, it opens that file (for 9b's Open with…). **Resizable, with a menu
+    bar** (Chris: do what 1.3 did, better): the 600 x 400 window didn't fit a 2x screen of
+    1024 x 768, so the picture (still 600 x 362) is in a scrolling area, the window's least
+    size is 440 x 220, and Open, Save and Clear moved from the toolbar to **File** (New, Open…,
+    Save, Save as…; 1.3's Clear is New) and **Edit** (Copy, Paste), with their keys.
   - **About** shows each screen (`1280 x 800; 1024 x 768, 2x`), the memory's total and free,
     and the system volume's free space, which it asks for every ten seconds rather than every
     second (each answer asks every filesystem server).

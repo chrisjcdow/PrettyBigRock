@@ -95,8 +95,10 @@ Note 0025's and 0026's Changes list everything settled.
   sat idle in `wait_for_interrupt`; the root program, whose calls all time out in 30 s, never
   reported. That looks like a sleeping thread never woken (a lost timer?) rather than a loop.
   Not seen emulated or on CI. Log not kept in the repository; watch for it.
-- Paint's 600 x 400 window is bigger than the test 2x screen (512 x 384 logical); only system
-  windows are made to fit. Whether apps' windows should be too is open.
+- **Windows fit their screen** (after 9a, Chris's choice): resizable app windows open no bigger
+  than the work area (note 0022's Changes); Paint is resizable with a scrolling picture and
+  File and Edit menus (note 0026's Changes). A window dragged by hand to a smaller screen keeps
+  its size.
 - Left open: QEMU 8.2.2 SIGSEGV now seen on GitHub too (early kernel, x86-64 UEFI); no
   backtrace yet (16 early boots in a loop here didn't crash): keeping the Stress workflow's
   core files as artifacts would give one. Why a long relative pointer move overshot to the
