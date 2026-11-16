@@ -6,20 +6,26 @@
 //!
 //! It does everything 1.3's Paint did (`paint_*` in `classic/kernel/apps.c`): a white picture
 //! 600 x 362 pixels to draw on with a round brush, 13 colours and 4 brush sizes in a toolbar,
-//! **Open**, **Save** and **Clear**, saving and opening Windows bitmaps (`lib/bmp`). On top of
-//! that it has what note 0026 adds: the file picker for opening and saving anywhere the user
-//! chooses, Save as, copying and pasting the picture, a "•" in the title while there are
-//! unsaved changes, a file to open when it is started, and the last colour chosen remembered.
+//! **Open**, **Save** and **Clear** (now **New**, in a File menu), saving and opening Windows
+//! bitmaps (`lib/bmp`). On top of that it has what note 0026 adds: the file picker for opening
+//! and saving anywhere the user chooses, Save as, copying and pasting the picture, a "•" in the
+//! title while there are unsaved changes, a file to open when it is started, and the last colour
+//! chosen remembered.
 //!
 //! **Files and the file picker are reached only through the [`Disk`] trait**, so that this
 //! library has no files in it: the program (`main.rs`) implements it over `lib/files` and the
 //! picker, and the tests over a pretend disk. Everything that matters here, including what
 //! the dialogs say, is therefore tested on the host.
 //!
-//! A word on the window. 1.3's window was 600 x 400 with a 38-pixel toolbar; this one is the
-//! same in *logical pixels*, the units sandstone lays out in. On a screen with a scale of 2
-//! each logical pixel is 2 x 2 real ones, and each pixel of the picture is shown that way too:
-//! **the picture is always 600 x 362 pixels**, so a saved file is the same at any scale.
+//! A word on the window. 1.3's window was 600 x 400 with a 38-pixel toolbar and could not be
+//! resized, so it did not fit a small screen. This one opens at the size that shows the whole
+//! picture (a menu bar, the toolbar and the picture, in *logical pixels*, the units sandstone
+//! lays out in), and can be made smaller, down to [`MIN_SIZE`]; the picture is then in a
+//! scrolling area (sandstone's `Scroll`) with scroll bars. On a screen with a scale of 2 each
+//! logical pixel is 2 x 2 real ones, and each pixel of the picture is shown that way too:
+//! **the picture is always 600 x 362 pixels**, so a saved file is the same at any scale. The
+//! buttons Open, Save and Clear of 1.3's toolbar are now the File and Edit menus (which show
+//! the keyboard shortcuts); **New** is 1.3's Clear.
 //!
 //! A note on Rust for the newcomer. `#![no_std]` (below, except in tests) means this crate uses
 //! only Rust's `core` and `alloc` libraries, not the operating system's `std`, so that it can
@@ -38,8 +44,8 @@ use alloc::vec::Vec;
 use pbr_draw::{Canvas as DrawCanvas, Colour, Rect};
 use pbr_sandstone::event::Button as MouseButton;
 use pbr_sandstone::{
-    App, Button, Canvas, Column, Context, Dialog, Element, Identify, Length, Padding, Panel,
-    Pointer, PointerKind, Row, Settings, Shortcut, Space, Theme,
+    App, Canvas, Column, Context, Dialog, Element, Identify, Length, Menu, MenuBar, MenuItem,
+    Panel, Pointer, PointerKind, Row, Scroll, Settings, Shortcut, Space, Theme,
 };
 use pbr_window::{Cursor, Win};
 
@@ -51,8 +57,15 @@ use pbr_window::{Cursor, Win};
 pub const PICTURE_WIDTH: usize = 600;
 /// The picture's height (1.3's `PH - PTOOL`).
 pub const PICTURE_HEIGHT: usize = 362;
-/// The window's height: the toolbar, the line under it, and the picture.
-const WINDOW_HEIGHT: u32 = 400;
+/// The menu bar's height: sandstone's, the theme's control height.
+const MENU_BAR_HEIGHT: i32 = Theme::STANDARD.control_height;
+/// The window's height when it opens: the menu bar, the toolbar, the line under it, and the
+/// whole picture.
+const WINDOW_HEIGHT: u32 = (MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + 1) as u32 + PICTURE_HEIGHT as u32;
+/// The smallest the window can be made, in logical pixels: wide enough for the whole toolbar
+/// ([`TOOLS_WIDTH`], 432) and so that, with the title bar, it fits a 512 x 384 screen (a 1024 x
+/// 768 one at a scale of 2). Room is left for the picture's scroll bars.
+pub const MIN_SIZE: (u32, u32) = (440, 220);
 /// The toolbar, without the line under it (1.3's `PTOOL` is this and the line).
 const TOOLBAR_HEIGHT: i32 = 37;
 
@@ -77,13 +90,9 @@ const SWATCH_WIDTH: i32 = 20;
 const SIZES_X: i32 = SWATCH_X + PALETTE.len() as i32 * SWATCH_STEP + 8;
 const SIZES_STEP: i32 = 27;
 const SIZE_WIDTH: i32 = 26;
-/// How wide the toolbar's drawn part is: up to where 1.3's first button starts (436), less the
-/// gap between it and the button.
-const TOOLS_WIDTH: i32 = 436 - BUTTON_GAP;
-/// 1.3's buttons are 4 pixels apart (their left edges are 436, 486 and 536), 22 high, 8 down.
-const BUTTON_GAP: i32 = 4;
-const BUTTON_TOP: i32 = 8;
-const BUTTON_HEIGHT: i32 = 22;
+/// How wide the toolbar's drawn part is: up to where 1.3's first button started (436), less
+/// the gap that was between it and the button.
+const TOOLS_WIDTH: i32 = 436 - 4;
 
 /// The ring round the chosen colour (1.3's `0x2f6b55`), a swatch's edge, the highlight behind
 /// the chosen brush size, and the dots that show the sizes.
@@ -257,17 +266,17 @@ pub enum Message {
     Tool(Tool),
     /// The pointer drew on the picture.
     Stroke(Stroke),
-    /// Open (button, Ctrl+O): the file picker.
+    /// File > Open (Ctrl+O): the file picker.
     Open,
-    /// Save (button, Ctrl+S): to the file the picture came from, or the picker if none.
+    /// File > Save (Ctrl+S): to the file the picture came from, or the picker if none.
     Save,
-    /// Save as (Ctrl+Shift+S): the picker.
+    /// File > Save as (Ctrl+Shift+S): the picker.
     SaveAs,
-    /// Clear (button): a white picture, from no file.
-    Clear,
-    /// Ctrl+C: the picture to the clipboard.
+    /// File > New (Ctrl+N), 1.3's Clear: a white picture, from no file.
+    New,
+    /// Edit > Copy (Ctrl+C): the picture to the clipboard.
     Copy,
-    /// Ctrl+V: the clipboard's picture onto the picture's top left.
+    /// Edit > Paste (Ctrl+V): the clipboard's picture onto the picture's top left.
     Paste,
     /// The file picker has answered ([`Disk::answer`]).
     Picked,
@@ -315,7 +324,7 @@ pub struct Paint<D: Disk> {
     /// Where the last colour is kept.
     colour_path: String,
     /// Lines for the program's log, and whether the picture changed (a stroke ended, a file
-    /// opened, a paste, Clear) since the program last looked.
+    /// opened, a paste, New) since the program last looked.
     log: Vec<String>,
     picture_changed: bool,
 }
@@ -400,12 +409,12 @@ impl<D: Disk> Paint<D> {
 
     /// The lines for the log since the last call, without the program's prefix: what was
     /// chosen (`colour 3 size 1`), saved (`saved /Home/Pictures/Drawing 1.bmp (651654 bytes)`),
-    /// opened, and what went wrong (`couldn't ...`).
+    /// opened, `new`, and what went wrong (`couldn't ...`).
     pub fn take_log(&mut self) -> Vec<String> {
         core::mem::take(&mut self.log)
     }
 
-    /// Whether the picture changed (a stroke ended, a file was opened, a picture pasted, Clear)
+    /// Whether the picture changed (a stroke ended, a file was opened, a picture pasted, New)
     /// since the last call. The program then writes [`Paint::picture_line`], in test boots.
     pub fn take_picture_changed(&mut self) -> bool {
         core::mem::take(&mut self.picture_changed)
@@ -662,7 +671,29 @@ impl<D: Disk> Paint<D> {
 
     // ---- The parts of the view. ----
 
-    /// The toolbar: the colours and sizes, then Open, Save and Clear, on the bar's paper.
+    /// The menu bar: File and Edit. The rows' shortcuts work while the menus are shut, so
+    /// they are given here and nowhere else.
+    fn menu_bar(&self) -> Element<'_, Message> {
+        let file = Menu::new(
+            "File",
+            vec![
+                MenuItem::new("New", Message::New).shortcut(Shortcut::ctrl('n')),
+                MenuItem::new("Open…", Message::Open).shortcut(Shortcut::ctrl('o')),
+                MenuItem::new("Save", Message::Save).shortcut(Shortcut::ctrl('s')),
+                MenuItem::new("Save as…", Message::SaveAs).shortcut(Shortcut::ctrl_shift('s')),
+            ],
+        );
+        let edit = Menu::new(
+            "Edit",
+            vec![
+                MenuItem::new("Copy", Message::Copy).shortcut(Shortcut::ctrl('c')),
+                MenuItem::new("Paste", Message::Paste).shortcut(Shortcut::ctrl('v')),
+            ],
+        );
+        MenuBar::new(vec![file, edit]).into()
+    }
+
+    /// The toolbar: the colours and sizes, on the bar's paper.
     fn toolbar(&self) -> Element<'_, Message> {
         let (colour, size) = (self.colour, self.size);
         // `move` gives the drawing function its own copy of the two numbers, so that it
@@ -679,13 +710,7 @@ impl<D: Disk> Paint<D> {
                     .map(Message::Tool)
             })
             .id("tools");
-        let row = Row::new()
-            .spacing(BUTTON_GAP)
-            .push(tools)
-            .push(tool_button("Open", 46, Message::Open, "open"))
-            .push(tool_button("Save", 46, Message::Save, "save"))
-            .push(tool_button("Clear", 56, Message::Clear, "clear"));
-        Panel::new(row)
+        Panel::new(Row::new().push(tools))
             .width(Length::Fill)
             .height(Length::Fixed(TOOLBAR_HEIGHT))
             .background(Theme::STANDARD.bar)
@@ -731,24 +756,13 @@ impl<D: Disk> Paint<D> {
     }
 }
 
-/// One of the toolbar's buttons, 1.3's size and place.
-fn tool_button<'a>(label: &str, width: i32, message: Message, id: &str) -> Element<'a, Message> {
-    let button = Button::new(label)
-        .on_press(message)
-        .width(Length::Fixed(width))
-        .height(Length::Fixed(BUTTON_HEIGHT))
-        .id(id);
-    Panel::new(button)
-        .padding_each(Padding { top: BUTTON_TOP, right: 0, bottom: 0, left: 0 })
-        .into()
-}
-
-/// The window as 1.3 had it: 600 x 400 logical pixels, not resizable.
+/// The window: opens at the size that shows the whole picture (600 wide, 424 high in logical
+/// pixels), and can be resized down to [`MIN_SIZE`].
 pub fn settings() -> Settings {
     Settings {
         size: (PICTURE_WIDTH as u32, WINDOW_HEIGHT),
-        resizable: false,
-        min_size: (0, 0),
+        resizable: true,
+        min_size: MIN_SIZE,
         over: None,
         system: false,
     }
@@ -761,6 +775,7 @@ impl<D: Disk> App for Paint<D> {
         Column::new()
             .width(Length::Fill)
             .height(Length::Fill)
+            .push(self.menu_bar())
             .push(self.toolbar())
             // The line under the toolbar, one pixel.
             .push(
@@ -769,7 +784,9 @@ impl<D: Disk> App for Paint<D> {
                     .height(Length::Fixed(1))
                     .background(Theme::STANDARD.bar_edge),
             )
-            .push(self.picture())
+            // The picture keeps its own size: bigger than the room, it scrolls; smaller, it is
+            // at the top left of the window's paper.
+            .push(Scroll::new(self.picture()).both())
             .into()
     }
 
@@ -793,12 +810,13 @@ impl<D: Disk> App for Paint<D> {
             Message::Open => self.ask(Asked::Open, Pick::Open, cx),
             Message::Save => self.save(false, cx),
             Message::SaveAs => self.save(true, cx),
-            Message::Clear => {
+            Message::New => {
                 self.pixels.fill(WHITE);
                 self.path = None;
                 self.dirty = false;
                 self.version += 1;
                 self.picture_changed = true;
+                self.log.push(String::from("new"));
             }
             Message::Copy => {
                 cx.copy_picture(PICTURE_WIDTH as u32, PICTURE_HEIGHT as u32, &self.pixels);
@@ -818,16 +836,6 @@ impl<D: Disk> App for Paint<D> {
             }
             Message::Picked => self.picked(cx),
         }
-    }
-
-    fn shortcuts(&self) -> Vec<(Shortcut, Message)> {
-        vec![
-            (Shortcut::ctrl('s'), Message::Save),
-            (Shortcut::ctrl_shift('s'), Message::SaveAs),
-            (Shortcut::ctrl('o'), Message::Open),
-            (Shortcut::ctrl('c'), Message::Copy),
-            (Shortcut::ctrl('v'), Message::Paste),
-        ]
     }
 
     fn notified(&self, bits: u64) -> Option<Message> {

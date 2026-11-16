@@ -13,8 +13,8 @@
 //! what Files' "Open with…" does), it opens that file first. With `describe` among its
 //! arguments (test boots) it also writes what its window shows to the log, as the gallery does,
 //! and the lines the desktop boot's runner checks: `paint: colour N size N` when they change,
-//! `paint: picture WxH crc XXXXXXXX` after each stroke, open, paste and Clear,
-//! `paint: saved PATH (N bytes)` and `paint: opened PATH`, and `paint: couldn't ...` for what
+//! `paint: picture WxH crc XXXXXXXX` after each stroke, open, paste and New,
+//! `paint: new` when New is chosen, `paint: saved PATH (N bytes)` and `paint: opened PATH`, and `paint: couldn't ...` for what
 //! went wrong; and at the start, the file tree as `[tree] paint ...` lines.
 
 #![cfg_attr(target_os = "prettybigrock", no_std, no_main)]

@@ -3,7 +3,7 @@
 
 //! Paint on the host: strokes against a model, the toolbar, saving and opening through a pretend
 //! disk and file picker (with a picture 1.3's own Paint saved), the dialogs' words, the
-//! clipboard, the colour remembered, and the look (`tests/pictures/paint/`).
+//! clipboard, the menus, the window's size and scrolling, the colour remembered, and the look (`tests/pictures/paint/`).
 
 use super::*;
 use pbr_sandstone::testing::Harness;
@@ -17,8 +17,13 @@ const ROCK: &[u8] = include_bytes!("../../../tests/data/classic-1.3-rock.bmp");
 
 /// `pbr.input`'s number for the left button.
 const LEFT: u16 = 1;
-/// The picture's top left in the window: below the toolbar (37) and its line (1).
-const TOP: i32 = 38;
+/// The menu bar's height, and the picture's top left in a window that is big enough not to
+/// scroll it: below the menu bar, the toolbar (37) and its line (1).
+const MENU: i32 = 24;
+const TOP: i32 = MENU + 38;
+/// The middle of the File title and of the Edit title in the menu bar.
+const FILE: (i32, i32) = (24, 12);
+const EDIT: (i32, i32) = (64, 12);
 const DATA: &str = "/Home/Apps/paint";
 const COLOUR_FILE: &str = "/Home/Apps/paint/colour.txt";
 
@@ -91,20 +96,53 @@ fn answer(h: &mut Test, a: PickAnswer) {
     h.send(Event::Notified(1 << PICKED));
 }
 
-/// Clicks a tool on the toolbar (the toolbar starts at the window's top left corner).
+/// Clicks a tool on the toolbar (the toolbar starts at the window's left edge, under the menu
+/// bar).
 fn choose(h: &mut Test, tool: Tool) {
     let (x, y) = tool_centre(tool);
-    h.click(x, y);
+    h.click(x, MENU + y);
+}
+
+/// Opens a menu with the pointer and clicks one of its rows.
+fn menu(h: &mut Test, title: (i32, i32), row: &str) {
+    h.click(title.0, title.1);
+    assert!(h.popup().is_some(), "the menu opened");
+    h.click_on(row);
 }
 
 /// Draws with the left button: down at the first point, moving through the rest, up at the last.
+/// The points are in picture pixels, and the picture is at the top left of the window (not
+/// scrolled).
 fn stroke(h: &mut Test, points: &[(i32, i32)]) {
-    h.move_to(points[0].0, TOP + points[0].1);
+    stroke_from(h, (0, TOP), points);
+}
+
+/// The same, with the picture's top left corner at `origin` in the window.
+fn stroke_from(h: &mut Test, origin: (i32, i32), points: &[(i32, i32)]) {
+    h.move_to(origin.0 + points[0].0, origin.1 + points[0].1);
     h.press(LEFT);
     for p in &points[1..] {
-        h.move_to(p.0, TOP + p.1);
+        h.move_to(origin.0 + p.0, origin.1 + p.1);
     }
     h.release(LEFT);
+}
+
+/// Where the picture's top left corner is in the window now: off to the left and above while it
+/// is scrolled.
+fn picture_origin(h: &Test) -> (i32, i32) {
+    let r = h.find("picture").unwrap().1.rect;
+    (r.x, r.y)
+}
+
+/// The scroll area's rectangle and how far it is scrolled, from its description.
+fn scroll_area(h: &Test) -> (pbr_sandstone::Rect, (i32, i32)) {
+    let d = h
+        .describe(WindowId::MAIN)
+        .into_iter()
+        .find(|d| d.what.role == "scroll")
+        .expect("a scroll area");
+    let (x, y) = d.what.value.split_once(',').unwrap();
+    (d.rect, (x.parse().unwrap(), y.parse().unwrap()))
 }
 
 /// What the picture should be after a stroke through `points` (in picture pixels) in `colour`
@@ -256,10 +294,11 @@ fn the_picture_is_600_by_362_pixels_at_any_scale() {
         let h = harness_scaled(Fake::default(), factor);
         assert_eq!(h.app().pixels().len(), 600 * 362);
         let picture = h.find("picture").unwrap().1.rect;
-        assert_eq!((picture.x, picture.y, picture.width, picture.height), (0, 38, 600, 362));
-        // The window's own size is 600 x 400, whatever the scale.
+        assert_eq!((picture.x, picture.y, picture.width, picture.height), (0, 62, 600, 362));
+        // The window opens at 600 x 424 (the menu bar, the toolbar and the whole picture),
+        // whatever the scale.
         assert_eq!(h.picture(WindowId::MAIN).width, 600 * factor);
-        assert_eq!(h.picture(WindowId::MAIN).height, 400 * factor);
+        assert_eq!(h.picture(WindowId::MAIN).height, 424 * factor);
     }
 }
 
@@ -338,21 +377,30 @@ fn a_stroke_logs_its_picture_when_it_ends() {
 }
 
 #[test]
-fn clear_makes_a_white_picture_from_no_file() {
+fn new_makes_a_white_picture_from_no_file() {
     let mut fake = Fake::default();
     fake.files.insert("/Home/Pictures/rock.bmp".into(), ROCK.to_vec());
     let mut h = harness_scaled(fake, 1);
-    h.click_on("Open");
+    menu(&mut h, FILE, "Open…");
     answer(&mut h, PickAnswer::Chosen("/Home/Pictures/rock.bmp".into()));
     assert_eq!(h.app().path(), Some("/Home/Pictures/rock.bmp"));
     stroke(&mut h, &[(10, 10), (20, 20)]);
     assert!(h.app().is_dirty());
     h.app_mut().take_picture_changed();
-    h.click_on("Clear");
+    h.app_mut().take_log();
+    menu(&mut h, FILE, "New");
     assert!(h.app().pixels() == white());
     assert_eq!(h.app().path(), None);
     assert!(!h.app().is_dirty());
     assert!(h.app_mut().take_picture_changed());
+    assert_eq!(h.app_mut().take_log(), ["new"]);
+    // Ctrl+N does the same.
+    stroke(&mut h, &[(10, 10), (20, 20)]);
+    assert!(h.app().is_dirty());
+    h.shortcut(Shortcut::ctrl('n'));
+    assert!(h.app().pixels() == white());
+    assert!(!h.app().is_dirty());
+    assert_eq!(h.app_mut().take_log(), ["new"]);
 }
 
 // ---- The title. ----
@@ -363,7 +411,7 @@ fn the_title_says_untitled_or_the_file_and_the_bullet_for_unsaved_changes() {
     assert_eq!(h.app().title(), "Untitled");
     stroke(&mut h, &[(10, 10), (30, 30)]);
     assert_eq!(h.app().title(), "• Untitled");
-    h.click_on("Save");
+    menu(&mut h, FILE, "Save");
     answer(&mut h, PickAnswer::Chosen("/Home/Pictures/Drawing 1.bmp".into()));
     assert_eq!(h.app().title(), "Drawing 1.bmp");
     stroke(&mut h, &[(10, 10), (30, 30)]);
@@ -381,7 +429,7 @@ fn bytes_of(h: &Test) -> Vec<u8> {
 fn save_asks_for_drawing_n_and_writes_lib_bmps_bytes() {
     let mut h = harness();
     stroke(&mut h, &[(10, 10), (60, 40)]);
-    h.click_on("Save");
+    menu(&mut h, FILE, "Save");
     // The picker is asked with the first free name, from the window and the press that asked.
     let asked = &h.app().disk().asked;
     assert_eq!(asked.len(), 1);
@@ -406,12 +454,12 @@ fn save_asks_for_drawing_n_and_writes_lib_bmps_bytes() {
 fn save_again_writes_without_asking_and_save_as_always_asks() {
     let path = "/Home/Pictures/Drawing 1.bmp";
     let mut h = harness();
-    h.click_on("Save");
+    menu(&mut h, FILE, "Save");
     answer(&mut h, PickAnswer::Chosen(path.into()));
     assert_eq!(h.app().disk().asked.len(), 1);
     stroke(&mut h, &[(10, 10), (60, 40)]);
-    // The button and Ctrl+S both write again.
-    h.click_on("Save");
+    // The menu row and Ctrl+S both write again.
+    menu(&mut h, FILE, "Save");
     h.shortcut(Shortcut::ctrl('s'));
     assert_eq!(h.app().disk().asked.len(), 1, "the picker wasn't asked again");
     assert_eq!(h.app().disk().writes.iter().filter(|p| *p == path).count(), 3);
@@ -444,16 +492,16 @@ fn the_suggested_name_skips_the_drawings_that_exist() {
 fn cancelling_the_picker_does_nothing_and_it_can_be_asked_again() {
     let mut h = harness();
     stroke(&mut h, &[(10, 10), (60, 40)]);
-    h.click_on("Save");
+    menu(&mut h, FILE, "Save");
     // One picker at a time: pressing again while it is open doesn't ask a second.
-    h.click_on("Save");
-    h.click_on("Open");
+    menu(&mut h, FILE, "Save");
+    menu(&mut h, FILE, "Open…");
     assert_eq!(h.app().disk().asked.len(), 1);
     answer(&mut h, PickAnswer::Cancelled);
     assert!(h.app().disk().writes.is_empty());
     assert!(h.dialog().is_none());
     assert!(h.app().is_dirty());
-    h.click_on("Open");
+    menu(&mut h, FILE, "Open…");
     assert_eq!(h.app().disk().asked.len(), 2);
     assert_eq!(h.app().disk().asked[1].2, Pick::Open);
 }
@@ -461,7 +509,7 @@ fn cancelling_the_picker_does_nothing_and_it_can_be_asked_again() {
 #[test]
 fn a_disk_that_cant_be_written_says_so() {
     let mut h = harness();
-    h.click_on("Save");
+    menu(&mut h, FILE, "Save");
     h.app_mut().disk_mut().full = true;
     answer(&mut h, PickAnswer::Chosen("/Home/Pictures/Drawing 1.bmp".into()));
     assert_eq!(dialog_text(&h).as_deref(), Some("Couldn't save the picture. the disk is full."));
@@ -475,20 +523,20 @@ fn a_disk_that_cant_be_written_says_so() {
 #[test]
 fn no_picker_or_one_that_fails_says_so() {
     let mut h = harness_scaled(Fake { no_picker: true, ..Fake::default() }, 1);
-    h.click_on("Open");
+    menu(&mut h, FILE, "Open…");
     assert_eq!(
         dialog_text(&h).as_deref(),
         Some("Couldn't open the file picker. Paint has no file picker.")
     );
     let mut h = harness_scaled(Fake { no_picker: true, ..Fake::default() }, 1);
-    h.click_on("Save");
+    menu(&mut h, FILE, "Save");
     assert_eq!(
         dialog_text(&h).as_deref(),
         Some("Couldn't save the picture. Paint has no file picker.")
     );
     // A picker that was asked and then failed.
     let mut h = harness();
-    h.click_on("Save");
+    menu(&mut h, FILE, "Save");
     answer(&mut h, PickAnswer::Failed("BadPath".into()));
     assert_eq!(dialog_text(&h).as_deref(), Some("Couldn't save the picture. BadPath."));
     // An answer nobody asked for is ignored.
@@ -517,7 +565,7 @@ fn opening_a_picture_1_3_saved_shows_it() {
     assert!(h.app_mut().take_picture_changed());
     assert_eq!(h.app_mut().take_log().last().unwrap(), "opened /Home/Pictures/rock.bmp");
     // Saving it again gives the bytes 1.3 wrote.
-    h.click_on("Save");
+    menu(&mut h, FILE, "Save");
     assert_eq!(h.app().disk().files["/Home/Pictures/rock.bmp"], ROCK);
 }
 
@@ -531,7 +579,7 @@ fn a_smaller_picture_sits_at_the_top_left_on_white_and_a_bigger_one_is_cut() {
     let big = pbr_bmp::Picture::new(w, h_, big).unwrap();
     fake.files.insert("/Home/Pictures/big.bmp".into(), pbr_bmp::encode(&big));
     let mut h = harness_scaled(fake, 1);
-    h.click_on("Open");
+    menu(&mut h, FILE, "Open…");
     answer(&mut h, PickAnswer::Chosen("/Home/Pictures/small.bmp".into()));
     let px = h.app().pixels();
     assert_eq!(&px[..3], [0xff0000, 0x00ff00, 0x0000ff]);
@@ -540,7 +588,7 @@ fn a_smaller_picture_sits_at_the_top_left_on_white_and_a_bigger_one_is_cut() {
     assert!(px[2 * PICTURE_WIDTH..].iter().all(|&p| p == WHITE));
     assert!(px[5..PICTURE_WIDTH].iter().all(|&p| p == WHITE));
     // A bigger one is cut to 600 x 362, from the top left.
-    h.click_on("Open");
+    menu(&mut h, FILE, "Open…");
     answer(&mut h, PickAnswer::Chosen("/Home/Pictures/big.bmp".into()));
     for (x, y) in [(0usize, 0usize), (599, 0), (0, 361), (599, 361), (300, 200)] {
         assert_eq!(h.app().pixels()[y * 600 + x], big.pixels()[y * 700 + x], "({x}, {y})");
@@ -561,7 +609,7 @@ fn a_file_paint_cant_open_gets_1_3s_words() {
     stroke(&mut h, &[(10, 10), (30, 30)]);
     let drawn = h.app().pixels().to_vec();
     for path in ["/Home/Pictures/bad.bmp", "/Volumes/USB/bad.bmp"] {
-        h.click_on("Open");
+        menu(&mut h, FILE, "Open…");
         answer(&mut h, PickAnswer::Chosen(path.into()));
         assert_eq!(dialog_text(&h).as_deref(), Some(sentence), "{path}");
         // OK closes it; the picture and what it came from are as they were.
@@ -571,12 +619,12 @@ fn a_file_paint_cant_open_gets_1_3s_words() {
         assert_eq!(h.app().path(), None);
     }
     // Bigger than 8 MiB is refused without reading, in the same words, naming that file.
-    h.click_on("Open");
+    menu(&mut h, FILE, "Open…");
     answer(&mut h, PickAnswer::Chosen("/Home/Pictures/huge.bmp".into()));
     assert_eq!(dialog_text(&h).as_deref(), Some(&*sentence.replace("bad.bmp", "huge.bmp")));
     h.click_on("OK");
     // A file that can't be read at all.
-    h.click_on("Open");
+    menu(&mut h, FILE, "Open…");
     answer(&mut h, PickAnswer::Chosen("/Home/Pictures/gone.bmp".into()));
     assert_eq!(dialog_text(&h).as_deref(), Some("Couldn't open gone.bmp. not found."));
     let log = h.app_mut().take_log();
@@ -615,7 +663,7 @@ fn copy_and_paste() {
     assert_eq!((w, hh), (600, 362));
     assert_eq!(pixels, drawn);
     // Clear, then paste: the picture is back, and it needs saving.
-    h.click_on("Clear");
+    menu(&mut h, FILE, "New");
     assert!(!h.app().is_dirty());
     h.app_mut().take_picture_changed();
     h.shortcut(Shortcut::ctrl('v'));
@@ -647,12 +695,154 @@ fn a_pasted_picture_goes_on_the_top_left_cut_to_fit() {
 // ---- The look. ----
 
 #[test]
-fn the_buttons_are_where_1_3_had_them() {
+fn the_menu_bar_and_toolbar_are_where_they_should_be() {
     let h = harness();
-    for (label, x, w) in [("Open", 436, 46), ("Save", 486, 46), ("Clear", 536, 56)] {
-        let r = h.find(label).unwrap().1.rect;
-        assert_eq!((r.x, r.y, r.width, r.height), (x, 8, w, 22), "{label}");
+    let lines = h.describe_lines(WindowId::MAIN);
+    assert!(
+        lines.iter().any(|l| l.starts_with("menu bar \"File|Edit\" at 0,0 size 600x24")),
+        "{lines:?}"
+    );
+    // The toolbar is 1.3's, under the menu bar; it has no buttons any more.
+    let tools = h.find("tools").unwrap().1.rect;
+    assert_eq!((tools.x, tools.y, tools.width, tools.height), (0, 24, 432, 37));
+    for label in ["Open", "Save", "Clear"] {
+        assert!(h.find(label).is_none(), "{label}");
     }
+}
+
+#[test]
+fn the_menus_show_their_shortcuts_and_each_row_works() {
+    let mut h = harness();
+    h.click(FILE.0, FILE.1);
+    let rows: Vec<(String, String)> =
+        h.describe(h.popup().unwrap()).into_iter().map(|d| (d.what.label, d.what.value)).collect();
+    let want =
+        [("New", "Ctrl+N"), ("Open…", "Ctrl+O"), ("Save", "Ctrl+S"), ("Save as…", "Ctrl+Shift+S")];
+    assert_eq!(rows, want.map(|(a, b)| (a.to_string(), b.to_string())));
+    h.key(Key::Escape);
+    h.click(EDIT.0, EDIT.1);
+    let rows: Vec<(String, String)> =
+        h.describe(h.popup().unwrap()).into_iter().map(|d| (d.what.label, d.what.value)).collect();
+    assert_eq!(
+        rows,
+        [("Copy".to_string(), "Ctrl+C".to_string()), ("Paste".to_string(), "Ctrl+V".to_string())]
+    );
+    h.key(Key::Escape);
+    // (A press on a title just after its menu closed is taken as the press that closed it.)
+    h.advance(200);
+    // Edit > Copy and Paste with the pointer.
+    stroke(&mut h, &[(100, 100), (200, 100)]);
+    let drawn = h.app().pixels().to_vec();
+    menu(&mut h, EDIT, "Copy");
+    assert_eq!(h.clipboard_picture().unwrap().2, drawn);
+    menu(&mut h, FILE, "New");
+    menu(&mut h, EDIT, "Paste");
+    assert!(h.app().pixels() == drawn);
+}
+
+#[test]
+fn save_as_through_the_menu_asks_even_when_there_is_a_file() {
+    let path = "/Home/Pictures/Drawing 1.bmp";
+    let mut h = harness();
+    menu(&mut h, FILE, "Save");
+    answer(&mut h, PickAnswer::Chosen(path.into()));
+    assert_eq!(h.app().disk().asked.len(), 1);
+    stroke(&mut h, &[(10, 10), (60, 40)]);
+    menu(&mut h, FILE, "Save as…");
+    let asked = &h.app().disk().asked;
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[1].2, Pick::Save { name: "Drawing 1.bmp".into() });
+    assert!(asked[1].0.is_some() && asked[1].1 != 0);
+    answer(&mut h, PickAnswer::Chosen("/Home/Pictures/copy.bmp".into()));
+    assert_eq!(h.app().path(), Some("/Home/Pictures/copy.bmp"));
+    assert_eq!(h.app().disk().files["/Home/Pictures/copy.bmp"], bytes_of(&h));
+}
+
+// ---- The window's size, and scrolling. ----
+
+/// Scrolls the picture to its bottom right corner: a click in the horizontal bar's track beyond
+/// the thumb pages right, and the wheel goes down.
+fn scroll_to_the_end(h: &mut Test) {
+    for _ in 0..4 {
+        let (area, _) = scroll_area(h);
+        h.click(area.x + area.width - 20, area.y + area.height - 6);
+    }
+    let (area, _) = scroll_area(h);
+    h.scroll(area.x + 100, area.y + 100, 50);
+}
+
+#[test]
+fn the_smallest_window_fits_a_small_screen_and_scrolls_the_picture() {
+    // A 1024 x 768 screen at a scale of 2 is 512 x 384 logical pixels; the title bar is about
+    // 24 of them.
+    assert!(MIN_SIZE.0 <= 512 && MIN_SIZE.1 + 24 <= 384);
+    assert!(MIN_SIZE.0 as i32 >= TOOLS_WIDTH, "the whole toolbar shows");
+    assert!(settings().resizable);
+    assert_eq!(settings().min_size, MIN_SIZE);
+    for factor in [1, 2] {
+        let mut h = harness_scaled(Fake::default(), factor);
+        // Whole picture: no bars.
+        let (area, off) = scroll_area(&h);
+        assert_eq!((off, area.width, area.height), ((0, 0), 600, 362));
+        h.resize(MIN_SIZE.0, MIN_SIZE.1);
+        let (area, off) = scroll_area(&h);
+        assert_eq!(off, (0, 0));
+        assert_eq!((area.x, area.y, area.width, area.height), (0, 62, 440, 220 - 62));
+        // The toolbar still works at the smallest size: the last size is in reach.
+        choose(&mut h, Tool::Size(3));
+        assert_eq!(h.app().size(), 3);
+        choose(&mut h, Tool::Size(1));
+        // Scrolled right and down to the end: the picture's corner is at the viewport's.
+        scroll_to_the_end(&mut h);
+        let (area, off) = scroll_area(&h);
+        assert_eq!(off, (600 + 12 - 440, 362 + 12 - 158), "scrolled to the end");
+        let origin = picture_origin(&h);
+        assert_eq!(origin, (-off.0, 62 - off.1));
+        // A stroke near the picture's bottom right colours those picture pixels.
+        let points = [(520, 300), (580, 300), (580, 340)];
+        stroke_from(&mut h, origin, &points);
+        let want = model(&white(), &points, PALETTE[0], BRUSHES[1]);
+        assert!(h.app().pixels() == want, "scale {factor}");
+        assert!(h.app().pixels()[340 * 600 + 580] != WHITE);
+        assert!(area.contains(origin.0 + 580, origin.1 + 340));
+    }
+}
+
+#[test]
+fn a_drag_in_a_scrolled_picture_clips_to_the_picture() {
+    let mut h = harness();
+    h.resize(MIN_SIZE.0, MIN_SIZE.1);
+    scroll_to_the_end(&mut h);
+    let origin = picture_origin(&h);
+    choose(&mut h, Tool::Size(3));
+    // Down in the picture, then out past the right and bottom of the window and back.
+    h.move_to(origin.0 + 590, origin.1 + 350);
+    h.press(LEFT);
+    h.move_to(origin.0 + 690, origin.1 + 450);
+    h.move_to(origin.0 + 590, origin.1 + 350);
+    h.release(LEFT);
+    let want = model(&white(), &[(590, 350), (690, 450), (590, 350)], PALETTE[0], 18);
+    assert!(h.app().pixels() == want);
+    assert_eq!(h.app().pixels().len(), 600 * 362);
+}
+
+#[test]
+fn a_window_bigger_than_the_picture_has_it_at_the_top_left_with_no_bars() {
+    let mut h = harness();
+    h.resize(900, 700);
+    let (area, off) = scroll_area(&h);
+    assert_eq!((off, area.width, area.height), ((0, 0), 900, 700 - 62));
+    assert_eq!(picture_origin(&h), (0, 62));
+    let r = h.find("picture").unwrap().1.rect;
+    assert_eq!((r.width, r.height), (600, 362));
+    // Strokes land where they are pointed at.
+    let points = [(100, 100), (300, 100), (300, 200)];
+    stroke_from(&mut h, (0, 62), &points);
+    assert!(h.app().pixels() == model(&white(), &points, PALETTE[0], BRUSHES[1]));
+    // On the paper beside the picture, a press does nothing.
+    let drawn = h.app().pixels().to_vec();
+    stroke_from(&mut h, (0, 62), &[(700, 100), (750, 150)]);
+    assert!(h.app().pixels() == drawn);
 }
 
 #[test]
@@ -681,4 +871,16 @@ fn how_it_looks() {
     choose(&mut h, Tool::Size(2));
     stroke(&mut h, &[(80, 250), (300, 300), (520, 250)]);
     h.check_window_picture_in(WindowId::MAIN, &dir(), "paint-drawn-1x");
+    // The smallest window, scrolled part way: down a little and right a page, with a stroke on
+    // the part that shows.
+    let mut h = harness();
+    h.resize(MIN_SIZE.0, MIN_SIZE.1);
+    choose(&mut h, Tool::Colour(9));
+    choose(&mut h, Tool::Size(2));
+    let (area, _) = scroll_area(&h);
+    h.click(area.x + area.width - 20, area.y + area.height - 6);
+    h.scroll(area.x + 100, area.y + 100, 3);
+    let origin = picture_origin(&h);
+    stroke_from(&mut h, origin, &[(350, 150), (450, 200), (520, 130)]);
+    h.check_window_picture_in(WindowId::MAIN, &dir(), "paint-small-1x");
 }
