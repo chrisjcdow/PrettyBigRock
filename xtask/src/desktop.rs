@@ -2044,8 +2044,8 @@ impl Run<'_> {
         Ok(g)
     }
 
-    /// Paint: chooses a colour and a size, draws, saves through the picker, clears, opens what
-    /// it saved (the same picture), and opens the picture 1.3's Paint saved on 1.3's disk.
+    /// Paint: chooses a colour and a size, draws, saves through the picker, starts a new
+    /// picture, opens what it saved (the same picture), and opens the picture 1.3's Paint saved on 1.3's disk.
     fn paint(&mut self, first: &ScreenLine) -> Result<(), String> {
         let w = self.launch_app("Paint", "paint")?;
         self.check_tree("paint", &[("/Home/Apps/paint", true), ("/Home/Pictures", true)])?;
@@ -2093,12 +2093,13 @@ impl Run<'_> {
             return Err(format!("Paint saved {path} as {size}, not 651654 bytes"));
         }
         let name = path.rsplit_once('/').map(|(_, n)| n.to_string()).unwrap_or_default();
-        // Clear, then open what was saved: the same picture.
+        // New (1.3's Clear, now File > New), then open what was saved: the same picture.
         let (before, _) = self.paint_picture();
-        self.click_program_widget("paint", "Paint", "Clear")?;
+        self.chord(&["ctrl", "n"])?;
+        self.line("paint: new")?;
         let white = self.paint_changed(before, "the picture cleared")?;
         if white == drawn {
-            return Err("Clear left the picture as it was".into());
+            return Err("New left the picture as it was".into());
         }
         let (before, _) = self.paint_picture();
         self.paint_picker(&["ctrl", "o"], "opening a picture")?;
