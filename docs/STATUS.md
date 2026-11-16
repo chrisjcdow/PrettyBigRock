@@ -4,12 +4,39 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 16 November 2026. **M6 stage 8 built** (session 20: the file picker, the permissions
-viewer, `lib/browse`, `check`, records per grant, `pbr.sysinfo`); `cargo xtask ci` passed on all
-four configurations, every boot, on `1a648d2`. Since then: **the PS/2 driver fix** (`e81a6f0`,
-below). `m6` at the commit that added this file; Harriet's checkout is on `m6`.
+Updated 16 November 2026 (session 21). **M6 stage 9a built**: Calculator, Snake, Paint and
+About, with `lib/calc`, `lib/snake` and `lib/bmp`, and stage 8's two leftovers fixed. Pushed
+to `m6`; GitHub's CI to report. Stage 9b (Notepad, Files, Terminal) is next.
 
-## M6 (the desktop, 2.0 alpha): stages 0 to 8 built
+## M6 (the desktop, 2.0 alpha): stages 0 to 8 and 9a built
+
+### Stage 9a, session 21
+Note 0026's Changes list what building settled.
+- Apps (each by a Sonnet subagent, reviewed): `apps/calculator` + `lib/calc` (1.3's
+  expressions; `eval`, `format`, `Keypad`), `apps/snake` + `lib/snake` (seeded game),
+  `apps/paint` + `lib/bmp` (MPL-2.0; 1.3's 24-bit files byte for byte, reads 24/32-bit),
+  `apps/about` (`pbr.sysinfo`). Budgets: 4 MiB each, Paint 12.
+- Sandstone: `Button::colour`, `Canvas::label`, `App::focus_changed` (note 0023, Changes).
+- `lib/files`: `Files::report(app)` writes `[tree]` lines; the root program's desktop test
+  follows each app (`follow_app`, `APPS`) and logs `Desktop test: app N (APP) grants: …`; the
+  runner's `check_tree` compares tree, grants and manifest. Sandbox manager: `DESCRIBED`.
+- Fixes: system windows bigger than their screen fit it (compositor `fit_in`); the desktop
+  draws wallpapers only when idle (`undrawn`), the start menu's `BadSerial`.
+- Desktop boot (first boot, after the gallery): `Run::apps` → calculator, snake, paint, about.
+  Screenshots `build/qemu/desktop-<tag>.<app>-1x/2x.png`.
+- Tests run here: host tests of every changed crate; desktop boots: x86-64 UEFI emulated, all
+  three boots passed; x86-64 UEFI and BIOS under KVM, the first boot (every app step) passed
+  and the second failed at Shut down (KVM only, below). ARM64 and the self-test boots left to
+  GitHub's CI.
+
+### Stage 9b: what is left
+- Notepad, Files, Terminal (note 0026, section 1), by Sonnet; Terminal's `calc` uses
+  `lib/calc` (`format(eval(text)?)`); Files' Open with… launches Paint with the path as its
+  argument (Paint already opens it).
+- The Screens dialog; Notepad/Terminal parts of note 0025's desktop tests; the clipboard in
+  the apps; the rest of section 7's desktop-boot table. Stress at the end of stage 9.
+- Watch the session budget (64 MiB) as Notepad, Files and Terminal are added.
+
 
 ### After stage 8 (16 November)
 - Chris ran `m6` on Harriet with `run-prettybigrock.bat` (UEFI and BIOS): the desktop, the
@@ -57,13 +84,12 @@ Note 0025's and 0026's Changes list everything settled.
   Chris with the host 2x pictures).
 
 ### Next
-- Chris's answer on the heading font (`theme::HEADING`).
-- Stage 9: the apps (Terminal, Notepad, Files, Calculator, Paint, Snake, About) by Sonnet,
-  probably split into 9a (Calculator, Snake, About, Paint) and 9b (Notepad, Files, Terminal);
-  the Screens dialog; the desktop's start-menu serial fix (`Window(BadSerial)` after a screens
-  change); system windows bigger than their screen should be made to fit (the 600 x 400 picker
-  on the test 2x screen); Notepad/Terminal parts of note 0025's desktop tests; Open with… in
-  Files; the clipboard in the apps.
+- Chris's answer on the heading font (`theme::HEADING`; left as it is in 9a).
+- **Under KVM only** (session 21): the second desktop boot's Shut down turns the machine off
+  before the runner has finished its click, and the runner fails with `Broken pipe` writing to
+  QEMU. Reported to Chris, not worked round; emulated, the same boot passes.
+- Paint's 600 x 400 window is bigger than the test 2x screen (512 x 384 logical); only system
+  windows are made to fit. Whether apps' windows should be too is open.
 - Left open: QEMU 8.2.2 SIGSEGV now seen on GitHub too (early kernel, x86-64 UEFI); no
   backtrace yet (16 early boots in a loop here didn't crash): keeping the Stress workflow's
   core files as artifacts would give one. Why a long relative pointer move overshot to the
@@ -83,7 +109,7 @@ Note 0025's and 0026's Changes list everything settled.
 
 ## Published (GitHub)
 - Repo: https://github.com/chrisjcdow/PrettyBigRock. main and `m5` at `9345496`; `m6` ahead
-  (stage 8 and the PS/2 fix).
+  (stages 8 and 9a, the PS/2 fix).
 - Releases: `fynbos-1.0`, `v1.1`, `v1.2`, `v1.3`. M6 ends with `2.0.0-alpha.1`.
 
 ## Open questions
@@ -131,7 +157,7 @@ Note 0025's and 0026's Changes list everything settled.
   once the whole run is done); grep `-a "FAILED\|SIGSEGV\|Run [0-9] failed"`.
 - The runner's failure message is in its log after a line `FAILED` (`grep -a -A1 "^FAILED"`).
 - **Subagents**: Sonnet via the Agent tool, `model: sonnet`, in the background, each in **its own
-  git worktree** (`git worktree add ../wt-NAME HEAD`) with its own `CARGO_TARGET_DIR`. Briefs
+  git worktree** (`git worktree add ~/pbr-wt/NAME HEAD`) with its own `CARGO_TARGET_DIR`. Briefs
   in a scratch folder (common.md + one per job). Copy back, review, test, commit.
 - **Scripted edits to Rust**: assert the old text is found; rustfmt may have reflowed it.
 - Boot logs: `build/qemu/desktop-<tag>.txt`, `desktop-again-<tag>.txt`, `desktop-text-<tag>.txt`;
