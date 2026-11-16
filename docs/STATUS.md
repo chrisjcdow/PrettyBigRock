@@ -140,6 +140,7 @@ Note 0025's and 0026's Changes list everything settled.
   `gh workflow run stress.yml --repo chrisjcdow/PrettyBigRock --ref m6 -f runs=5`.
 - Harriet (from the cloud workspace): the Software Development folder connected; ask for
   deletion before the first fetch (git leaves lock and `tmp_obj_*` files otherwise). Harriet now
-  has `m6` checked out, so update it with `git pull --ff-only origin m6`, not `git fetch origin
-  m6:m6`. From Linux, git there lists every file as changed: only Windows line endings.
+  has `m6` checked out, so update it with `git -c core.autocrlf=true pull --ff-only origin m6`,
+  not `git fetch origin m6:m6`. Without `core.autocrlf=true`, git from Linux sees every file
+  as changed (Windows line endings) and refuses to pull.
 - Batch files can't be tested in the workspace. QEMU's `-name` can't contain commas.
