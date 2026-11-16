@@ -14,9 +14,11 @@ pbr-draw = { path = "../draw" }
 pbr-font = { path = "../font" }
 pbr-interfaces = { path = "../interfaces" }
 pbr-manifest = { path = "../manifest" }
+pbr-sandstone = { path = "../sandstone" }
 
 [dev-dependencies]
 pbr-testpng = { path = "../testpng" }
+pbr-sandstone = { path = "../sandstone", features = ["testing"] }
 
 [lints]
 workspace = true

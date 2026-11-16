@@ -16,7 +16,8 @@
 //! and the rest of what the desktop works out:
 //!
 //! - [`screens`]: its screen arrangement, `screens.txt`;
-//! - [`clock`]: the taskbar's time and date.
+//! - [`clock`]: the taskbar's time and date;
+//! - [`confirm`]: asking before Shut down and Restart.
 //!
 //! Each part says where things are (so the app can tell what a click hit) as well as how to
 //! draw them, and the two come from the same numbers, so a click always lands on what was drawn.
@@ -28,6 +29,7 @@
 extern crate alloc;
 
 pub mod clock;
+pub mod confirm;
 pub mod icons;
 pub mod look;
 pub mod menu;

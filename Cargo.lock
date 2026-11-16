@@ -121,6 +121,7 @@ dependencies = [
  "pbr-font",
  "pbr-interfaces",
  "pbr-manifest",
+ "pbr-sandstone",
  "pbr-testpng",
 ]
 
