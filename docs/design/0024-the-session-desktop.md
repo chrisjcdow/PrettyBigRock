@@ -295,6 +295,15 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 16 November 2026 (M6 stage 9a, asked for by Chris): **the start menu chooses a row when the
+  button is let go over it**, not when it is pressed, as other menus do (and as the display
+  server's window menu already did): pressing Shut down and moving off before letting go
+  chooses nothing. **Shut down and Restart ask first** (section 7): a small window, "Shut
+  down?" or "Restart?", says that every app will be closed and anything not saved in them lost,
+  with Cancel and the action (the default, focused, so Enter goes on). Escape, Cancel or
+  closing it does nothing more. It is `pbr_desktop::confirm`, a sandstone app the desktop runs
+  inside its own event loop while the window is open. The shell's `shutdown`, `poweroff` and
+  `reboot` don't ask: typing them is the choice.
 - 14 November 2026 (M6 stage 8): **the picker may also call `details`**, to put the asking
   app's title in its window ("Notepad wants to open a file"): the badge tells it only the
   app's number. `grant` is given only to an app whose manifest's `picker` was granted (its
