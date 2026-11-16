@@ -226,11 +226,19 @@ impl Service for Ps2 {
     }
 
     fn signal(&mut self, bits: u64) {
-        self.drain();
+        // An interrupt's line stays masked until it is acknowledged, and these lines are
+        // edge-triggered: the controller raises one edge when a byte arrives and no more while
+        // that byte waits. An edge on a masked line is lost, so acknowledging after draining
+        // would lose a byte that arrived in between, and with it the keyboard and the mouse
+        // for good (the controller would wait for that byte to be read forever). So the lines
+        // are acknowledged first: a byte that arrives after the drain looked raises a new
+        // interrupt, and one that arrives before is read now (its interrupt then finds
+        // nothing to read, which is harmless).
         for i in 0..2 {
             if bits & (1 << i) != 0 {
                 self.dev.acknowledge(i);
             }
         }
+        self.drain();
     }
 }
