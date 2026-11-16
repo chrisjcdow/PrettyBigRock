@@ -24,6 +24,10 @@ name = "pbr-blockcache"
 version = "0.0.0"
 
 [[package]]
+name = "pbr-bmp"
+version = "0.0.0"
+
+[[package]]
 name = "pbr-boot-bios"
 version = "0.0.0"
 dependencies = [
@@ -354,6 +358,20 @@ name = "pbr-manifest"
 version = "0.0.0"
 dependencies = [
  "pbr-filetree",
+]
+
+[[package]]
+name = "pbr-paint"
+version = "0.0.0"
+dependencies = [
+ "pbr-bmp",
+ "pbr-crc",
+ "pbr-draw",
+ "pbr-files",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-sandstone",
+ "pbr-window",
 ]
 
 [[package]]

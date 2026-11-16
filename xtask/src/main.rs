@@ -104,6 +104,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-calculator", "calculator", "apps/calculator"),
     ("pbr-snake-app", "snake", "apps/snake"),
     ("pbr-about", "about", "apps/about"),
+    ("pbr-paint", "paint", "apps/paint"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -128,6 +129,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("apps/calculator.app", "apps/calculator/calculator.app"),
     ("apps/snake.app", "apps/snake/snake.app"),
     ("apps/about.app", "apps/about/about.app"),
+    ("apps/paint.app", "apps/paint/paint.app"),
     // Keyboard layouts, which the input service reads (note 0021, section 4).
     ("layouts/us.kbd", "services/input/layouts/us.kbd"),
     ("layouts/gb.kbd", "services/input/layouts/gb.kbd"),
@@ -170,6 +172,8 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-snake",
     "pbr-snake-app",
     "pbr-about",
+    "pbr-paint",
+    "pbr-bmp",
     "pbr-browse",
     "pbr-test-echo",
     "pbr-test-fileprobe",
@@ -187,6 +191,7 @@ const PROGRAM_CRATES: &[&str] = &[
 const HOST_CRATES: &[&str] = &[
     "pbr-archive",
     "pbr-blockcache",
+    "pbr-bmp",
     "pbr-bootinfo",
     "pbr-boot-common",
     "pbr-calc",
@@ -216,6 +221,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-snake",
     "pbr-snake-app",
     "pbr-about",
+    "pbr-paint",
     "pbr-browse",
     "pbr-testpng",
     "pbr-partition",
@@ -1063,6 +1069,7 @@ fn licence_for(rel: &Path) -> &'static str {
         || under("lib/window/")
         || under("lib/sandstone/")
         || under("lib/browse/")
+        || under("lib/bmp/")
         || under("targets/")
     {
         "MPL-2.0"
@@ -1137,6 +1144,7 @@ mod tests {
         assert_eq!(licence_for(Path::new("lib/draw/src/canvas.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/window/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/sandstone/src/lib.rs")), "MPL-2.0");
+        assert_eq!(licence_for(Path::new("lib/bmp/src/lib.rs")), "MPL-2.0");
         assert_eq!(licence_for(Path::new("lib/testpng/src/lib.rs")), "GPL-3.0-or-later");
         assert_eq!(licence_for(Path::new("interfaces/echo.pbi")), "MIT");
         assert_eq!(licence_for(Path::new("lib/interfaces/build.rs")), "MIT");
