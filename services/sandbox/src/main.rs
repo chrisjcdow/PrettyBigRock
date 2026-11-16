@@ -188,6 +188,9 @@ const DESKTOP: &str = "desktop";
 const PICKER: &str = "picker";
 /// The permissions viewer (note 0025, section 4), which the desktop launches.
 const VIEWER: &str = "permissions";
+/// The system apps the desktop boot's runner drives, which describe their windows in test
+/// boots (note 0026, section 6): the picker, the viewer and the apps of stage 9.
+const DESCRIBED: &[&str] = &[PICKER, VIEWER, "calculator", "snake", "paint", "about"];
 /// The "caller" of the launches this program makes itself (the shell's, the desktop's). Badge
 /// 0 is never on a capability anyone is given, so no client can use these launches.
 const ITSELF: u64 = 0;
@@ -330,7 +333,7 @@ struct Sandbox {
     /// Whose session this is, for messages.
     user: String,
     /// A test boot (`describe` among its arguments): the system apps the desktop boot's runner
-    /// drives (the picker, the permissions viewer) are told to describe their windows.
+    /// drives ([`DESCRIBED`]) are told to describe their windows.
     describe: bool,
     /// The endpoint it serves, with every right (so it can mint badges).
     endpoint: Endpoint,
@@ -714,7 +717,7 @@ impl Sandbox {
             (true, false) => String::from(args),
             (false, false) => format!("{} {args}", app.args),
         };
-        if self.describe && (name == PICKER || name == VIEWER) {
+        if self.describe && DESCRIBED.contains(&name) {
             args =
                 if args.is_empty() { String::from("describe") } else { format!("{args} describe") };
         }
