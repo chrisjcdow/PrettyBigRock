@@ -105,6 +105,11 @@ struct Desktop {
     /// The screens, as the display server last said.
     screens: Vec<ScreenPlace>,
     backgrounds: Vec<Background>,
+    /// Wallpapers configured but not yet drawn. Drawing one takes long on a slow machine (a
+    /// whole screen, at 2x four times the pixels), so it waits until no events are queued:
+    /// a start-menu key behind it would otherwise be handled after its serial had expired,
+    /// and the display server would refuse the menu (`Window(BadSerial)`).
+    undrawn: Vec<Win>,
     /// The taskbar, and the screen it is on.
     panel: Option<(u32, Win)>,
     menu: Option<Menu>,
@@ -145,6 +150,7 @@ fn main(mut start: granite::Start) -> i32 {
         apps: Vec::new(),
         screens: Vec::new(),
         backgrounds: Vec::new(),
+        undrawn: Vec::new(),
         panel: None,
         menu: None,
         windows: Vec::new(),
@@ -160,7 +166,16 @@ fn main(mut start: granite::Start) -> i32 {
     say!("ready, {} apps, {} screens.", d.apps.len(), d.screens.len());
     let mut code = 0;
     loop {
-        let Some(event) = d.conn.next_event(time::FOREVER) else { continue };
+        // With wallpapers waiting, only look for events; when there are none, draw one
+        // wallpaper and look again, so that input is never kept waiting behind more than one.
+        let deadline = if d.undrawn.is_empty() { time::FOREVER } else { time::NOW };
+        let Some(event) = d.conn.next_event(deadline) else {
+            if !d.undrawn.is_empty() {
+                let win = d.undrawn.remove(0);
+                d.draw_background(win);
+            }
+            continue;
+        };
         if !d.handle(event, &mut code) {
             break;
         }
@@ -262,6 +277,7 @@ impl Desktop {
         for w in gone {
             let _ = self.conn.destroy(w);
             self.backgrounds.retain(|b| b.win != w);
+            self.undrawn.retain(|u| *u != w);
         }
         for (screen, w, h) in shown {
             if self.backgrounds.iter().any(|b| b.screen == screen) {
@@ -682,7 +698,9 @@ impl Desktop {
         match event {
             Event::Configure { window, .. } => {
                 if self.backgrounds.iter().any(|b| b.win == window) {
-                    self.draw_background(window);
+                    if !self.undrawn.contains(&window) {
+                        self.undrawn.push(window);
+                    }
                 } else if self.panel.is_some_and(|(_, w)| w == window) {
                     self.draw_panel();
                 } else if self.menu.as_ref().is_some_and(|m| m.win == window) {
