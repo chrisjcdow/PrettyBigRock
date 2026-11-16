@@ -3,6 +3,19 @@
 version = 4
 
 [[package]]
+name = "pbr-about"
+version = "0.0.0"
+dependencies = [
+ "pbr-desktop",
+ "pbr-draw",
+ "pbr-files",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-sandstone",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-archive"
 version = "0.0.0"
 

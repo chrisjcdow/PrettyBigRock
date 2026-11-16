@@ -103,6 +103,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-permissions", "permissions", "apps/permissions"),
     ("pbr-calculator", "calculator", "apps/calculator"),
     ("pbr-snake-app", "snake", "apps/snake"),
+    ("pbr-about", "about", "apps/about"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -126,6 +127,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("apps/permissions.app", "apps/permissions/permissions.app"),
     ("apps/calculator.app", "apps/calculator/calculator.app"),
     ("apps/snake.app", "apps/snake/snake.app"),
+    ("apps/about.app", "apps/about/about.app"),
     // Keyboard layouts, which the input service reads (note 0021, section 4).
     ("layouts/us.kbd", "services/input/layouts/us.kbd"),
     ("layouts/gb.kbd", "services/input/layouts/gb.kbd"),
@@ -167,6 +169,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-calc",
     "pbr-snake",
     "pbr-snake-app",
+    "pbr-about",
     "pbr-browse",
     "pbr-test-echo",
     "pbr-test-fileprobe",
@@ -212,6 +215,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-permissions",
     "pbr-snake",
     "pbr-snake-app",
+    "pbr-about",
     "pbr-browse",
     "pbr-testpng",
     "pbr-partition",
