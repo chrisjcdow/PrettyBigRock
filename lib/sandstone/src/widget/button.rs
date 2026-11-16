@@ -33,6 +33,7 @@ pub struct Button<M> {
     role: Option<Role>,
     width: Length,
     height: Length,
+    colour: Option<Colour>,
 }
 
 /// What a button remembers between views.
@@ -53,6 +54,7 @@ impl<M> Button<M> {
             role: None,
             width: Length::Shrink,
             height: Length::Shrink,
+            colour: None,
         }
     }
 
@@ -77,6 +79,14 @@ impl<M> Button<M> {
     /// The button Escape presses in its window.
     pub fn cancel(mut self) -> Button<M> {
         self.role = Some(Role::Cancel);
+        self
+    }
+
+    /// A button of one flat colour with a white bold label, as 1.3's calculator keys were,
+    /// instead of the grey face. It is darker while pressed and lighter under the pointer, and
+    /// the focus ring is drawn round it as on any button.
+    pub fn colour(mut self, colour: Colour) -> Button<M> {
+        self.colour = Some(colour);
         self
     }
 
@@ -129,6 +139,33 @@ pub(crate) fn draw_face(
     }
 }
 
+/// Draws the face of a coloured button ([`Button::colour`]) in `r`: a rounded rectangle of one
+/// colour, a quarter darker while pressed and an eighth lighter under the pointer, inside the
+/// accent's ring when focused.
+fn draw_flat_face(
+    canvas: &mut Canvas<'_>,
+    r: Rect,
+    t: &Theme,
+    colour: Colour,
+    pressed: bool,
+    hovered: bool,
+    focused: bool,
+) {
+    let face = if pressed {
+        Colour::between(colour, Colour::BLACK, 1, 4)
+    } else if hovered {
+        Colour::between(colour, Colour::WHITE, 1, 8)
+    } else {
+        colour
+    };
+    if focused {
+        canvas.fill_round_rect(r, t.radius, t.accent);
+        canvas.fill_round_rect(r.inset(1), (t.radius - 1).max(0), face);
+    } else {
+        canvas.fill_round_rect(r, t.radius, face);
+    }
+}
+
 /// Where text `height` dots tall is drawn to sit in the middle of `r`, as 1.3 placed it: 1.3's
 /// font had 9 rows, ours has `ABOVE` more over the capitals.
 pub(crate) fn text_top(r: Rect, size: u32) -> i32 {
@@ -160,13 +197,26 @@ impl<'a, M: Clone + 'a> Widget<'a, M> for Button<M> {
         let t = cx.theme;
         let enabled = self.on_press.is_some();
         let pressed = enabled && s.pressed && s.hovered;
-        draw_face(canvas, node.rect, t, pressed, enabled && s.hovered, cx.has_keyboard(tree));
-        let colour: Colour = if enabled { t.text } else { t.text_disabled };
+        let (hovered, focused) = (enabled && s.hovered, cx.has_keyboard(tree));
+        // A coloured button writes in white bold (half way to its face when greyed out, since
+        // the theme's grey would be lost on it); the others in the theme's text.
+        let (colour, font) = match self.colour {
+            Some(face) => {
+                draw_flat_face(canvas, node.rect, t, face, pressed, hovered, focused);
+                let text =
+                    if enabled { t.on_accent } else { Colour::between(t.on_accent, face, 1, 2) };
+                (text, t.bold)
+            }
+            None => {
+                draw_face(canvas, node.rect, t, pressed, hovered, focused);
+                (if enabled { t.text } else { t.text_disabled }, t.font)
+            }
+        };
         let r = node.rect;
-        let label = super::label::fit(&self.label, t.font, r.width - 2 * 4);
+        let label = super::label::fit(&self.label, font, r.width - 2 * 4);
         let shift = i32::from(pressed);
-        let x = r.x + (r.width - t.font.width(&label)) / 2 + shift;
-        canvas.text(x, text_top(r, t.font.size) + shift, &label, colour, t.font);
+        let x = r.x + (r.width - font.width(&label)) / 2 + shift;
+        canvas.text(x, text_top(r, font.size) + shift, &label, colour, font);
     }
 
     fn look(&self, tree: &Tree, _node: &Node, cx: &DrawCx<'_>) -> Option<u64> {
@@ -178,6 +228,7 @@ impl<'a, M: Clone + 'a> Widget<'a, M> for Button<M> {
                 .bool(s.hovered)
                 .bool(s.pressed)
                 .bool(cx.has_keyboard(tree))
+                .u64(self.colour.map_or(0, |c| u64::from(c.0) | (1 << 32)))
                 .finish(),
         )
     }

@@ -50,6 +50,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-calc"
+version = "0.0.0"
+
+[[package]]
+name = "pbr-calculator"
+version = "0.0.0"
+dependencies = [
+ "pbr-calc",
+ "pbr-draw",
+ "pbr-files",
+ "pbr-font",
+ "pbr-granite",
+ "pbr-sandstone",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-captree"
 version = "0.0.0"
 

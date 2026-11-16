@@ -7,6 +7,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "apps/calculator",
     "apps/desktop",
     "apps/permissions",
     "apps/picker",
@@ -25,6 +26,7 @@ members = [
     "lib/blockcache",
     "lib/bootinfo",
     "lib/browse",
+    "lib/calc",
     "lib/captree",
     "lib/compositor",
     "lib/crc",
