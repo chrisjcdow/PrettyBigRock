@@ -161,7 +161,8 @@ sandbox manager's rights and limits, the power service, text mode and falling ba
 desktop app; an ordinary boot now reaches the desktop) 7 (sandstone: the widget toolkit,
 its test harness, and the widget gallery in the desktop boot) and 8 (the file picker and
 `sandstone::picker`, the permissions viewer, `lib/browse`, `check`, records per grant,
-`pbr.sysinfo`) are built; stage 9 (the apps) is next.
+`pbr.sysinfo`) are built, and stage 9's first half, 9a (Calculator, Snake, Paint and About,
+with `lib/calc`, `lib/snake` and `lib/bmp`); 9b (Notepad, Files, Terminal) is next.
 The stages are in note 0026, section 9.
 
 ## M7: Real hardware I, Roxy

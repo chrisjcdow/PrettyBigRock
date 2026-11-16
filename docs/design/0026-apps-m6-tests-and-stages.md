@@ -245,6 +245,40 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 16 November 2026 (stage 9a): stage 9 is built in two halves: **9a**, Calculator, Snake,
+  Paint and About with `lib/calc`, `lib/snake` and `lib/bmp` (each app and library written by
+  a Sonnet subagent to a brief, and reviewed); **9b**, Notepad, Files and Terminal. What
+  building 9a settled:
+  - **The `[tree]` lines** (section 6): `Files::report(app)` in `lib/files` writes one line per
+    entry, `[tree] paint /Home/Pictures rw`, with the rights the filesystem server says the
+    capability has, or `[tree] calculator empty`; apps call it at start when told to
+    `describe`. The root program's desktop test thread follows each app the runner launches
+    from the start menu, checks its services and grants against its manifest, and logs
+    `Desktop test: app N (paint) grants: …`; the runner compares the two with the manifest.
+    The sandbox manager tells the four apps to `describe` in test boots, as the picker and the
+    viewer.
+  - **`lib/calc`** gives 1.3's answers, except that `^` is worked out by repeated squaring
+    (1.3 multiplied `n` times, and `2^2000000000` hung it) and brackets nest at most 64 deep;
+    its errors say what was wrong. Terminal's `calc` (9b) is `format(eval(text)?)`.
+  - **`lib/snake`** ends a game whose board is full as a win (1.3 looped for ever looking for a
+    free cell). Losing the keyboard pauses the game until Space or P, where 1.3 carried on as
+    soon as the window was focused again.
+  - **`lib/bmp`** is MPL-2.0. It is stricter than 1.3 about headers (at least 40 bytes, pixels
+    after the headers) and refuses pictures over 64 million pixels before allocating.
+  - **Paint**: the brush is 1.3's disc stamped along 1.3's line, not `lib/draw`'s lines as
+    section 1's table said, so that strokes are 1.3's to the pixel. **Save** writes the file the
+    picture came from or was saved as, and otherwise asks the picker, offering `Drawing N.bmp` in
+    Pictures; **Save as…** always asks. A file the picker chooses inside Pictures is opened
+    through Paint's own grant (the tree can't hold an entry inside another). Started with a
+    path as its argument, it opens that file (for 9b's Open with…). At 600 x 400 its window
+    is bigger than the test machine's 2x screen; only system windows are made to fit.
+  - **About** shows each screen (`1280 x 800; 1024 x 768, 2x`), the memory's total and free,
+    and the system volume's free space, which it asks for every ten seconds rather than every
+    second (each answer asks every filesystem server).
+  - **Budgets**: Calculator, Snake and About 4 MiB each, Paint 12 MiB.
+  - Also: system windows bigger than their screen are made to fit it (the picker on the 2x
+    screen), and the desktop draws its wallpapers only when no events are waiting, so that a
+    start-menu key after a screens change is answered in time (`Window(BadSerial)` before).
 - 14 November 2026 (stage 8): built: the picker and the permissions viewer (note 0025,
   Changes), `lib/browse`, `check`, records per grant, `pbr.sysinfo`. What building settled:
   - **`check`**: the RockFS server started with `check` (or `check repair`) reports through a

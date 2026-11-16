@@ -239,6 +239,12 @@ testable without a screen.
 - Drag and drop between widgets and apps.
 
 ## Changes
+- 16 November 2026 (M6 stage 9a): what the apps needed of sandstone. **`Button::colour`**: a
+  button of one flat colour with a white bold label, as 1.3's calculator keys. **`Canvas`** (in
+  `widget/terminal.rs` since stage 7) gains `label`, what `describe` calls it; Snake, Paint and
+  About draw with it. **`App::focus_changed(window, focused)`**: an app is told when one of its
+  own windows gains or loses the keyboard (not before `start`, and not for sandstone's dialogs
+  or popups), so that Snake pauses as 1.3's did; the harness's `keyboard_away` tries it.
 - 14 November 2026 (M6 stage 8): **`sandstone::picker`** is built as the Changes below
   planned (`FilePicker`, note 0025's Changes). `Settings` gained `over` (the main window as a
   `System` window over another app's, through `pbr.window`'s `create_over`: the picker) and

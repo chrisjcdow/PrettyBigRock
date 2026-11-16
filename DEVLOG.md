@@ -1098,3 +1098,33 @@ start menu and the apps worked, but the keyboard and mouse stopped after a minut
   file and the M6 plan, kept until now in the claude.ai Project, are now `docs/STATUS.md` and
   `docs/m6-plan.md`, and CLAUDE.md says to read and update STATUS.md in every session.
 
+
+## Session 21: 16 November 2026, M6 stage 9a (Calculator, Snake, Paint, About)
+
+The first session in Claude Code on Impala. Chris asked for stage 9a: the four smaller apps and
+their libraries, with their tests, and two fixes left from stage 8.
+
+- **Workspace**: CLAUDE.md now describes Impala (push to `m6` directly, no bundles or toolchain
+  workarounds); the cloud workspace's notes are kept short. `cargo xtask qemu-test` never used
+  KVM; `PBR_QEMU_KVM=1` now adds `-accel kvm` to the x86-64 machines (opt-in; ARM64 and CI
+  unchanged). Under KVM the x86-64 UEFI desktop boot took a few minutes.
+- **The apps**, each by a Sonnet subagent in its own worktree, two at a time, reviewed whole
+  (diffs, tests, every picture): `lib/calc` and Calculator; `lib/snake` and Snake (with
+  sandstone's `App::focus_changed`); `lib/bmp` and Paint; About. Note 0026's Changes have what
+  building settled. Review changes: the `[tree]` report added to apps briefed before it
+  existed, About's disk asked for every ten seconds, Snake's descriptions framed as the others.
+  The brief for Snake wrongly said sandstone had no `Canvas`; it has had one since stage 7.
+- **Fixes from stage 8**: system windows bigger than their screen are made to fit it
+  (`52a9562`); the desktop draws wallpapers only when no events are waiting (`bed5668`), the
+  start menu's `Window(BadSerial)` after a screens change.
+- **The `[tree]` lines** (note 0026, section 6) are built: `Files::report`, the root program's
+  step following each app, and the runner comparing them with the grants and the manifest.
+- **Desktop boot**: the runner launches the four apps from the start menu after the gallery:
+  Calculator (12 − 5 = with the keys, C 4 + 5 = with the pointer), Snake (starts, pauses,
+  steers to the food, eats, ends at a wall), Paint (colour and size, a stroke, saved through the
+  picker as 1.3's 651,654 bytes, cleared, opened again with the same CRC, and 1.3's `rock.bmp`
+  opened from 1.3's disk with the CRC the runner works out with `lib/bmp`), About (every fact
+  known); 1x and 2x screenshots of each.
+- **Under KVM only**: the second desktop boot's Shut down turns the machine off before the
+  runner has finished clicking, and the runner fails with `Broken pipe` writing to QEMU.
+  Reported to Chris, not worked round.
