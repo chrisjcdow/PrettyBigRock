@@ -1128,3 +1128,6 @@ their libraries, with their tests, and two fixes left from stage 8.
 - **Under KVM only**: the second desktop boot's Shut down turns the machine off before the
   runner has finished clicking, and the runner fails with `Broken pipe` writing to QEMU.
   Reported to Chris, not worked round.
+
+Results: GitHub's CI passed on all four configurations, every boot, on `64ad2ea` (stage 9a's
+last commit). No Stress run in 9a.

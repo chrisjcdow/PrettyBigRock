@@ -5,8 +5,8 @@ something here stops being true). Until 16 November 2026 it was kept in the clau
 as `claude/status.md`; the repository's copy is now the one that counts.
 
 Updated 16 November 2026 (session 21). **M6 stage 9a built**: Calculator, Snake, Paint and
-About, with `lib/calc`, `lib/snake` and `lib/bmp`, and stage 8's two leftovers fixed. Pushed
-to `m6`; GitHub's CI to report. Stage 9b (Notepad, Files, Terminal) is next.
+About, with `lib/calc`, `lib/snake` and `lib/bmp`, and stage 8's two leftovers fixed. GitHub's
+CI passed on all four configurations, every boot, on `64ad2ea`. Stage 9b (Notepad, Files, Terminal) is next.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 8 and 9a built
 
