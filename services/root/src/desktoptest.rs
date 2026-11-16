@@ -195,6 +195,79 @@ fn watch_grants(s: &Session, app: u32, p: &Process, path: &str) -> Result<(bool,
     Ok((given, taken))
 }
 
+/// Stage 9's apps in the order the runner launches them: their name, the services their
+/// manifests ask for, and the folders they are given by it (their own, and Paint's Pictures).
+const APPS: &[(&str, u32, &[&str])] = &[
+    ("calculator", AppServices::WINDOWS.0, &[]),
+    ("snake", AppServices::WINDOWS.0 | AppServices::DATA.0, &["/Home/Apps/snake"]),
+    (
+        "paint",
+        AppServices::WINDOWS.0 | AppServices::PICKER.0 | AppServices::DATA.0,
+        &["/Home/Apps/paint", "/Home/Pictures"],
+    ),
+    ("about", AppServices::WINDOWS.0 | AppServices::SYSINFO.0, &[]),
+];
+
+/// Waits for the runner to launch `name`, checks that it holds what its manifest says (the
+/// `services`, and the folders `own` read and write, given for the manifest), then logs what it
+/// holds each time that changes (as [`watch_grants`] does) until it ends. Files the user chose
+/// for it in the picker come and go; anything else it holds is an error.
+fn follow_app(s: &Session, name: &str, services: u32, own: &[&str]) -> Result<(), String> {
+    let end = time::after_ms(STEP_SECS * 1000);
+    let id = loop {
+        if let Some(id) = s.app(name) {
+            break id;
+        }
+        if time::now() > end {
+            return Err(format!("{name} wasn't launched from the start menu"));
+        }
+        time::sleep_ms(200);
+    };
+    let d = s.sandbox.details(id).map_err(|e| format!("{name}'s details: {e}"))?;
+    if d.services.0 != services || d.trusted || d.system {
+        return Err(format!("{name} holds {d:?}"));
+    }
+    let rw = FileRights::READ.0 | FileRights::WRITE.0;
+    // `None` until the first line is written: an app holding nothing has an empty line, which
+    // must be written too.
+    let mut last: Option<String> = None;
+    while s.sandbox.list().is_ok_and(|l| l.iter().any(|a| a.id == id && a.running)) {
+        if time::now() > end {
+            return Err(format!("{name} was still running after {STEP_SECS} seconds"));
+        }
+        if let Ok(page) = s.sandbox.grants(id, 0) {
+            for g in &page.grants {
+                let manifest = own.contains(&g.path.as_str())
+                    && g.rights.0 == rw
+                    && g.reason == GrantReason::Manifest;
+                if !manifest && g.reason != GrantReason::Chosen {
+                    return Err(format!("{name} holds {g:?}"));
+                }
+            }
+            for path in own {
+                if !page.grants.iter().any(|g| g.path == *path) {
+                    return Err(format!("{name} wasn't given {path}"));
+                }
+            }
+            let line: Vec<String> = page
+                .grants
+                .iter()
+                .map(|g| {
+                    let rw = if g.rights.0 & FileRights::WRITE.0 != 0 { "rw" } else { "r" };
+                    format!("{} {rw} {:?}", g.path, g.reason)
+                })
+                .collect();
+            let line = line.join("; ");
+            if last.as_ref() != Some(&line) {
+                granite::println!("Desktop test: app {id} ({name}) grants: {line}");
+                last = Some(line);
+            }
+        }
+        time::sleep_ms(200);
+    }
+    Ok(())
+}
+
 fn all(sup: &Supervisor) -> Result<String, String> {
     let mut done: Vec<&str> = Vec::new();
     let s = Session::find(sup, 300)?;
@@ -291,6 +364,16 @@ fn all(sup: &Supervisor) -> Result<String, String> {
         "the file picker saving, replacing and opening for an app, the permissions viewer \
          showing what it holds, taking a file back and stopping it",
     );
+
+    // Step 4c: stage 9's apps (note 0026, sections 1 and 7), launched by the runner from the
+    // start menu one after another and driven by it. Each holds what its manifest gives it
+    // and nothing else; while it runs, what it holds is written to the log, where the runner
+    // compares it with the app's own `[tree]` lines.
+    granite::println!("Desktop test: the apps");
+    for (name, services, own) in APPS {
+        follow_app(&s, name, *services, own)?;
+    }
+    done.push("Calculator, Snake, Paint and About, each holding only what its manifest gives");
 
     // A note in an app's own folder, for the second boot to find.
     let (_, saver) = s.launch("wintest", "name=Saver save")?;
