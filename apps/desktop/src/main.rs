@@ -33,6 +33,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use granite::endpoint::Endpoint;
 use granite::time;
+use pbr_desktop::confirm::{self, Confirm, Power};
 use pbr_desktop::icons::Icon;
 use pbr_desktop::menu::{Choice, Item, StartMenu};
 use pbr_desktop::screens::Arrangement;
@@ -44,6 +45,7 @@ use pbr_files::{Files, READ};
 use pbr_interfaces::pbr_sandbox::{self as sandbox, Available};
 use pbr_interfaces::pbr_users as users;
 use pbr_interfaces::pbr_window::{ScreenPlace, WindowInfo};
+use pbr_sandstone::{Runtime, WindowId};
 use pbr_window::{Connection, Event, PointerEvent, PointerKind, Win, WindowFlags, WindowKind};
 
 granite::main!(main);
@@ -62,8 +64,10 @@ const CHOICE_STOP: u32 = 2;
 /// The edge a panel goes along, as `create`'s `at` gives it (`lib/compositor`: 1 top, 2
 /// bottom, 3 left, 4 right).
 const BOTTOM: i32 = 2;
-/// The clock's timer.
-const CLOCK: u32 = 1;
+/// The clock's timer. Sandstone numbers the timers of the apps it runs from 1, and the
+/// question asked before Shut down runs here as one ([`confirm`]), so the desktop's own timer
+/// is numbered far from them.
+const CLOCK: u32 = 0x4000_0000;
 /// Two clicks on the same icon within this long are a double click (nanoseconds).
 const DOUBLE_CLICK: u64 = 500_000_000;
 /// The start menu's heading: the theme's heading style, which sandstone's dialogs use too, so
@@ -110,6 +114,10 @@ struct Desktop {
     /// a start-menu key behind it would otherwise be handled after its serial had expired,
     /// and the display server would refuse the menu (`Window(BadSerial)`).
     undrawn: Vec<Win>,
+    /// The question asked before Shut down or Restart, while its window is open: a small
+    /// sandstone app run inside this one ([`confirm`]), and whether its button's place has been
+    /// written to the log yet (for the desktop boot's runner).
+    asking: Option<(Runtime<Confirm>, bool)>,
     /// The taskbar, and the screen it is on.
     panel: Option<(u32, Win)>,
     menu: Option<Menu>,
@@ -151,6 +159,7 @@ fn main(mut start: granite::Start) -> i32 {
         screens: Vec::new(),
         backgrounds: Vec::new(),
         undrawn: Vec::new(),
+        asking: None,
         panel: None,
         menu: None,
         windows: Vec::new(),
@@ -175,6 +184,11 @@ fn main(mut start: granite::Start) -> i32 {
                 d.draw_background(win);
             }
             continue;
+        };
+        // What happens in the question's window is the question's.
+        let event = match d.for_question(event) {
+            Some(e) => e,
+            None => continue,
         };
         if !d.handle(event, &mut code) {
             break;
@@ -507,9 +521,89 @@ impl Desktop {
                     self.launch(&app);
                 }
             }
-            Choice::Restart => self.power(true),
-            Choice::ShutDown => self.power(false),
+            Choice::Restart => self.ask(Power::Restart),
+            Choice::ShutDown => self.ask(Power::ShutDown),
         }
+    }
+
+    // ---- Asking before Shut down and Restart -------------------------------------------
+
+    /// Opens the question for `power` (note 0024, section 7): only its button goes on. One at a
+    /// time: choosing again while it is open does nothing more.
+    fn ask(&mut self, power: Power) {
+        if self.asking.is_some() {
+            return;
+        }
+        let mut rt = Runtime::new(Confirm::new(power), confirm::settings());
+        if rt.open(&mut self.conn) {
+            say!("asking: {}?", power.verb());
+            // The display server gives a new window the keyboard only if its app has it or was
+            // just launched (note 0022, section 4), and the desktop's own windows never have
+            // it. The user asked for this one with the start menu, so the desktop gives it the
+            // keyboard itself, as its taskbar buttons do for other windows.
+            if let Some((_, win)) = rt.windows().first().copied()
+                && let Ok(list) = self.conn.client().windows()
+                && let Some(w) = list
+                    .iter()
+                    .find(|w| w.window as u32 == win.0 && w.title.ends_with(power.verb()))
+                && let Err(e) = self.conn.client().act(w.window, ACT_FOCUS)
+            {
+                say!("giving the question the keyboard: {e}");
+            }
+            self.asking = Some((rt, false));
+        } else {
+            // Without the question there is no going on: nothing is turned off unasked.
+            say!("couldn't ask before {}.", power.verb());
+        }
+    }
+
+    /// Gives `event` to the question if it is for the question's window, and deals with its
+    /// answer; returns the event if it is the desktop's.
+    fn for_question(&mut self, event: Event) -> Option<Event> {
+        let Some((rt, _)) = &mut self.asking else { return Some(event) };
+        let window = match &event {
+            Event::Configure { window, .. } | Event::CloseRequested { window } => Some(*window),
+            Event::Pointer(p) => Some(p.window),
+            Event::Key(k) => Some(k.window),
+            _ => None,
+        };
+        // Events lost in the ring: both draw everything again.
+        if let Event::Lost(_) = event {
+            rt.handle(&mut self.conn, event);
+            return Some(event);
+        }
+        let ours = window.is_some_and(|w| rt.windows().iter().any(|(_, win)| *win == w));
+        if !ours {
+            return Some(event);
+        }
+        rt.handle(&mut self.conn, event);
+        let Some((rt, placed)) = &mut self.asking else { return None };
+        for line in rt.app_mut().take_log() {
+            say!("{line}");
+        }
+        // Where its button is, from the window's corner, once it is laid out: the runner
+        // clicks it there.
+        if !*placed
+            && let Some(d) =
+                rt.describe(WindowId::MAIN).into_iter().find(|d| d.key.as_deref() == Some("yes"))
+        {
+            let (x, y) = (d.rect.x + d.rect.width / 2, d.rect.y + d.rect.height / 2);
+            say!("question button at {x},{y}");
+            *placed = true;
+        }
+        if rt.finished() {
+            let (rt, _) = self.asking.take()?;
+            for (_, win) in rt.windows() {
+                let _ = self.conn.destroy(win);
+            }
+            let power = rt.app().power();
+            match rt.app().answer() {
+                Some(true) => self.power(power == Power::Restart),
+                Some(false) => {}
+                None => say!("{} cancelled", power.verb().to_lowercase()),
+            }
+        }
+        None
     }
 
     // ---- What it asks of others --------------------------------------------------------
@@ -621,7 +715,10 @@ impl Desktop {
                     }
                     self.draw_menu();
                 }
-                _ if pressed => {
+                // A row is chosen when the button is let go over it, as in other menus: pressing
+                // and moving off before letting go chooses nothing (Shut down can be taken
+                // back).
+                PointerKind::Button { button: LEFT, pressed: false } => {
                     if let Some(c) = at {
                         self.choose(c);
                     }
