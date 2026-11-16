@@ -98,6 +98,8 @@ struct FakeDisplay {
     factor: u32,
     /// Windows that have the keyboard in turn: the last is focused.
     focus_stack: Vec<Win>,
+    /// The user has gone to another app: no window of this one has the keyboard.
+    away: bool,
     /// Events to give the app at the next chance.
     pending: VecDeque<Incoming>,
     frames: Vec<Win>,
@@ -298,6 +300,10 @@ impl<A: App> App for Recorder<A> {
         self.app.clipboard_changed(text, picture)
     }
 
+    fn focus_changed(&self, window: WindowId, focused: bool) -> Option<A::Message> {
+        self.app.focus_changed(window, focused)
+    }
+
     fn notified(&self, bits: u64) -> Option<A::Message> {
         self.app.notified(bits)
     }
@@ -337,6 +343,7 @@ where
             next_serial: 0,
             factor: factor.clamp(1, 8),
             focus_stack: Vec::new(),
+            away: false,
             pending: VecDeque::new(),
             frames: Vec::new(),
             moves: 0,
@@ -528,6 +535,13 @@ where
             self.send(Incoming::Timer(id));
         }
         self.display.now = end;
+    }
+
+    /// The user goes to another app (`true`), so that no window of this one has the keyboard,
+    /// or comes back (`false`).
+    pub fn keyboard_away(&mut self, away: bool) {
+        self.display.away = away;
+        self.send(Incoming::Lost(0));
     }
 
     /// Changes the main window's size, as the user resizing it.
@@ -819,7 +833,8 @@ where
                 self.rt.handle(&mut self.display, e);
                 changed = true;
             }
-            let top = self.display.focus_stack.last().copied();
+            let top =
+                if self.display.away { None } else { self.display.focus_stack.last().copied() };
             let todo: Vec<(Win, bool, bool)> = self
                 .display
                 .windows

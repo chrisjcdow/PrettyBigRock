@@ -83,6 +83,13 @@ pub trait App {
         None
     }
 
+    /// A window of the app gained (`true`) or lost the keyboard: the user went to another app,
+    /// or a dialog opened over it. A message, if the app wants one (a game pauses). Not
+    /// called before [`App::start`], and not for dialogs of sandstone's or popups.
+    fn focus_changed(&self, _window: WindowId, _focused: bool) -> Option<Self::Message> {
+        None
+    }
+
     /// Another thread of the app signalled bits 8 to 63 of the event loop's notification
     /// (note 0023, section 4). A message, if the app wants one.
     fn notified(&self, _bits: u64) -> Option<Self::Message> {

@@ -482,6 +482,7 @@ impl App for Board {
             }
         })
         .version(self.version)
+        .label("Board")
         .cursor(pbr_window::Cursor::Crosshair)
         .on_pointer(|p| Some(Msg::Ptr(p)));
         if self.keys {
@@ -533,6 +534,7 @@ fn the_canvas_draws_in_its_place_and_describes_itself() {
     let h = Harness::new(board(), board_settings());
     let d = h.find("canvas").unwrap().1;
     assert_eq!(d.what.role, "canvas");
+    assert_eq!(d.what.label, "Board");
     assert_eq!(d.what.value, "1");
     assert_eq!((d.rect.x, d.rect.y, d.rect.width, d.rect.height), (8, 8, 100, 60));
     // The white inside, the dark border, the square (version 1: 8 across), the page outside.

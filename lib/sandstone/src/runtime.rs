@@ -408,6 +408,18 @@ impl<A: App> Runtime<A> {
             w.focused = focused;
             w.needs = Needs { update: true, all: true };
             self.dispatch(p, i, &Event::WindowFocus(focused), 0);
+            // Only the app's own windows, and only once it has started: the first configure
+            // of a window says whether it begins with the keyboard, which isn't news.
+            let (id, own) = (
+                self.windows[i].id,
+                matches!(self.windows[i].role, Purpose::Main | Purpose::Other),
+            );
+            if own
+                && self.started
+                && let Some(m) = self.app.focus_changed(id, focused)
+            {
+                self.update(p, m, 0, id);
+            }
         }
         if !self.started && self.windows[i].id == WindowId::MAIN {
             self.started = true;

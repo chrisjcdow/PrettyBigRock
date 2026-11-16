@@ -272,3 +272,43 @@ fn rows_and_columns_share_room() {
     let two = h.find("2").unwrap().1.rect;
     assert_eq!((two.x, two.width), (74, 72));
 }
+
+// ---------------------------------------------------------------------------------------------
+// The window gaining and losing the keyboard
+// ---------------------------------------------------------------------------------------------
+
+/// An app that keeps a list of what `focus_changed` told it.
+#[derive(Default)]
+struct Watcher {
+    seen: Vec<(WindowId, bool)>,
+}
+
+impl App for Watcher {
+    type Message = (WindowId, bool);
+
+    fn view(&self) -> Element<'_, (WindowId, bool)> {
+        Column::new().padding(8).push(Label::new("Watching")).into()
+    }
+
+    fn update(&mut self, m: (WindowId, bool), _cx: &mut Context<'_, (WindowId, bool)>) {
+        self.seen.push(m);
+    }
+
+    fn focus_changed(&self, window: WindowId, focused: bool) -> Option<(WindowId, bool)> {
+        Some((window, focused))
+    }
+}
+
+#[test]
+fn the_app_is_told_when_its_window_loses_and_regains_the_keyboard() {
+    let mut h = Harness::new(Watcher::default(), settings());
+    // Opening is not news: the window began with the keyboard, before the app started.
+    assert!(h.app().seen.is_empty());
+    h.keyboard_away(true);
+    assert_eq!(h.app().seen, [(WindowId::MAIN, false)]);
+    // Nothing changed, so nothing is said again.
+    h.keyboard_away(true);
+    assert_eq!(h.app().seen.len(), 1);
+    h.keyboard_away(false);
+    assert_eq!(h.app().seen, [(WindowId::MAIN, false), (WindowId::MAIN, true)]);
+}

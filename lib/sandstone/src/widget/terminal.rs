@@ -586,6 +586,7 @@ pub struct Canvas<'a, M> {
     on_key: Option<Box<CanvasKeyFn<'a, M>>>,
     focusable: Option<bool>,
     cursor: Cursor,
+    label: String,
     w: Length,
     h: Length,
 }
@@ -620,6 +621,7 @@ impl<'a, M> Canvas<'a, M> {
             on_key: None,
             focusable: None,
             cursor: Cursor::Arrow,
+            label: String::new(),
             w: Length::Fixed(width),
             h: Length::Fixed(height),
         }
@@ -656,6 +658,12 @@ impl<'a, M> Canvas<'a, M> {
     /// The pointer's shape over it (Paint's is `Cursor::Crosshair`).
     pub fn cursor(mut self, cursor: Cursor) -> Canvas<'a, M> {
         self.cursor = cursor;
+        self
+    }
+
+    /// What it is, in words, for [`Widget::describe`] ("Snake board"); tests find it by this.
+    pub fn label(mut self, label: &str) -> Canvas<'a, M> {
+        self.label = label.to_string();
         self
     }
 
@@ -767,6 +775,7 @@ impl<'a, M: 'a> Widget<'a, M> for Canvas<'a, M> {
     fn describe(&self, _tree: &Tree, _node: &Node) -> Option<Describe> {
         Some(Describe {
             role: "canvas",
+            label: self.label.clone(),
             value: self.version.to_string(),
             enabled: true,
             ..Describe::default()
