@@ -309,6 +309,25 @@ pub(crate) fn command(
     command_on(cfg, image, work, headless, true)
 }
 
+/// Whether to run x86-64 machines with KVM: `PBR_QEMU_KVM=1` asked for it and `/dev/kvm` can
+/// be opened for reading and writing. Asked for but unusable, it says so once and emulates.
+pub(crate) fn kvm_wanted() -> bool {
+    use std::sync::OnceLock;
+    static WANTED: OnceLock<bool> = OnceLock::new();
+    *WANTED.get_or_init(|| {
+        if std::env::var("PBR_QEMU_KVM").as_deref() != Ok("1") {
+            return false;
+        }
+        match std::fs::OpenOptions::new().read(true).write(true).open("/dev/kvm") {
+            Ok(_) => true,
+            Err(e) => {
+                eprintln!("PBR_QEMU_KVM=1, but /dev/kvm can't be used ({e}): emulating.");
+                false
+            }
+        }
+    })
+}
+
 /// [`command`], on the disks the last boot left if `fresh` is false (the desktop boot starts
 /// the same disks again after a restart, note 0026, section 6).
 pub(crate) fn command_on(
@@ -324,6 +343,13 @@ pub(crate) fn command_on(
     if cfg.arch == "x86_64" {
         cmd = Command::new("qemu-system-x86_64");
         cmd.args(["-machine", "q35", "-m", MEMORY_MIB]);
+        // PBR_QEMU_KVM=1 runs the x86-64 machines on the processor itself, through Linux's
+        // KVM, instead of emulating every instruction: much faster where /dev/kvm can be
+        // opened. It is opt-in because the boot tests' timings were all measured emulated,
+        // and GitHub's runners don't use it. `-cpu max` under KVM is the host's processor.
+        if kvm_wanted() {
+            cmd.args(["-accel", "kvm"]);
+        }
         if let Some(cpu) = cfg.cpu {
             cmd.args(["-cpu", cpu]);
         }

@@ -308,7 +308,8 @@ PrettyBigRock build tool
                   [--release]
                                          start PrettyBigRock in QEMU, in a window
   cargo xtask qemu-test [--release]      boot every configuration; check the kernel starts
-                                         (PBR_QEMU_ONLY=<text> picks configurations by name)
+                                         (PBR_QEMU_ONLY=<text> picks configurations by name;
+                                         PBR_QEMU_KVM=1 runs x86-64 under KVM)
   cargo xtask check                      formatting and lints
   cargo xtask test                       unit tests on this computer
   cargo xtask ci                         check, test, build and boot everything

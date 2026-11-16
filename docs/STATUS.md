@@ -101,6 +101,9 @@ Note 0025's and 0026's Changes list everything settled.
 - **On Impala** (Claude Code, Ubuntu, 4 cores / 8 threads, 32 GB): the workspace workarounds in
   CLAUDE.md (pinned `stable`, `library/` cloned by hand) aren't needed; rustup and the Rust
   download site work. Push with Chris's own git sign-in; no bundles or Harriet folder needed.
+- **KVM on Impala**: `PBR_QEMU_KVM=1` makes `cargo xtask qemu-test` and `run` add `-accel kvm`
+  to the x86-64 machines (opt-in; ARM64 and GitHub's CI emulate as before). Use it for x86-64
+  boot tests here; a failure seen only under KVM goes to Chris.
 - **In the claude.ai cloud workspace** (2 CPUs): clone with `add_repo` (access push), then `git
   clone --depth 50 --branch m6 https://github.com/chrisjcdow/prettybigrock`; `git config
   user.name Claude`, `user.email noreply@anthropic.com`. Pushing works: `git -c

@@ -109,7 +109,10 @@ that need them say so and are skipped without them, but a stage isn't finished u
 run).
 
 Keep test runs small: host tests for what changed, and the boot configurations that matter
-(`PBR_QEMU_ONLY`, `PBR_QEMU_BOOT`), in the background. When a boot fails, the runner saves
+(`PBR_QEMU_ONLY`, `PBR_QEMU_BOOT`), in the background. **Use `PBR_QEMU_KVM=1` for x86-64 boot
+tests here**: it adds `-accel kvm` to the x86-64 machines when `/dev/kvm` can be opened (ARM64
+is still emulated, and GitHub's CI doesn't set it). A boot that fails only under KVM is
+reported to Chris, not worked round. When a boot fails, the runner saves
 every core's registers and stack in `build/qemu/serial-*.registers.txt`; resolve addresses
 with `llvm-addr2line -f -C -e build/<arch>/debug/kernel.elf ADDR`.
 
