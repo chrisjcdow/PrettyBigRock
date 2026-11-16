@@ -7,11 +7,13 @@ else.
 
 ## Start here
 
-1. `docs/ROADMAP.md`: which milestone we're on and what "done" means for it.
-2. `docs/DESIGN.md`: the decisions that settle arguments (sections 2 and 3).
-3. `docs/design/README.md`, then the design notes for the part you're working on. The notes are
+1. `docs/STATUS.md`: where things stand, what's next, and working notes that save time. Update
+   it at the end of every stage, and whenever something in it stops being true.
+2. `docs/ROADMAP.md`: which milestone we're on and what "done" means for it.
+3. `docs/DESIGN.md`: the decisions that settle arguments (sections 2 and 3).
+4. `docs/design/README.md`, then the design notes for the part you're working on. The notes are
    the project's memory: Claude starts every session without remembering the last one.
-4. The end of `DEVLOG.md`: what the last session did and left open.
+5. The end of `DEVLOG.md`: what the last session did and left open.
 
 Design notes come before code (D14). A note is drafted, walked through with Chris, and accepted
 before what it describes is built. When building teaches us something, the note is updated in
@@ -76,7 +78,8 @@ let node = self.objects.get(badge)?;
   with every test passing on all four boot configurations and a report to Chris.
 - **Keep commits small:** one thing each, with a message saying what and why, ending with the
   attribution lines the session gives you.
-- Update the design notes, `DEVLOG.md` and `docs/ROADMAP.md` as you go, not only at the end.
+- Update the design notes, `DEVLOG.md`, `docs/ROADMAP.md` and `docs/STATUS.md` as you go, not
+  only at the end.
 - This workspace usually can't push to GitHub. Deliver commits as a git bundle in Chris's
   Software Development folder on Harriet (`C:\Users\chris\Nextcloud\Personal Admin\Software
   Development`), check its sha256 there, and Chris fetches and pushes it. Always use a new

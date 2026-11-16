@@ -1082,3 +1082,19 @@ runner's two fixes since passed the desktop boots on x86-64 UEFI). Stress: as ab
 
 Chris's question still open: the heading font (pictures of the picker and the viewer sent).
 
+## 16 November 2026: the PS/2 fix, and the status file moves into the repository
+
+**Chris** ran `m6` on Harriet with `run-prettybigrock.bat` (UEFI and BIOS): the desktop, the
+start menu and the apps worked, but the keyboard and mouse stopped after a minute or two.
+
+- The PS/2 driver drained the controller and only then acknowledged its interrupts. The lines
+  are edge-triggered and stay masked until acknowledged, so a byte that arrived in between was
+  never signalled, and the controller waited for it to be read forever: input stopped while
+  everything else carried on. The driver now acknowledges first (`e81a6f0`). Reproduced and
+  checked by booting as the batch file does and driving QEMU's PS/2 keyboard and mouse over
+  QMP for several minutes. The test boots mostly use virtio input, which is why they never
+  caught it.
+- To save usage, Chris is moving the long build sessions to Claude Code on Impala. The status
+  file and the M6 plan, kept until now in the claude.ai Project, are now `docs/STATUS.md` and
+  `docs/m6-plan.md`, and CLAUDE.md says to read and update STATUS.md in every session.
+
