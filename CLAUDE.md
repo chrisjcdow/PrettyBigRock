@@ -80,10 +80,8 @@ let node = self.objects.get(badge)?;
   attribution lines the session gives you.
 - Update the design notes, `DEVLOG.md`, `docs/ROADMAP.md` and `docs/STATUS.md` as you go, not
   only at the end.
-- This workspace usually can't push to GitHub. Deliver commits as a git bundle in Chris's
-  Software Development folder on Harriet (`C:\Users\chris\Nextcloud\Personal Admin\Software
-  Development`), check its sha256 there, and Chris fetches and pushes it. Always use a new
-  bundle file name.
+- Push straight to the milestone branch on GitHub (`git push origin m6`) as you go. GitHub's CI
+  runs every configuration; don't run the whole of `cargo xtask ci` locally and poll it.
 
 ## Building and testing
 
@@ -101,24 +99,23 @@ let node = self.objects.get(badge)?;
   kind of boot. Don't run two boot tests side by side.
 - `cargo xtask ci`: all of it. A change isn't finished until it passes.
 
-### Setting up Claude's workspace
+### Working on Impala (Claude Code)
 
-The workspace can't reach `static.rust-lang.org`, so:
-- `export RUSTUP_TOOLCHAIN=stable` (it is 1.97.0, the pinned version);
-- clone Rust's `library/` at tag 1.97.0 into `~/.cache/pbr/rust-1.97.0` (`git clone --depth 1
-  --filter=blob:none --sparse --branch 1.97.0 https://github.com/rust-lang/rust.git`, then
-  `git sparse-checkout set library`), and symlink it to
-  `$(rustc --print sysroot)/lib/rustlib/src/rust/library`. The build tool then builds `core`
-  from source (note 0002);
-- install QEMU with apt: `qemu-system-x86 qemu-system-arm qemu-efi-aarch64 ovmf`; for the
-  classic system, `nasm gcc-multilib`; for the FAT32 tests, `dosfstools mtools` (tests that
-  need them say so and are skipped without them, but a stage isn't finished until they've
-  run).
+Impala (Ubuntu, 4 cores / 8 threads, 32 GB) has Rust, QEMU and the other tools installed, so
+the pinned toolchain (`rust-toolchain.toml`) and `cargo xtask build` just work. The packages,
+should they need installing again: `qemu-system-x86 qemu-system-arm qemu-efi-aarch64 ovmf`;
+for the classic system, `nasm gcc-multilib`; for the FAT32 tests, `dosfstools mtools` (tests
+that need them say so and are skipped without them, but a stage isn't finished until they've
+run).
 
-The workspace has only 2 CPUs: since M5 a full `cargo xtask ci` takes about 25 to 55 minutes
-(each boot test 4 to 11, depending on how busy the machine is), so run it in the background with
-a long timeout. Since M6 stage 5 each configuration also has the desktop boot (note 0026,
-section 6), two to four minutes each here; the whole of `cargo xtask ci` took about 30 minutes
-in session 17. When a boot fails,
-the runner saves every core's registers and stack in `build/qemu/serial-*.registers.txt`;
-resolve addresses with `llvm-addr2line -f -C -e build/<arch>/debug/kernel.elf ADDR`.
+Keep test runs small: host tests for what changed, and the boot configurations that matter
+(`PBR_QEMU_ONLY`, `PBR_QEMU_BOOT`), in the background. When a boot fails, the runner saves
+every core's registers and stack in `build/qemu/serial-*.registers.txt`; resolve addresses
+with `llvm-addr2line -f -C -e build/<arch>/debug/kernel.elf ADDR`.
+
+### The claude.ai cloud workspace (earlier sessions)
+
+It has 2 CPUs and can't reach `static.rust-lang.org`: there, `export RUSTUP_TOOLCHAIN=stable`
+and symlink a sparse clone of Rust 1.97.0's `library/` into the sysroot (`docs/STATUS.md`'s
+working notes have the details). It usually couldn't push, so commits went to Chris as git
+bundles through Harriet. A full `cargo xtask ci` took 30 to 80 minutes there.
