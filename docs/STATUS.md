@@ -85,9 +85,16 @@ Note 0025's and 0026's Changes list everything settled.
 
 ### Next
 - Chris's answer on the heading font (`theme::HEADING`; left as it is in 9a).
-- **Under KVM only** (session 21): the second desktop boot's Shut down turns the machine off
-  before the runner has finished its click, and the runner fails with `Broken pipe` writing to
-  QEMU. Reported to Chris, not worked round; emulated, the same boot passes.
+- **Start menu and Shut down** (session 21, after 9a, Chris's request): menus choose on
+  release; Shut down and Restart ask first (`pbr_desktop::confirm`, note 0024's Changes). The
+  KVM-only `Broken pipe` at Shut down is gone with it (the runner's last write is now the
+  release; `click_ending` also tolerates QEMU stopping). Desktop boots under KVM passed on
+  x86-64 UEFI and BIOS, all three boots.
+- **Open: a hang under KVM, seen once** (x86-64 UEFI desktop boot, at the start-menu step,
+  1 run in 4): after the test window ended, nothing more was logged by anyone and every core
+  sat idle in `wait_for_interrupt`; the root program, whose calls all time out in 30 s, never
+  reported. That looks like a sleeping thread never woken (a lost timer?) rather than a loop.
+  Not seen emulated or on CI. Log not kept in the repository; watch for it.
 - Paint's 600 x 400 window is bigger than the test 2x screen (512 x 384 logical); only system
   windows are made to fit. Whether apps' windows should be too is open.
 - Left open: QEMU 8.2.2 SIGSEGV now seen on GitHub too (early kernel, x86-64 UEFI); no
