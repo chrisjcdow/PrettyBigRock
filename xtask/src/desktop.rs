@@ -830,9 +830,70 @@ impl Run<'_> {
         self.desktop_ready(1)?;
         self.line("Desktop test: after restarting")?;
         self.line("Desktop test passed")?;
+        // Shut down asks first (note 0024, Changes); Escape says no, and nothing happens.
         self.choose_from_start_menu("Shut down", 1)?;
+        self.line("desktop: asking: Shut down?")?;
+        self.view("the question", |v| v.window("Shut down").is_some_and(|w| w.is("focused")))?;
+        self.chord(&["esc"])?;
+        self.line("desktop: shut down cancelled")?;
+        self.view("the question gone", |v| v.window("Shut down").is_none())?;
+        // A row is chosen only when the button is let go over it: pressed on Shut down and let
+        // go off the menu, nothing is asked.
+        self.chord(&["meta_l"])?;
+        self.lines("desktop: start menu open", 2)?;
+        self.lines("desktop: menu Shut down at ", 2)?;
+        let text = self.text();
+        let at = text
+            .lines()
+            .rev()
+            .find_map(|l| l.split_once("desktop: menu Shut down at ").map(|(_, r)| r.trim()))
+            .and_then(|r| pair(r, ','))
+            .ok_or("no Shut down in the start menu")?;
+        let first = self.view("a screen", |v| v.screen(1).is_some())?;
+        let first = first.screen(1).cloned().ok_or("no screen 1")?;
+        self.move_to(at.0, at.1)?;
+        self.button(true)?;
+        self.move_to(first.x + first.width / 2, first.y + first.height / 3)?;
+        self.button(false)?;
+        std::thread::sleep(Duration::from_secs(2));
+        if self.count("desktop: asking: Shut down?") != 1 {
+            return Err("Shut down was chosen by a press let go off the menu".into());
+        }
+        let closed = self.count("desktop: start menu closed");
+        self.chord(&["meta_l"])?;
+        self.lines("desktop: start menu closed", closed + 1)?;
+        // And asked again, its button says yes.
+        self.choose_from_start_menu("Shut down", 3)?;
+        self.lines("desktop: asking: Shut down?", 2)?;
+        self.lines("desktop: question button at ", 2)?;
+        let text = self.text();
+        let (bx, by) = text
+            .lines()
+            .rev()
+            .find_map(|l| l.split_once("desktop: question button at ").map(|(_, r)| r.trim()))
+            .and_then(|r| pair(r, ','))
+            .ok_or("no place for the question's button")?;
+        let v = self.view("the question", |v| v.window("Shut down").is_some())?;
+        let q = v.window("Shut down").cloned().ok_or("no question")?;
+        self.click_ending(q.x + bx, q.y + by)?;
         self.line("users: chris asked to turn the computer off")?;
         self.stopped("guest-shutdown")
+    }
+
+    /// Clicks at (`x`, `y`) where the click turns the machine off: QEMU may stop before the
+    /// button is let go (it is acted on when let go, but a fast machine, KVM's, is done before
+    /// the runner's next message), so a refused write then is not a failure; whether the
+    /// machine turned itself off is checked after, by why QEMU stopped.
+    fn click_ending(&mut self, x: i32, y: i32) -> Result<(), String> {
+        self.move_to(x, y)?;
+        self.button(true)?;
+        match self.button(false) {
+            Err(e) if matches!(self.child.try_wait(), Ok(Some(_))) || e.contains("Broken pipe") => {
+                eprintln!("  (QEMU stopped as the button was let go: {e})");
+                Ok(())
+            }
+            other => other,
+        }
     }
 
     /// The text-mode boot: the console instead of the display server, and the shell on it.
