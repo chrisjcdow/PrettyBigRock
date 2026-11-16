@@ -258,6 +258,27 @@ impl Files {
         self.tree.mounts().iter().map(|m| (m.path.clone(), m.kind == Kind::Folder)).collect()
     }
 
+    /// Writes the tree to the log, one line per entry (`[tree] paint /Home/Pictures rw`), for
+    /// the desktop boot (docs/design/0026-apps-m6-tests-and-stages.md, section 6). The rights
+    /// are what each entry's capability says it may do, asked of the filesystem server, not
+    /// what the sandbox manager meant to give: the runner compares the two. A program with no
+    /// files says `[tree] APP empty`. Apps call it at start in test boots only.
+    pub fn report(&self, app: &str) {
+        let mounts = self.tree.mounts();
+        if mounts.is_empty() {
+            granite::println!("[tree] {app} empty");
+        }
+        for (m, cap) in mounts.iter().zip(&self.caps) {
+            let rights = match cap.info() {
+                Ok(i) if i.rights.0 & WRITE.0 != 0 => "rw",
+                Ok(i) if i.rights.0 & READ.0 != 0 => "r",
+                Ok(_) => "none",
+                Err(_) => "unreachable",
+            };
+            granite::println!("[tree] {app} {} {rights}", m.path);
+        }
+    }
+
     /// Adds `cap`, a capability for a file or folder, to the tree at `path`.
     pub fn mount(&mut self, path: &str, cap: Handle) -> Result<()> {
         let path = self.absolute(path)?;
