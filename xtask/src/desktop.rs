@@ -1679,7 +1679,10 @@ impl Run<'_> {
         self.line("wintest test: closing")?;
 
         // ---- Step 4b: the widget gallery (note 0023, section 6). ----
-        self.gallery(first)?;
+        self.gallery(first.clone())?;
+
+        // ---- Step 4c: stage 9's apps (note 0026, sections 1 and 7). ----
+        self.apps(&first)?;
 
         // ---- Step 5: falling back to the shell, which restarts the machine. ----
         self.line("Desktop test: falling back")?;
@@ -1690,9 +1693,434 @@ impl Run<'_> {
     }
 }
 
+/// Where Paint's toolbar has colour `n` (`colour`) or brush size `n`, from the toolbar's
+/// corner (apps/paint's `tool_centre`, written here again so the runner needn't build Paint).
+fn pbr_paint_tool(n: i32, colour: bool) -> (i32, i32) {
+    if colour { (8 + n * 23 + 10, 19) } else { (8 + 13 * 23 + 8 + n * 27 + 13, 19) }
+}
+
+/// The CRC Paint says 1.3's `rock.bmp` has once opened: CRC-32 of its pixels, each as four
+/// bytes, as apps/paint's `picture_line` works it out.
+fn rock_crc() -> Result<String, String> {
+    let bytes =
+        fs::read("tests/data/classic-1.3-rock.bmp").map_err(|e| format!("rock.bmp: {e}"))?;
+    let picture = pbr_bmp::decode(&bytes).map_err(|e| format!("rock.bmp: {e}"))?;
+    let crc = picture.pixels().iter().fold(0, |crc, p| pbr_crc::update(crc, &p.to_le_bytes()));
+    Ok(format!("{crc:08x}"))
+}
+
+/// What Snake last said of its game (`snake: playing score 10 best 10 head 9,10 food 3,4
+/// heading right length 5`; apps/snake): its state, score, head, food and heading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SnakeLine {
+    state: String,
+    score: u32,
+    head: (i32, i32),
+    food: Option<(i32, i32)>,
+    heading: String,
+}
+
+fn snake_line(l: &str) -> Option<SnakeLine> {
+    let rest = l.split_once("snake: ")?.1;
+    let w: Vec<&str> = rest.split_whitespace().collect();
+    let state = *w.first()?;
+    if !["ready", "playing", "paused", "over"].contains(&state) {
+        return None;
+    }
+    let after = |key: &str| w.iter().position(|x| *x == key).and_then(|i| w.get(i + 1)).copied();
+    Some(SnakeLine {
+        state: state.to_string(),
+        score: num(after("score")?)?,
+        head: pair(after("head")?, ',')?,
+        food: after("food").and_then(|f| pair(f, ',')),
+        heading: after("heading")?.to_string(),
+    })
+}
+
+/// The last thing Snake said of its game.
+fn last_snake(text: &str) -> Option<SnakeLine> {
+    text.lines().rev().find_map(snake_line)
+}
+
+/// Which way to steer from `at`, heading `heading`, towards `to`: straight at it along one
+/// axis, then the other, never straight back (which the game ignores), and away from a wall
+/// rather than into it when the food is behind.
+fn steer(at: (i32, i32), heading: &str, to: (i32, i32)) -> &'static str {
+    let (dx, dy) = (to.0 - at.0, to.1 - at.1);
+    let reverse = |h: &str| match h {
+        "right" => "left",
+        "left" => "right",
+        "up" => "down",
+        _ => "up",
+    };
+    let want = if dx > 0 {
+        "right"
+    } else if dx < 0 {
+        "left"
+    } else if dy > 0 {
+        "down"
+    } else {
+        "up"
+    };
+    if want != reverse(heading) {
+        return want;
+    }
+    // The food is behind: turn across first (towards the middle of the board, 28 x 20).
+    match heading {
+        "right" | "left" => {
+            if at.1 < 10 {
+                "down"
+            } else {
+                "up"
+            }
+        }
+        _ => {
+            if at.0 < 14 {
+                "right"
+            } else {
+                "left"
+            }
+        }
+    }
+}
+
+/// Stage 9's apps (note 0026, sections 1 and 7), each launched from the start menu, checked,
+/// pictured and closed.
+impl Run<'_> {
+    /// The apps, in the order the root program expects them (`services/root/src/desktoptest.rs`,
+    /// `APPS`).
+    fn apps(&mut self, first: &ScreenLine) -> Result<(), String> {
+        self.line("Desktop test: the apps")?;
+        self.calculator(first)?;
+        self.snake(first)?;
+        self.paint(first)?;
+        self.about(first)?;
+        Ok(())
+    }
+
+    /// Launches `title` from the start menu and waits for `program` to say it is open and its
+    /// window to be drawn and focused.
+    fn launch_app(&mut self, title: &str, program: &str) -> Result<WindowLine, String> {
+        let menus = self.count("desktop: start menu open");
+        let opened = self.count(&format!("{program}: open."));
+        // The desktop names its menu's rows by app in the log (`desktop: menu paint at`).
+        self.choose_from_start_menu(program, menus + 1)?;
+        self.lines(&format!("{program}: open."), opened + 1)?;
+        let v = self.view(&format!("{title} drawn and focused"), |v| {
+            v.window(title).is_some_and(|w| w.is("drawn") && w.is("focused"))
+        })?;
+        v.window(title).cloned().ok_or(format!("no {title}"))
+    }
+
+    /// The app's own `[tree]` lines (what its capabilities can do, note 0026, section 6) are
+    /// what the sandbox manager says it granted (the root program's line), and what its
+    /// manifest gives (`want`: path and whether read and write).
+    fn check_tree(&mut self, program: &str, want: &[(&str, bool)]) -> Result<(), String> {
+        let grants_at = format!("({program}) grants: ");
+        let tree_at = format!("[tree] {program} ");
+        let text = self.wait(&format!("{program}'s tree and grants"), |t| {
+            t.contains(&grants_at) && t.contains(&tree_at)
+        })?;
+        let mut tree: Vec<(String, bool)> = text
+            .lines()
+            .filter_map(|l| l.split_once(tree_at.as_str()).map(|(_, r)| r.trim()))
+            .filter(|r| *r != "empty")
+            .filter_map(|r| r.rsplit_once(' ').map(|(p, rights)| (p.to_string(), rights == "rw")))
+            .collect();
+        let line = text
+            .lines()
+            .find_map(|l| l.split_once(grants_at.as_str()).map(|(_, r)| r.trim().to_string()))
+            .unwrap_or_default();
+        let mut grants: Vec<(String, bool)> = line
+            .split("; ")
+            .filter(|g| !g.is_empty())
+            .filter_map(|g| {
+                let mut w = g.rsplitn(3, ' ');
+                let (_, rights, path) = (w.next()?, w.next()?, w.next()?);
+                Some((path.to_string(), rights == "rw"))
+            })
+            .collect();
+        let mut wanted: Vec<(String, bool)> =
+            want.iter().map(|(p, rw)| (p.to_string(), *rw)).collect();
+        tree.sort();
+        grants.sort();
+        wanted.sort();
+        if tree != grants || grants != wanted {
+            return Err(format!(
+                "{program}'s tree is {tree:?}, its grants {grants:?}, its manifest gives {wanted:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Pictures of window `w` (titled `title`) for people, as `NAME-1x.png` and, dragged to
+    /// the 2x screen and back, `NAME-2x.png`; the pointer is moved off it first.
+    fn app_pictures(
+        &mut self,
+        w: &WindowLine,
+        title: &str,
+        name: &str,
+        first: &ScreenLine,
+    ) -> Result<(), String> {
+        self.move_to(first.x + first.width - 8, first.y + 8)?;
+        let v = self.view(title, |v| v.window(title).is_some())?;
+        self.keep_window(&v, w, &format!("{name}-1x"))?;
+        if self.cfg.screens == Screens::TwoVirtioGpu {
+            let second = v.screens.iter().find(|s| s.number != 1).cloned().ok_or("no screen 2")?;
+            self.drag_window(w, second.x + 20, second.y + 40)?;
+            self.move_to(first.x + first.width - 8, first.y + 8)?;
+            let v = self.view(&format!("{title} at 2x"), |v| {
+                v.window(title).is_some_and(|p| p.scale == 200 && p.screen == second.number)
+            })?;
+            let w2 = v.window(title).cloned().ok_or(format!("no {title}"))?;
+            self.keep_window(&v, &w2, &format!("{name}-2x"))?;
+            self.drag_window(&w2, w.x, w.y)?;
+            self.view(&format!("{title} back"), |v| {
+                v.window(title).is_some_and(|p| p.scale == 100 && p.is("focused"))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Calculator: a sum typed with the keys, one clicked with the pointer.
+    fn calculator(&mut self, first: &ScreenLine) -> Result<(), String> {
+        let w = self.launch_app("Calculator", "calculator")?;
+        self.check_tree("calculator", &[])?;
+        self.app_pictures(&w, "Calculator", "calculator", first)?;
+        // 12 - 5 = with the keys (keys that need no Shift on every layout).
+        for k in ["1", "2", "minus", "5", "equal"] {
+            self.chord(&[k])?;
+        }
+        self.line("calculator: display 7")?;
+        // C 4 + 5 = with the pointer.
+        for key in ["clear", "4", "plus", "5", "equals"] {
+            self.click_program_widget("calculator", "Calculator", key)?;
+        }
+        self.line("calculator: display 9")?;
+        self.chord(&["ctrl", "w"])?;
+        self.line("calculator: closing").map(|_| ())
+    }
+
+    /// Snake: it starts, pauses, turns towards the food and eats it, and ends against a wall.
+    fn snake(&mut self, first: &ScreenLine) -> Result<(), String> {
+        let w = self.launch_app("Snake", "snake")?;
+        self.check_tree("snake", &[("/Home/Apps/snake", true)])?;
+        self.app_pictures(&w, "Snake", "snake", first)?;
+        self.chord(&["spc"])?;
+        self.wait("the game started", |t| last_snake(t).is_some_and(|s| s.state == "playing"))?;
+        self.chord(&["p"])?;
+        self.wait("the game paused", |t| last_snake(t).is_some_and(|s| s.state == "paused"))?;
+        self.chord(&["p"])?;
+        self.wait("the game going again", |t| last_snake(t).is_some_and(|s| s.state == "playing"))?;
+        // Steer to the food, reading where the head is after every step.
+        let end = Instant::now() + Duration::from_secs(90);
+        let mut sent: Option<&str> = None;
+        let mut turned = false;
+        loop {
+            let s = last_snake(&self.text()).ok_or("Snake says nothing of its game")?;
+            if s.score > 0 {
+                break;
+            }
+            if s.state != "playing" {
+                return Err(format!("the snake died before eating: {s:?}"));
+            }
+            if Instant::now() > end {
+                return Err(format!("the snake didn't reach the food in 90 seconds: {s:?}"));
+            }
+            let food = s.food.ok_or("no food")?;
+            let way = steer(s.head, &s.heading, food);
+            if way != s.heading && sent != Some(way) {
+                self.chord(&[way])?;
+                sent = Some(way);
+                turned = true;
+            } else if way == s.heading {
+                sent = None;
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        if !turned {
+            return Err("the snake reached the food without turning".into());
+        }
+        self.wait("10 points", |t| last_snake(t).is_some_and(|s| s.score == 10))?;
+        // Left alone, it goes straight into a wall.
+        self.wait("the game over", |t| last_snake(t).is_some_and(|s| s.state == "over"))?;
+        self.chord(&["ctrl", "w"])?;
+        self.line("snake: closing").map(|_| ())
+    }
+
+    /// The CRC Paint last said its picture has (`paint: picture 600x362 crc 1a2b3c4d`), and
+    /// how many times it has said one.
+    fn paint_picture(&self) -> (usize, Option<String>) {
+        let text = self.text();
+        let crc = text.lines().rev().find_map(|l| {
+            l.split_once("paint: picture 600x362 crc ").map(|(_, c)| c.trim().to_string())
+        });
+        (text.matches("paint: picture ").count(), crc)
+    }
+
+    /// Waits for Paint to say its picture changed, after it had said so `before` times.
+    fn paint_changed(&mut self, before: usize, what: &str) -> Result<String, String> {
+        self.wait(what, |t| t.matches("paint: picture ").count() > before)?;
+        self.paint_picture().1.ok_or(format!("no picture line from Paint ({what})"))
+    }
+
+    /// Gives Paint the keyboard (a click on its title bar, which draws nothing), then asks
+    /// the picker with `keys`; waits for the picker's window.
+    fn paint_picker(&mut self, keys: &[&str], what: &str) -> Result<GalleryView, String> {
+        let v = self.view("Paint", |v| v.window("Paint").is_some())?;
+        let w = v.window("Paint").cloned().ok_or("no Paint")?;
+        self.click_at(w.x + 120, w.y - 13)?;
+        self.view("Paint focused", |v| v.window("Paint").is_some_and(|w| w.is("focused")))?;
+        let opened = self.count("picker: open for app");
+        self.chord(keys)?;
+        self.lines("picker: open for app", opened + 1)?;
+        let g = self.program_view("picker", what, |g| {
+            g.windows.len() == 1 && g.other("places ").is_some()
+        })?;
+        self.view("the picker's window", |v| {
+            v.window("File picker").is_some_and(|w| w.is("drawn") && w.is("system"))
+        })?;
+        Ok(g)
+    }
+
+    /// Paint: chooses a colour and a size, draws, saves through the picker, clears, opens what
+    /// it saved (the same picture), and opens the picture 1.3's Paint saved on 1.3's disk.
+    fn paint(&mut self, first: &ScreenLine) -> Result<(), String> {
+        let w = self.launch_app("Paint", "paint")?;
+        self.check_tree("paint", &[("/Home/Apps/paint", true), ("/Home/Pictures", true)])?;
+        self.app_pictures(&w, "Paint", "paint", first)?;
+        // Red (the fourth colour) and the third brush size, from the toolbar.
+        let g = self.program_view("paint", "the toolbar and the picture", |g| {
+            g.widget("tools").is_some() && g.widget("picture").is_some()
+        })?;
+        let tools = g.widget("tools").cloned().ok_or("no toolbar")?;
+        let picture = g.widget("picture").cloned().ok_or("no picture")?;
+        let (_, win) = self.program_window(&g, "Paint", tools.window)?;
+        for (tool, line) in [
+            (pbr_paint_tool(3, true), "paint: colour 3 size "),
+            (pbr_paint_tool(2, false), "paint: colour 3 size 2"),
+        ] {
+            self.click_at(win.x + tools.x + tool.0, win.y + tools.y + tool.1)?;
+            self.line(line)?;
+        }
+        // A stroke across the picture.
+        let (before, _) = self.paint_picture();
+        let (px, py) = (win.x + picture.x, win.y + picture.y);
+        self.move_to(px + 100, py + 100)?;
+        self.button(true)?;
+        for (x, y) in [(200, 160), (300, 100), (400, 180)] {
+            self.move_to(px + x, py + y)?;
+        }
+        self.button(false)?;
+        let drawn = self.paint_changed(before, "the stroke drawn")?;
+        // Saved through the picker, in Pictures, as the name it offers.
+        let saved = self.count("paint: saved ");
+        self.paint_picker(&["ctrl", "s"], "saving a picture")?;
+        self.program_view("picker", "Drawing N.bmp offered", |g| {
+            g.widget("name").is_some_and(|w| w.focused && w.value.starts_with("Drawing "))
+        })?;
+        self.chord(&["ret"])?;
+        let text =
+            self.lines("paint: saved /Home/Pictures/Drawing ", saved + 1).map(|_| self.text())?;
+        let line = text
+            .lines()
+            .rev()
+            .find_map(|l| l.split_once("paint: saved ").map(|(_, r)| r.to_string()))
+            .unwrap_or_default();
+        let (path, size) = line.rsplit_once(" (").ok_or(format!("Paint saved {line}"))?;
+        if size != "651654 bytes)" {
+            return Err(format!("Paint saved {path} as {size}, not 651654 bytes"));
+        }
+        let name = path.rsplit_once('/').map(|(_, n)| n.to_string()).unwrap_or_default();
+        // Clear, then open what was saved: the same picture.
+        let (before, _) = self.paint_picture();
+        self.click_program_widget("paint", "Paint", "Clear")?;
+        let white = self.paint_changed(before, "the picture cleared")?;
+        if white == drawn {
+            return Err("Clear left the picture as it was".into());
+        }
+        let (before, _) = self.paint_picture();
+        self.paint_picker(&["ctrl", "o"], "opening a picture")?;
+        self.pick_row("/Home/Pictures", &name)?;
+        self.line(&format!("paint: opened {path}"))?;
+        let opened = self.paint_changed(before, "the saved picture opened")?;
+        if opened != drawn {
+            return Err(format!("{path} opened as crc {opened}, drawn as {drawn}"));
+        }
+        // 1.3's picture, on 1.3's disk: the volume with Pictures/rock.bmp.
+        let rock = rock_crc()?;
+        let (before, _) = self.paint_picture();
+        let g = self.paint_picker(&["ctrl", "o"], "opening 1.3's picture")?;
+        let places = g.names("places ").unwrap_or_default();
+        let mut found = None;
+        for (row, place) in places.iter().enumerate().filter(|(_, p)| p.starts_with("Data")) {
+            self.click_row("picker", "File picker", "places", row)?;
+            let start = format!("folder /Volumes/{place}: ");
+            let g = self.program_view("picker", &format!("{place} listed"), |g| {
+                g.other(&start).is_some()
+            })?;
+            if g.names(&start).unwrap_or_default().iter().any(|n| n == "Pictures") {
+                found = Some(place.clone());
+                break;
+            }
+        }
+        let place = found.ok_or(format!("no volume with 1.3's Pictures among {places:?}"))?;
+        self.pick_row(&format!("/Volumes/{place}"), "Pictures")?;
+        self.pick_row(&format!("/Volumes/{place}/Pictures"), "rock.bmp")?;
+        self.line(&format!("paint: opened /Volumes/{place}/Pictures/rock.bmp"))?;
+        let got = self.paint_changed(before, "1.3's picture opened")?;
+        if got != rock {
+            return Err(format!("1.3's rock.bmp opened as crc {got}, not {rock}"));
+        }
+        self.chord(&["ctrl", "w"])?;
+        self.line("paint: closing").map(|_| ())
+    }
+
+    /// About: the facts, from pbr.sysinfo.
+    fn about(&mut self, first: &ScreenLine) -> Result<(), String> {
+        let title = "About PrettyBigRock";
+        let w = self.launch_app(title, "about")?;
+        self.check_tree("about", &[])?;
+        for fact in ["version 2.0.0-alpha.1", "display ", "memory ", "uptime ", "disk "] {
+            let text = self.line(&format!("about: {fact}"))?;
+            let value = text
+                .lines()
+                .rev()
+                .find_map(|l| l.split_once(&format!("about: {fact}")).map(|(_, r)| r.to_string()))
+                .unwrap_or_default();
+            if value.contains('\u{2014}') {
+                return Err(format!("About doesn't know its {fact}"));
+            }
+        }
+        self.app_pictures(&w, title, "about", first)?;
+        self.chord(&["ctrl", "w"])?;
+        self.line("about: closing").map(|_| ())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reading_snakes_game_and_steering() {
+        let text = "[snake] snake: view 1\n\
+            [snake] snake: playing score 10 best 20 head 9,10 food 3,4 heading right length 5\n\
+            [snake] snake: widget 0 canvas \"Snake board\" at 0,0 size 420x330\n";
+        let s = last_snake(text).unwrap();
+        assert_eq!(
+            (s.state.as_str(), s.score, s.head, s.food),
+            ("playing", 10, (9, 10), Some((3, 4)))
+        );
+        assert_eq!(s.heading, "right");
+        assert_eq!(last_snake("[snake] snake: open."), None);
+        // Towards the food, never straight back.
+        assert_eq!(steer((5, 5), "right", (9, 2)), "right");
+        assert_eq!(steer((9, 5), "right", (9, 2)), "up");
+        assert_eq!(steer((9, 5), "right", (3, 5)), "down");
+        assert_eq!(steer((9, 15), "right", (3, 5)), "up");
+        assert_eq!(steer((9, 5), "down", (9, 2)), "right");
+    }
 
     #[test]
     fn reading_the_gallerys_description() {
