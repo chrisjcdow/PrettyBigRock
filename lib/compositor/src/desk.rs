@@ -623,6 +623,16 @@ impl Desk {
     fn move_to_screen(&mut self, id: WindowId, from: Rect, to: Option<u32>, now: u64) {
         let target = to.and_then(|n| self.space.screen(n)).or_else(|| self.space.main());
         let Some(target) = target.map(Screen::rect) else { return };
+        // A resizable window bigger than the screen it goes to is made to fit it (within its
+        // limits), as it would have been had it opened there.
+        if let Some(w) = self.windows.get(&id)
+            && w.flags.contains(WindowFlags::RESIZABLE)
+        {
+            let fitted = self.limit_size(w, fit_in(w.size, target));
+            if fitted != w.size {
+                self.set_size(id, fitted, now);
+            }
+        }
         let Some(w) = self.windows.get(&id) else { return };
         let outline = w.outline();
         let content = w.content();
@@ -996,7 +1006,11 @@ impl Desk {
         }
         match kind {
             WindowKind::Normal | WindowKind::System => {
-                if kind == WindowKind::System {
+                // A window bigger than the main screen's work area is made to fit it, if it can
+                // be: a system window always, an app's if it is resizable (note 0022, Changes).
+                // One that can't keeps its size, and opens at the work area's corner so that its
+                // title bar can be reached.
+                if kind == WindowKind::System || flags.contains(WindowFlags::RESIZABLE) {
                     window.size = fit_in(window.size, self.main_area());
                 }
                 let k = self.session(session).map_or(0, |s| s.opened);

@@ -274,6 +274,40 @@ fn a_screen_going_moves_its_windows_and_coming_back_gets_its_place() {
 }
 
 #[test]
+fn windows_bigger_than_the_screen_fit_it_if_they_can() {
+    // The main screen, 1024 x 768 at 2x: 512 x 384 logical, with the taskbar's 38 below.
+    let mut h = H::new(&[output(0, 1024, 768, 135)]);
+    let desk = h.client(1, "Desktop", flags::DESKTOP, false);
+    h.d.arrange(
+        desk,
+        &[(1, Place { x: 0, y: 0, scale: 200, rotation: 0, mirrors: 0, main: true })],
+        h.now,
+    )
+    .unwrap();
+    let c = h.client(7, "Paint", 0, true);
+    // Resizable: made to fit, title bar and all, and told so.
+    let w = h
+        .d
+        .create(c, WindowKind::Normal, 0, "", (600, 422), WindowFlags::RESIZABLE, (0, 0), 0, h.now)
+        .unwrap();
+    // (Drawn at all means its frame came at the size it was told: the harness draws at the
+    // configured size.)
+    h.draw(c, w);
+    assert!(h.line(7, w).contains(" drawn"));
+    let (x, y, width, height) = h.place(7, w);
+    assert!(width < 600 && height < 422, "{width}x{height}");
+    assert!(x >= 1 && y >= 27 && x + width <= 512 && y + height <= 384, "at {x},{y}");
+    // Not resizable: its size is kept, at the corner, where its title bar can be reached
+    // (taller than the work area, but no bigger than the screen in device pixels, the most a
+    // frame may be).
+    let fixed = h.client(8, "Fixed", 0, true);
+    let f = h.window(fixed, (500, 370));
+    let (x, y, width, height) = h.place(8, f);
+    assert_eq!((width, height), (500, 370));
+    assert!(x >= 1 && x + width <= 512 && (27..=32).contains(&y), "at {x},{y}");
+}
+
+#[test]
 fn arrangements_that_cant_be_are_refused_whole() {
     let mut h = H::new(&[output(0, 1280, 800, 340), output(1, 1024, 768, 270)]);
     let desk = h.client(1, "Desktop", flags::DESKTOP, false);

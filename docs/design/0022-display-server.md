@@ -462,6 +462,15 @@ descriptors (the front end turns them into capabilities).
 - Accessibility: a screen reader needs a way to read windows' contents that the sandbox allows.
 
 ## Changes
+- 16 November 2026 (M6 stage 9a): **windows are made to fit their screen where they can.** A
+  system window, or an app's resizable window, opening bigger than the main screen's work area
+  is shrunk to fit it, borders and title bar and all; a system window opened over an app's
+  window fits that window's screen; a resizable window moved to another screen when its own
+  goes is shrunk to fit that one (within its limits). Each is told its new size. A window that
+  isn't resizable keeps its size and opens at the work area's corner, so its title bar can be
+  reached. (A frame can never be bigger than the largest screen in device pixels, so a fixed
+  600 x 400 window at 2x on a lone 1024 x 768 screen can't be drawn at all: apps should be
+  resizable. Paint became so in stage 9a.)
 - 14 November 2026, M6 stage 6: the start-menu key's event to the desktop carries a serial,
   recorded as a press on the desktop's panel, so the desktop can open its start menu as a
   popup of the panel (a popup needs a press's serial, and a panel never has the keyboard). A
