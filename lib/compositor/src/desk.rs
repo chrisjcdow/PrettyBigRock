@@ -996,6 +996,9 @@ impl Desk {
         }
         match kind {
             WindowKind::Normal | WindowKind::System => {
+                if kind == WindowKind::System {
+                    window.size = fit_in(window.size, self.main_area());
+                }
                 let k = self.session(session).map_or(0, |s| s.opened);
                 window.place = self.opening_place(window.size, kind, k);
             }
@@ -1114,10 +1117,7 @@ impl Desk {
     /// Where a new normal or system window opens: cascading down and right across the main
     /// screen's work area, each a little further than the last.
     fn opening_place(&self, size: (i32, i32), kind: WindowKind, k: u32) -> (i32, i32) {
-        let main = self.space.main().map(|s| s.number);
-        let area =
-            main.and_then(|n| self.work_area(n)).or_else(|| self.space.main().map(Screen::rect));
-        let area = area.unwrap_or(Rect::new(0, 0, NO_SCREEN.0, NO_SCREEN.1));
+        let area = self.main_area();
         let (fw, fh) = (size.0 + 2 * decor::BORDER, size.1 + 2 * decor::BORDER + decor::TITLE);
         if kind == WindowKind::System {
             let c = centred(area, (fw, fh));
@@ -1130,6 +1130,14 @@ impl Desk {
         let x = x.min(area.x + (area.width - fw).max(0));
         let y = y.min(area.y + (area.height - fh).max(0));
         (x + decor::BORDER, y + decor::BORDER + decor::TITLE)
+    }
+
+    /// The main screen's work area (its part of the space without its panels).
+    fn main_area(&self) -> Rect {
+        let main = self.space.main().map(|s| s.number);
+        let area =
+            main.and_then(|n| self.work_area(n)).or_else(|| self.space.main().map(Screen::rect));
+        area.unwrap_or(Rect::new(0, 0, NO_SCREEN.0, NO_SCREEN.1))
     }
 
     /// `create_over`: a system window over another app's window, blocking input to it.
@@ -1162,9 +1170,17 @@ impl Desk {
         // and all, even when it is bigger than the app's window it is centred over.
         let screen = tc.and_then(|r| self.space.holding_most(r)).and_then(|n| self.space.screen(n));
         let bounds = screen.map(|s| s.rect());
+        let mut resized = false;
         if let (Some(tc), Some(w)) = (tc, self.windows.get_mut(&id)) {
             w.over = Some(target);
             let old = w.bounds();
+            // Bigger than that screen (the picker's 600 x 400 on a 2x screen of 512 x 384
+            // logical pixels): made to fit it, so that every part of it can be reached.
+            if let Some(b) = bounds {
+                let fitted = fit_in(w.size, b);
+                resized = fitted != w.size;
+                w.size = fitted;
+            }
             w.place = centred(tc, w.size);
             if let Some(b) = bounds {
                 let top = decor::TITLE + decor::BORDER;
@@ -1179,6 +1195,9 @@ impl Desk {
             let new = w.bounds();
             self.damage(old);
             self.damage(new);
+        }
+        if resized {
+            self.configure(id, now);
         }
         self.check_scale(id, now);
         if had_focus {
@@ -2427,6 +2446,14 @@ fn clean_title(t: &str) -> String {
         s.push(c);
     }
     s
+}
+
+/// The largest content size, at most `size`, whose frame (borders and title bar) fits in `area`:
+/// how a system window bigger than its screen is made to fit it.
+fn fit_in(size: (i32, i32), area: Rect) -> (i32, i32) {
+    let most_w = (area.width - 2 * decor::BORDER).max(decor::MIN_WIDTH);
+    let most_h = (area.height - 2 * decor::BORDER - decor::TITLE).max(1);
+    (size.0.min(most_w), size.1.min(most_h))
 }
 
 /// The corner that centres a size in a rectangle.

@@ -1012,6 +1012,23 @@ fn system_clients_check_serials_and_open_windows_over_others() {
     let (ox, oy, ow, oh) = h.place(3, over);
     assert!(ox >= 1 && oy >= 27, "the system window at {ox},{oy}, its app's at {sx},{sy}");
     assert!(ox + ow <= 1280 && oy + oh <= 800);
+    // Bigger than the screen itself, it is made to fit it, and told its new size.
+    h.d.destroy(picker, over, h.now).unwrap();
+    h.events(picker);
+    let over =
+        h.d.create_over(picker, 7, small, "Open", (1500, 900), WindowFlags(0), h.now).unwrap();
+    let (ox, oy, ow, oh) = h.place(3, over);
+    assert!(ow < 1280 && oh < 800, "the system window is {ow}x{oh}");
+    assert!(ox >= 1 && oy >= 27 && ox + ow <= 1280 && oy + oh <= 800, "at {ox},{oy}");
+    let configured = h.events(picker).into_iter().rfind(|e| e.kind == kind::CONFIGURE).unwrap();
+    assert_eq!((configured.a as i32, configured.b as i32), (ow, oh));
+    // So is one it opens on its own (the permissions viewer on a small screen).
+    let alone = h
+        .d
+        .create(picker, WindowKind::System, 0, "", (2000, 2000), WindowFlags(0), (0, 0), 0, h.now)
+        .unwrap();
+    let (ax, ay, aw, ah) = h.place(3, alone);
+    assert!(ax >= 1 && ay >= 27 && ax + aw <= 1280 && ay + ah <= 800, "{aw}x{ah} at {ax},{ay}");
 }
 
 #[test]
