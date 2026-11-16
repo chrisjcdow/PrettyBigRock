@@ -94,6 +94,7 @@ mod program {
         say!("open.");
         let mut last: Vec<String> = Vec::new();
         let mut shown = String::new();
+        let mut views = 0u32;
         conn.run(|c, event| {
             let go = rt.handle(&mut *c, event);
             for l in rt.app_mut().take_log() {
@@ -112,10 +113,14 @@ mod program {
                         lines.push(format!("widget {} {}", id.0, d.line()));
                     }
                 }
+                // Framed as the gallery's and the picker's are, so the runner reads a whole view.
                 if lines != last {
+                    views += 1;
+                    say!("view {views}");
                     for l in &lines {
                         say!("{l}");
                     }
+                    say!("view {views} done");
                     last = lines;
                 }
             }
