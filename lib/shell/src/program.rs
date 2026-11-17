@@ -301,9 +301,7 @@ impl<C: Console> Shell<C> {
                     Some(typed) => self
                         .files
                         .absolute(typed)
-                        .and_then(|p| {
-                            apps::sandbox_path(p).map_err(|r| Failure::new(typed, r))
-                        })
+                        .and_then(|p| apps::sandbox_path(p).map_err(|r| Failure::new(typed, r)))
                         .and_then(|path| self.run_app("notepad", file.as_slice(), &path)),
                     None => self.run_app("notepad", &[], ""),
                 };
