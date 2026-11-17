@@ -114,8 +114,12 @@ impl Session {
     }
 }
 
-/// Waits for `p` to end, by itself, with `status` (`None`: however it ends).
-fn ended(p: &Process, title: &str, status: Option<u64>, secs: u64) -> Result<State, String> {
+/// Waits for `p` to end, by itself, with `status` (`None`: however it ends). Takes the
+/// capability and lets it go: while anyone holds a process's capability, the process object
+/// stays, and with it its whole budget, reserved in the session (note 0006, section 9). Held to
+/// the end of the test, the gallery's and the test windows' budgets left too little of the
+/// session's for the apps after them.
+fn ended(p: Process, title: &str, status: Option<u64>, secs: u64) -> Result<State, String> {
     let n = Notification::create().map_err(|e| format!("{e}"))?;
     p.watch(&n, 1).map_err(|e| format!("watching {title}: {e}"))?;
     if matches!(p.info().map(|i| i.state), Ok(State::Running | State::Ending)) {
@@ -294,7 +298,7 @@ fn all(sup: &Supervisor) -> Result<String, String> {
 
     // Which boot this is: a note saved by the first is found by the second.
     let (_, p) = s.launch("wintest", "name=Saved load")?;
-    if ended(&p, "wintest load", None, 120)? == State::Exited(FOUND) {
+    if ended(p, "wintest load", None, 120)? == State::Exited(FOUND) {
         granite::println!("Desktop test: after restarting");
         done.push("what was saved before restarting is still there");
         return Ok(done.join(", "));
@@ -307,20 +311,20 @@ fn all(sup: &Supervisor) -> Result<String, String> {
     let (_, beta) = s.launch("wintest", "name=Beta colour=4060c0 size=300x200 resizable")?;
     granite::println!("Desktop test: drive the windows");
     // The runner's last step closes Alpha with its close button.
-    ended(&alpha, "Alpha", Some(0), STEP_SECS)?;
+    ended(alpha, "Alpha", Some(0), STEP_SECS)?;
     done.push("windows drawn where they open, focus, keys, the pointer, the clipboard");
 
     // Step 2: a program that stops answering, and a hostile one.
     let (_, hung) = s.launch("wintest", "name=Hung colour=808080 size=200x120 hang")?;
     let (_, probe) = s.launch("windowprobe", "")?;
     granite::println!("Desktop test: the hung window");
-    ended(&probe, "windowprobe", Some(0), STEP_SECS)?;
+    ended(probe, "windowprobe", Some(0), STEP_SECS)?;
     done.push("a hostile app refused");
     // The runner sees the hung window marked, types into Beta, and closes it with Ctrl+W, then
     // stops the hung app from its window menu, which the desktop passes to the sandbox manager.
-    ended(&beta, "Beta", Some(0), STEP_SECS)?;
+    ended(beta, "Beta", Some(0), STEP_SECS)?;
     done.push("a hung app marked not responding while the rest carry on");
-    ended(&hung, "Hung", None, STEP_SECS)?;
+    ended(hung, "Hung", None, STEP_SECS)?;
     done.push("an app stopped from its window menu");
 
     // Step 3: the display server crashes. The sandbox manager stops the apps with windows (the
@@ -333,7 +337,7 @@ fn all(sup: &Supervisor) -> Result<String, String> {
     check_desktop(&s)?;
     let (_, again) = s.launch("wintest", "name=Again colour=40a040 size=200x120")?;
     granite::println!("Desktop test: after the restart");
-    ended(&again, "Again", Some(0), STEP_SECS)?;
+    ended(again, "Again", Some(0), STEP_SECS)?;
     done.push("the display server crashed and came back, with the desktop");
 
     // Step 4: the start menu. The runner opens it with the Windows key and launches the test
@@ -379,8 +383,8 @@ fn all(sup: &Supervisor) -> Result<String, String> {
             if taken { "" } else { "never " }
         ));
     }
-    ended(&gallery, "gallery", None, STEP_SECS)?;
-    ended(&other, "Other", Some(0), STEP_SECS)?;
+    ended(gallery, "gallery", None, STEP_SECS)?;
+    ended(other, "Other", Some(0), STEP_SECS)?;
     done.push("the widget gallery driven by the pointer and the keyboard, at 1x and 2x");
     done.push(
         "the file picker saving, replacing and opening for an app, the permissions viewer \
@@ -399,7 +403,7 @@ fn all(sup: &Supervisor) -> Result<String, String> {
 
     // A note in an app's own folder, for the second boot to find.
     let (_, saver) = s.launch("wintest", "name=Saver save")?;
-    ended(&saver, "wintest save", Some(0), 120)?;
+    ended(saver, "wintest save", Some(0), 120)?;
 
     // Step 5: the display server ends again and again, until it is given up on: the console
     // takes its place, the users service starts the session again on its terminal, and the
