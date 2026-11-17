@@ -2365,6 +2365,9 @@ impl Run<'_> {
         self.line(&format!("files: deleted {docs}/boulder.txt"))?;
         // Open with…, from the right-click menu: Notepad is offered first for a .txt.
         let saved = "rock notes.txt";
+        // Notepad opened this file in its own step: count the lines that say so.
+        let opened = format!("notepad: opened {docs}/{saved} (37 bytes, crc ");
+        let before = self.count(&opened);
         self.files_select(docs, saved)?;
         let g = self.program_view("files", "the list", |g| g.widget("files").is_some())?;
         let list = g.widget("files").cloned().ok_or("no list")?;
@@ -2376,7 +2379,7 @@ impl Run<'_> {
         self.program_view("files", "the Open with… list", |g| g.widget("apps").is_some())?;
         self.click_program_widget("files", "Files", "withopen")?;
         self.line(&format!("files: opened {docs}/{saved} with notepad as app "))?;
-        self.line(&format!("notepad: opened {docs}/{saved} (37 bytes, crc "))?;
+        self.lines(&opened, before + 1)?;
         self.close_app("Notepad", "notepad")?;
         // 1.3's letter, from 1.3's disk: Notepad is given that one file to open.
         let g = self.program_view("files", "the places", |g| g.other("places ").is_some())?;
@@ -2411,9 +2414,12 @@ impl Run<'_> {
             .find(|n| n.starts_with("Drawing ") && n.ends_with(".bmp"))
             .cloned()
             .ok_or(format!("no drawing in Pictures: {names:?}"))?;
+        // Paint opened this drawing in its own step: count the lines that say so.
+        let opened = format!("paint: opened /Home/Pictures/{drawing}");
+        let before = self.count(&opened);
         self.files_select("/Home/Pictures", &drawing)?;
         self.chord(&["ret"])?;
-        self.line(&format!("paint: opened /Home/Pictures/{drawing}"))?;
+        self.lines(&opened, before + 1)?;
         self.close_app("Paint", "paint")?;
         self.close_app("Files", "files")
     }
@@ -2508,11 +2514,12 @@ impl Run<'_> {
         }
         // `edit` launches Notepad with the file; Notepad copies all of it.
         let text = "Hello from Notepad\nA pretty big rock.";
+        let opened =
+            format!("notepad: opened /Home/Documents/rock notes.txt ({} bytes, crc ", text.len());
+        // Notepad opened this file before (Files' Open with…): this must be a new line.
+        let before = self.count(&opened);
         self.terminal_line("edit \"rock notes.txt\"")?;
-        self.line(&format!(
-            "notepad: opened /Home/Documents/rock notes.txt ({} bytes, crc ",
-            text.len()
-        ))?;
+        self.lines(&opened, before + 1)?;
         let v = self.view("Notepad", |v| v.window("Notepad").is_some())?;
         let n = v.window("Notepad").cloned().ok_or("no Notepad")?;
         self.click_at(n.x + 120, n.y - 13)?;
