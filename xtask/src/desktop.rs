@@ -379,8 +379,15 @@ pub fn last_gallery_view(text: &str) -> Option<GalleryView> {
 
 /// Reads the last whole description `program` wrote: `[program] program: view N` to `...
 /// view N done`.
+///
+/// `screens` is the desktop's Screens window, whose lines the desktop writes as
+/// `desktop: screens …`.
 pub fn last_program_view(text: &str, program: &str) -> Option<GalleryView> {
-    let prefix = format!("[{program}] {program}: ");
+    let prefix = if program == "screens" {
+        String::from("[desktop] desktop: screens ")
+    } else {
+        format!("[{program}] {program}: ")
+    };
     let lines: Vec<&str> =
         text.lines().filter_map(|l| l.split_once(prefix.as_str()).map(|(_, r)| r)).collect();
     let end = lines.iter().rposition(|l| l.starts_with("view ") && l.ends_with(" done"))?;
@@ -1892,6 +1899,7 @@ impl Run<'_> {
         self.about(first)?;
         self.notepad(first)?;
         self.files(first)?;
+        self.screens_dialog(first)?;
         Ok(())
     }
 
@@ -2403,6 +2411,48 @@ impl Run<'_> {
         self.line(&format!("paint: opened /Home/Pictures/{drawing}"))?;
         self.close_app("Paint", "paint")?;
         self.close_app("Files", "files")
+    }
+
+    /// The desktop's Screens dialog (note 0024, section 6), on the machines with two screens:
+    /// the live mirroring check (note 0026, section 6). A right click on the wallpaper,
+    /// Screens…, the second screen made to show the first's picture and applied (the display
+    /// server then says it mirrors), then Cancel, which puts it back.
+    fn screens_dialog(&mut self, first: &ScreenLine) -> Result<(), String> {
+        if self.cfg.screens != Screens::TwoVirtioGpu {
+            return Ok(());
+        }
+        // Somewhere on the main screen's wallpaper with no icon or window: its top right.
+        let (x, y) = (first.x + first.width - 120, first.y + 60);
+        let menus = self.count("desktop: wallpaper menu open.");
+        self.right_click_at(x, y)?;
+        self.lines("desktop: wallpaper menu open.", menus + 1)?;
+        // The menu opens at the pointer; its one row is chosen when the button comes up on it.
+        self.click_at(x + 30, y + 10)?;
+        self.line("desktop: screens window open")?;
+        self.program_view("screens", "two screens", |g| {
+            g.other("screen 2 ").is_some() && g.widget("screens").is_some()
+        })?;
+        self.click_row("screens", "Screens", "screens", 1)?;
+        self.program_view("screens", "the second screen picked", |g| {
+            g.widget("mirror").is_some_and(|w| w.label.starts_with("Its own"))
+        })?;
+        self.click_program_widget("screens", "Screens", "mirror")?;
+        self.program_view("screens", "the second screen mirroring the first", |g| {
+            g.other("screen 2 ").is_some_and(|l| l.contains("mirrors 1"))
+        })?;
+        let arranged = self.count("desktop: screens arranged ");
+        self.click_program_widget("screens", "Screens", "apply")?;
+        self.lines("desktop: screens arranged ", arranged + 1)?;
+        self.view("the second screen mirroring", |v| {
+            v.screens.iter().any(|s| s.number == 2 && s.mirrors == 1)
+        })?;
+        self.click_program_widget("screens", "Screens", "Cancel")?;
+        self.line("desktop: screens put back ")?;
+        self.line("desktop: screens window closed")?;
+        self.view("the screens side by side again", |v| {
+            v.screens.len() == 2 && v.screens.iter().all(|s| s.mirrors == 0)
+        })
+        .map(|_| ())
     }
 
     /// About: the facts, from pbr.sysinfo.

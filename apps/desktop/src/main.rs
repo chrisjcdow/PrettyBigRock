@@ -160,7 +160,8 @@ impl Arranging {
     /// the choices come to.
     fn report(&mut self) {
         let mut lines = Vec::new();
-        for (id, _) in self.rt.windows() {
+        for (id, win) in self.rt.windows() {
+            lines.push(format!("window {} is {}", id.0, win.number()));
             for d in self.rt.describe(id) {
                 lines.push(format!("widget {} {}", id.0, d.line()));
             }
