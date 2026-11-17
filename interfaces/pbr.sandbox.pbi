@@ -81,6 +81,16 @@ struct Available {
     hidden: bool,
 }
 
+/// An app that can open files, for Files' "Open with…" (note 0025, section 3).
+struct Opener {
+    app: string<32>,
+    /// Its manifest's title.
+    title: string<64>,
+    /// The kinds of file its manifest says it `opens`, as extensions without the dot (`txt`),
+    /// in the manifest's order. Empty for an app that opens no kind in particular.
+    opens: list<string<8>, 16>,
+}
+
 /// Starts preparing a launch of `apps/APP`, with `args` after its manifest's own arguments.
 /// Reads the manifest and decides what the app gets. Each caller may have 4 launches waiting
 /// at once, and there are at most 16 in all (`TooMany`); they go when `start` or `cancel` is
@@ -128,6 +138,11 @@ struct Available {
 
 /// The apps in the start-up archive, in name order, with what the desktop shows of them.
 @11 fn apps() -> (apps: list<Available, 32>) error SandboxError;
+
+/// The apps a file can be opened with, in name order: every app in the start-up archive that
+/// has windows and isn't hidden, with the kinds of file it says it opens. (A compatible
+/// addition to version 1; `Available` couldn't grow without a new version.)
+@12 fn openers() -> (apps: list<Opener, 32>) error SandboxError;
 
 /// What can go wrong.
 flexible enum SandboxError {

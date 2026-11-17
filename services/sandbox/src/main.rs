@@ -98,7 +98,7 @@ use pbr_interfaces::pbr_display_session as display;
 use pbr_interfaces::pbr_file as file;
 use pbr_interfaces::pbr_sandbox::{
     self as sandbox, AppDetails, AppInfo, AppServices, Available, FileRights, Grant, GrantReason,
-    SandboxError,
+    Opener, SandboxError,
 };
 use pbr_interfaces::pbr_terminal as terminal;
 use pbr_manifest::app::App;
@@ -166,6 +166,7 @@ mod op {
     pub const DETAILS: u32 = 9;
     pub const GRANT: u32 = 10;
     pub const APPS: u32 = 11;
+    pub const OPENERS: u32 = 12;
 }
 
 /// Whether a holder of `kind` may call operation `op` (note 0024, section 9).
@@ -190,7 +191,8 @@ const PICKER: &str = "picker";
 const VIEWER: &str = "permissions";
 /// The system apps the desktop boot's runner drives, which describe their windows in test
 /// boots (note 0026, section 6): the picker, the viewer and the apps of stage 9.
-const DESCRIBED: &[&str] = &[PICKER, VIEWER, "calculator", "snake", "paint", "about"];
+const DESCRIBED: &[&str] =
+    &[PICKER, VIEWER, "calculator", "snake", "paint", "about", "notepad", "files", "terminal"];
 /// The "caller" of the launches this program makes itself (the shell's, the desktop's). Badge
 /// 0 is never on a capability anyone is given, so no client can use these launches.
 const ITSELF: u64 = 0;
@@ -1440,6 +1442,25 @@ impl Sandbox {
         }
     }
 
+    /// The apps a file can be opened with: those with windows that aren't hidden.
+    fn openers(&self) -> Vec<Opener> {
+        let mut out: Vec<Opener> = Vec::new();
+        for e in self.archive.entries() {
+            let Some(name) = e.name.strip_prefix("apps/").and_then(|n| n.strip_suffix(".app"))
+            else {
+                continue;
+            };
+            let Ok(app) = self.manifest(name) else { continue };
+            if !app.windows || app.hidden {
+                continue;
+            }
+            out.push(Opener { app: String::from(name), title: app.title, opens: app.opens });
+        }
+        out.sort_by(|a, b| a.app.cmp(&b.app));
+        out.truncate(32);
+        out
+    }
+
     /// The apps in the start-up archive, for the start menu.
     fn available(&self) -> Vec<Available> {
         let mut out: Vec<Available> = Vec::new();
@@ -1602,5 +1623,12 @@ impl sandbox::Server for Sandbox {
             return answered(reply.err(SandboxError::NotAllowed));
         }
         answered(reply.ok(&self.available()));
+    }
+
+    fn openers(&mut self, reply: sandbox::openers::Reply) {
+        if !may(reply.badge(), op::OPENERS) {
+            return answered(reply.err(SandboxError::NotAllowed));
+        }
+        answered(reply.ok(&Sandbox::openers(self)));
     }
 }
