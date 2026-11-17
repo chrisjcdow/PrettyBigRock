@@ -259,7 +259,8 @@ while stage 2 is reviewed.
   - **Terminal** runs `lib/shell`'s shell on its own thread (note 0018, Changes), talking to
     the window through a queue whose bells are notification bits. Scrollback of 1000 rows,
     history of 100 lines in `/Home/Apps/terminal/history.txt`, Ctrl+C gives up the line being
-    typed. **Left open**: Ctrl+C can't stop a running command (the shell can't be interrupted
+    typed. Its window opens at 480 x 320, as Notepad's (1.3's 512 x 384 doesn't fit a 2x
+    screen with its frame). **Left open**: Ctrl+C can't stop a running command (the shell can't be interrupted
     yet), and Terminal draws in one colour (`lib/terminal`'s grid has no colour per cell), so
     1.3's green prompt and coloured `fetch` aren't there yet.
   - **Commands**: `tz` takes `2`, `-5` or `5:30` and keeps `+HH:MM`; `edit` with no file opens
