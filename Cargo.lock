@@ -362,6 +362,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-notepad"
+version = "0.0.0"
+dependencies = [
+ "pbr-crc",
+ "pbr-files",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-sandstone",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-paint"
 version = "0.0.0"
 dependencies = [

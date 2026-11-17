@@ -10,6 +10,7 @@ members = [
     "apps/about",
     "apps/calculator",
     "apps/desktop",
+    "apps/notepad",
     "apps/paint",
     "apps/permissions",
     "apps/picker",
