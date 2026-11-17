@@ -107,6 +107,19 @@ impl H {
         w
     }
 
+    /// A resizable normal window (which may be maximised), not yet drawn.
+    fn resizable(&mut self, c: ClientId, size: (u32, u32)) -> u32 {
+        let flags = WindowFlags::RESIZABLE;
+        self.d.create(c, WindowKind::Normal, 0, "", size, flags, (0, 0), 0, self.now).unwrap()
+    }
+
+    /// A resizable normal window, drawn.
+    fn resizable_window(&mut self, c: ClientId, size: (u32, u32)) -> u32 {
+        let w = self.resizable(c, size);
+        self.draw(c, w);
+        w
+    }
+
     /// The serial of the last configure `c`'s window `w` was sent (taking `c`'s events).
     fn configure_serial(&mut self, c: ClientId, w: u32) -> u32 {
         self.events(c)
@@ -496,7 +509,7 @@ fn layers_backgrounds_panels_popups_and_system_windows() {
         Err(WindowError::BadArgument)
     );
     // Maximised, a window fills the work area, above the panel.
-    let w = h.window(app, (300, 200));
+    let w = h.resizable_window(app, (300, 200));
     h.d.maximise(app, w, true, h.now).unwrap();
     assert_eq!(h.place(7, w), (1, 27, 1278, 732));
     let order: Vec<String> =
@@ -698,7 +711,7 @@ fn the_pointer_goes_to_the_window_under_it_or_the_one_pressed_in() {
 fn dragging_a_title_bar_moves_and_its_buttons_act() {
     let mut h = H::one();
     let a = h.client(7, "A", 0, true);
-    let w = h.window(a, (300, 200));
+    let w = h.resizable_window(a, (300, 200));
     let (x, y, _, _) = h.place(7, w);
     h.point(x + 50, y - 10);
     h.button(true);
@@ -724,6 +737,41 @@ fn dragging_a_title_bar_moves_and_its_buttons_act() {
     h.click(x + 50, y - 10);
     h.click(x + 50, y - 10);
     assert!(h.line(7, w).contains("maximised"));
+    // Maximised, a single click on the title bar does nothing, and a double click restores.
+    let (mx, my, ..) = h.place(7, w);
+    h.later(SEC);
+    h.click(mx + 50, my - 10);
+    assert!(h.line(7, w).contains("maximised"), "a single click restored it");
+    h.later(SEC);
+    h.click(mx + 50, my - 10);
+    h.click(mx + 50, my - 10);
+    assert!(!h.line(7, w).contains("maximised"));
+    assert_eq!(h.place(7, w), (x, y, 300, 200));
+    // Maximised again, a drag on the title bar restores it, under the pointer.
+    h.later(SEC);
+    h.d.maximise(a, w, true, h.now).unwrap();
+    let (mx, my, ..) = h.place(7, w);
+    h.point(mx + 50, my - 10);
+    h.button(true);
+    h.point(mx + 52, my - 9);
+    assert!(h.line(7, w).contains("maximised"), "restored before the pointer moved far");
+    h.point(mx + 200, my + 100);
+    h.button(false);
+    assert!(!h.line(7, w).contains("maximised"));
+    assert_eq!(h.place(7, w).2, 300);
+    // A window that can't be resized can't be maximised: not by a double click, not from its
+    // window menu.
+    let fixed = h.window(a, (200, 100));
+    let (fx, fy, ..) = h.place(7, fixed);
+    h.later(SEC);
+    h.click(fx + 50, fy - 10);
+    h.click(fx + 50, fy - 10);
+    assert!(!h.line(7, fixed).contains("maximised"));
+    h.later(SEC);
+    let icon = pbr_compositor::decor::icon(pbr_draw::Rect::new(fx, fy, 200, 100));
+    h.click(icon.x + 4, icon.y + 4);
+    let menu = h.d.scene().menu.expect("a menu");
+    assert!(!menu.items.contains(&pbr_compositor::MenuItem::Maximise), "{:?}", menu.items);
 }
 
 #[test]
@@ -837,7 +885,7 @@ fn buffers_need_the_newest_configures_serial() {
     let mut h = H::one();
     let a = h.client(7, "A", 0, true);
     let b = h.client(8, "B", 0, true);
-    let w = h.create(a, WindowKind::Normal, 0, (300, 200)).unwrap();
+    let w = h.resizable(a, (300, 200));
     let wb = h.create(b, WindowKind::Normal, 0, (300, 200)).unwrap();
     let first = h.configure_serial(a, w);
     let theirs = h.configure_serial(b, wb);
@@ -863,7 +911,7 @@ fn buffers_need_the_newest_configures_serial() {
 fn commits_trade_frames_and_old_buffers_are_let_go_of() {
     let mut h = H::one();
     let a = h.client(7, "A", 0, true);
-    let w = h.create(a, WindowKind::Normal, 0, (300, 200)).unwrap();
+    let w = h.resizable(a, (300, 200));
     assert_eq!(h.d.commit(a, w, 0, &[], h.now), Err(WindowError::Stale), "no buffers yet");
     let s = h.configure_serial(a, w);
     let g1 = h.d.buffers(a, w, s).unwrap().buffers.generation;

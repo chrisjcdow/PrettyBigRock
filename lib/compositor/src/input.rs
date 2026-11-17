@@ -30,6 +30,9 @@ use pbr_interfaces::pbr_window::{Cursor, WindowFlags, WindowKind};
 use pbr_seat::Event as SeatEvent;
 use pbr_seat::event::{kind as seat, mods, value};
 
+/// How far (logical pixels, either way) the pointer must move after a press on a maximised
+/// window's title bar before the window is restored to be dragged.
+const UNMAXIMISE_AFTER: i64 = 4;
 /// Two presses on a title bar this close together are a double click.
 const DOUBLE_CLICK: u64 = 500_000_000;
 /// `pbr.input`'s axes.
@@ -367,6 +370,13 @@ impl Desk {
                     (((self.pointer.x - dx) >> 8) as i32, ((self.pointer.y - dy) >> 8) as i32);
                 self.set_place(id, place, now);
             }
+            Grab::Unmaximise(id, x, y) => {
+                let far = (self.pointer.x - x).abs().max((self.pointer.y - y).abs());
+                if far >= UNMAXIMISE_AFTER << 8 {
+                    self.unmaximise_under_pointer(id, now);
+                    self.begin_move(id);
+                }
+            }
             Grab::Resize(id, edge, start, from) => {
                 let r = self.resized(id, edge, start, from);
                 self.resize_to(id, r, now, false);
@@ -502,8 +512,12 @@ impl Desk {
                     self.pointer.grab = Grab::Nothing;
                 } else {
                     self.pointer.last_title = Some((id, now));
-                    self.unmaximise_under_pointer(id, now);
-                    self.begin_move(id);
+                    let maximised = self.windows.get(&id).is_some_and(|w| w.restore.is_some());
+                    if maximised {
+                        self.pointer.grab = Grab::Unmaximise(id, self.pointer.x, self.pointer.y);
+                    } else {
+                        self.begin_move(id);
+                    }
                 }
             }
             Part::Icon => {
@@ -652,7 +666,11 @@ impl Desk {
         if matches!(w.kind, WindowKind::Normal | WindowKind::System) {
             items.push(MenuItem::Minimise);
         }
-        items.push(if w.restore.is_some() { MenuItem::Restore } else { MenuItem::Maximise });
+        if w.restore.is_some() {
+            items.push(MenuItem::Restore);
+        } else if w.flags.contains(WindowFlags::RESIZABLE) {
+            items.push(MenuItem::Maximise);
+        }
         let here = self.space.holding_most(w.content());
         for s in self.space.in_space() {
             if Some(s.number) != here {

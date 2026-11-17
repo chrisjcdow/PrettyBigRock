@@ -388,6 +388,10 @@ pub(crate) enum Grab {
     Pressed(WindowId),
     /// Moving a window: where the pointer is from its content's corner, in 1/256 pixels.
     Move(WindowId, i64, i64),
+    /// Pressed on a maximised window's title bar, where the pointer was then (1/256 pixels).
+    /// Once the pointer moves a few pixels the window is restored and moved with it; let go
+    /// without moving, nothing happens (a second press soon after is a double click).
+    Unmaximise(WindowId, i64, i64),
     /// Resizing a window by an edge: its content when it started, and the pointer then.
     Resize(WindowId, u32, Rect, (i64, i64)),
     /// Pressed on a title bar button: it acts if let go on it.
@@ -1751,6 +1755,11 @@ impl Desk {
         if !matches!(w.kind, WindowKind::Normal | WindowKind::Dialog | WindowKind::System) {
             return;
         }
+        // A window that can't be resized can't be maximised either (its app chose its size);
+        // one maximised already can always be restored.
+        if on && !w.flags.contains(WindowFlags::RESIZABLE) {
+            return;
+        }
         match (on, w.restore) {
             (true, None) => {
                 let saved = (w.place, w.size);
@@ -2490,7 +2499,11 @@ fn holding_most_of(screens: &[Screen], r: Rect) -> Option<u32> {
 /// The window a grab is about.
 pub(crate) fn grab_window(g: Grab) -> Option<WindowId> {
     match g {
-        Grab::Pressed(w) | Grab::Move(w, ..) | Grab::Resize(w, ..) | Grab::Button(w, _) => Some(w),
+        Grab::Pressed(w)
+        | Grab::Move(w, ..)
+        | Grab::Unmaximise(w, ..)
+        | Grab::Resize(w, ..)
+        | Grab::Button(w, _) => Some(w),
         _ => None,
     }
 }

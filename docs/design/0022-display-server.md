@@ -462,6 +462,11 @@ descriptors (the front end turns them into capabilities).
 - Accessibility: a screen reader needs a way to read windows' contents that the sandbox allows.
 
 ## Changes
+- 17 November 2026 (Chris, trying stage 9a): **maximising follows the window's own rules.** A
+  window that isn't resizable can't be maximised (not by a double click on its title bar, its
+  maximise button or its window menu, which no longer offers it). A single click on a maximised
+  window's title bar does nothing; a double click restores it, and a drag restores it only once
+  the pointer has moved 4 logical pixels (it used to be restored by the press itself).
 - 16 November 2026 (M6 stage 9a): **windows are made to fit their screen where they can.** A
   system window, or an app's resizable window, opening bigger than the main screen's work area
   is shrunk to fit it, borders and title bar and all; a system window opened over an app's
