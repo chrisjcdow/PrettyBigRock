@@ -870,7 +870,7 @@ fn check_conversation(text: &str) -> Result<(), String> {
 }
 
 /// The QEMU key (its "qcode") that types `c` on a US keyboard, and whether Shift is needed.
-fn qcode(c: char) -> Option<(String, bool)> {
+pub(crate) fn qcode(c: char) -> Option<(String, bool)> {
     let plain = |k: &str| Some((String::from(k), false));
     let shifted = |k: &str| Some((String::from(k), true));
     match c {

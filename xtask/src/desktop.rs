@@ -1136,6 +1136,20 @@ impl Run<'_> {
     }
 
     /// Types `text` (lower-case letters and digits) one key at a time.
+    /// Types `text` as a person would on a US keyboard: capitals and the like with Shift, and
+    /// a line break as Enter.
+    fn type_typed(&mut self, text: &str) -> Result<(), String> {
+        for c in text.chars() {
+            if c == '\n' {
+                self.chord(&["ret"])?;
+                continue;
+            }
+            let (key, shift) = qemu::qcode(c).ok_or(format!("can't type {c:?}"))?;
+            if shift { self.chord(&["shift", &key])? } else { self.chord(&[&key])? }
+        }
+        Ok(())
+    }
+
     fn type_text(&mut self, text: &str) -> Result<(), String> {
         for c in text.chars() {
             self.chord(&[&c.to_string()])?;
@@ -1278,23 +1292,28 @@ impl Run<'_> {
         // 1.3's disk: a volume labelled Data (the storage self-test's disk has a volume called
         // Data too, so `Data 2` may be 1.3's): the one with 1.3's Documents in it.
         let (g, _) = self.ask_picker(&["ctrl", "o"], "opening again")?;
+        let name = self.classic_volume(&g, "Documents")?;
+        self.pick_row(&format!("/Volumes/{name}"), "Documents")?;
+        self.pick_row(&format!("/Volumes/{name}/Documents"), "letter.txt")?;
+        self.line(&format!("gallery: read 76 bytes from /Volumes/{name}/Documents/letter.txt"))?;
+        Ok(())
+    }
+
+    /// In the open picker (`g` its description), the volume on 1.3's disk: one labelled Data
+    /// with `folder` in it. (The storage self-test's disk has a volume called Data too, so
+    /// `Data 2` may be 1.3's.) Leaves the picker showing it.
+    fn classic_volume(&mut self, g: &GalleryView, folder: &str) -> Result<String, String> {
         let places = g.names("places ").unwrap_or_default();
-        let mut found = None;
         for (row, name) in places.iter().enumerate().filter(|(_, p)| p.starts_with("Data")) {
             self.click_row("picker", "File picker", "places", row)?;
             let start = format!("folder /Volumes/{name}: ");
             let g = self
                 .program_view("picker", &format!("{name} listed"), |g| g.other(&start).is_some())?;
-            if g.names(&start).unwrap_or_default().iter().any(|n| n == "Documents") {
-                found = Some(name.clone());
-                break;
+            if g.names(&start).unwrap_or_default().iter().any(|n| n == folder) {
+                return Ok(name.clone());
             }
         }
-        let name = found.ok_or(format!("no volume with 1.3's Documents among {places:?}"))?;
-        self.pick_row(&format!("/Volumes/{name}"), "Documents")?;
-        self.pick_row(&format!("/Volumes/{name}/Documents"), "letter.txt")?;
-        self.line(&format!("gallery: read 76 bytes from /Volumes/{name}/Documents/letter.txt"))?;
-        Ok(())
+        Err(format!("no volume with 1.3's {folder} among {places:?}"))
     }
 
     /// The permissions viewer (note 0025, sections 4 and 5), from the gallery's window menu:
@@ -1860,6 +1879,7 @@ impl Run<'_> {
         self.snake(first)?;
         self.paint(first)?;
         self.about(first)?;
+        self.notepad(first)?;
         Ok(())
     }
 
@@ -2029,13 +2049,20 @@ impl Run<'_> {
         self.paint_picture().1.ok_or(format!("no picture line from Paint ({what})"))
     }
 
-    /// Gives Paint the keyboard (a click on its title bar, which draws nothing), then asks
-    /// the picker with `keys`; waits for the picker's window.
-    fn paint_picker(&mut self, keys: &[&str], what: &str) -> Result<GalleryView, String> {
-        let v = self.view("Paint", |v| v.window("Paint").is_some())?;
-        let w = v.window("Paint").cloned().ok_or("no Paint")?;
+    /// Gives the app's window `title` the keyboard (a click on its title bar, which draws
+    /// nothing), then asks the picker with `keys`; waits for the picker's window.
+    fn app_picker(
+        &mut self,
+        title: &str,
+        keys: &[&str],
+        what: &str,
+    ) -> Result<GalleryView, String> {
+        let v = self.view(title, |v| v.window(title).is_some())?;
+        let w = v.window(title).cloned().ok_or(format!("no {title}"))?;
         self.click_at(w.x + 120, w.y - 13)?;
-        self.view("Paint focused", |v| v.window("Paint").is_some_and(|w| w.is("focused")))?;
+        self.view(&format!("{title} focused"), |v| {
+            v.window(title).is_some_and(|w| w.is("focused"))
+        })?;
         let opened = self.count("picker: open for app");
         self.chord(keys)?;
         self.lines("picker: open for app", opened + 1)?;
@@ -2080,7 +2107,7 @@ impl Run<'_> {
         let drawn = self.paint_changed(before, "the stroke drawn")?;
         // Saved through the picker, in Pictures, as the name it offers.
         let saved = self.count("paint: saved ");
-        self.paint_picker(&["ctrl", "s"], "saving a picture")?;
+        self.app_picker("Paint", &["ctrl", "s"], "saving a picture")?;
         self.program_view("picker", "Drawing N.bmp offered", |g| {
             g.widget("name").is_some_and(|w| w.focused && w.value.starts_with("Drawing "))
         })?;
@@ -2106,7 +2133,7 @@ impl Run<'_> {
             return Err("New left the picture as it was".into());
         }
         let (before, _) = self.paint_picture();
-        self.paint_picker(&["ctrl", "o"], "opening a picture")?;
+        self.app_picker("Paint", &["ctrl", "o"], "opening a picture")?;
         self.pick_row("/Home/Pictures", &name)?;
         self.line(&format!("paint: opened {path}"))?;
         let opened = self.paint_changed(before, "the saved picture opened")?;
@@ -2116,21 +2143,8 @@ impl Run<'_> {
         // 1.3's picture, on 1.3's disk: the volume with Pictures/rock.bmp.
         let rock = rock_crc()?;
         let (before, _) = self.paint_picture();
-        let g = self.paint_picker(&["ctrl", "o"], "opening 1.3's picture")?;
-        let places = g.names("places ").unwrap_or_default();
-        let mut found = None;
-        for (row, place) in places.iter().enumerate().filter(|(_, p)| p.starts_with("Data")) {
-            self.click_row("picker", "File picker", "places", row)?;
-            let start = format!("folder /Volumes/{place}: ");
-            let g = self.program_view("picker", &format!("{place} listed"), |g| {
-                g.other(&start).is_some()
-            })?;
-            if g.names(&start).unwrap_or_default().iter().any(|n| n == "Pictures") {
-                found = Some(place.clone());
-                break;
-            }
-        }
-        let place = found.ok_or(format!("no volume with 1.3's Pictures among {places:?}"))?;
+        let g = self.app_picker("Paint", &["ctrl", "o"], "opening 1.3's picture")?;
+        let place = self.classic_volume(&g, "Pictures")?;
         self.pick_row(&format!("/Volumes/{place}"), "Pictures")?;
         self.pick_row(&format!("/Volumes/{place}/Pictures"), "rock.bmp")?;
         self.line(&format!("paint: opened /Volumes/{place}/Pictures/rock.bmp"))?;
@@ -2140,6 +2154,65 @@ impl Run<'_> {
         }
         self.chord(&["ctrl", "w"])?;
         self.line("paint: closing").map(|_| ())
+    }
+
+    /// Notepad's text in the log (`notepad: text 2 lines 37 bytes crc …`) for `text`.
+    fn notepad_text(text: &str) -> String {
+        let lines = text.split('\n').count();
+        let crc = pbr_crc::crc32(text.as_bytes());
+        format!("notepad: text {lines} lines {} bytes crc {crc:08x}", text.len())
+    }
+
+    /// Notepad: typing, saving through the picker as a new name in Documents, New, opening what
+    /// was saved, 1.3's letter from 1.3's disk, and the question before unsaved work is lost.
+    fn notepad(&mut self, first: &ScreenLine) -> Result<(), String> {
+        let w = self.launch_app("Notepad", "notepad")?;
+        self.check_tree("notepad", &[("/Home/Documents", true)])?;
+        self.app_pictures(&w, "Notepad", "notepad", first)?;
+        let typed = "Hello from Notepad\nA pretty big rock.";
+        self.type_typed(typed)?;
+        self.line(&Self::notepad_text(typed))?;
+        // Ctrl+S on a text with no file: the picker offers Untitled.txt; a name of our own,
+        // to which it adds .txt.
+        let crc = format!("{:08x}", pbr_crc::crc32(typed.as_bytes()));
+        self.app_picker("Notepad", &["ctrl", "s"], "saving a text")?;
+        self.program_view("picker", "Untitled.txt offered", |g| {
+            g.widget("name").is_some_and(|w| w.focused && w.value == "Untitled.txt")
+        })?;
+        self.chord(&["ctrl", "a"])?;
+        self.type_typed("rock notes")?;
+        self.chord(&["ret"])?;
+        let path = "/Home/Documents/rock notes.txt";
+        self.line(&format!("notepad: saved {path} ({} bytes, crc {crc})", typed.len()))?;
+        // New, then open what was saved: the same text.
+        self.chord(&["ctrl", "n"])?;
+        self.line("notepad: new")?;
+        self.app_picker("Notepad", &["ctrl", "o"], "opening a text")?;
+        self.pick_row("/Home/Documents", "rock notes.txt")?;
+        self.line(&format!("notepad: opened {path} ({} bytes, crc {crc})", typed.len()))?;
+        // 1.3's letter, on 1.3's disk (its size and CRC are in tests/data/classic-1.3.manifest).
+        let g = self.app_picker("Notepad", &["ctrl", "o"], "opening 1.3's letter")?;
+        let place = self.classic_volume(&g, "Documents")?;
+        self.pick_row(&format!("/Volumes/{place}"), "Documents")?;
+        self.pick_row(&format!("/Volumes/{place}/Documents"), "letter.txt")?;
+        self.line(&format!(
+            "notepad: opened /Volumes/{place}/Documents/letter.txt (76 bytes, crc 672be5ea)"
+        ))?;
+        // A change, then Ctrl+W: Notepad asks first; Escape (Cancel) keeps it open, then
+        // Don't save lets it close.
+        self.type_typed("x")?;
+        let asked = self.count("notepad: asked save changes");
+        self.chord(&["ctrl", "w"])?;
+        self.lines("notepad: asked save changes", asked + 1)?;
+        self.view("the question", |v| v.window("Notepad").is_some_and(|w| !w.is("focused")))?;
+        self.chord(&["esc"])?;
+        self.view("Notepad focused again", |v| {
+            v.window("Notepad").is_some_and(|w| w.is("focused"))
+        })?;
+        self.chord(&["ctrl", "w"])?;
+        self.lines("notepad: asked save changes", asked + 2)?;
+        self.click_program_widget("notepad", "Notepad", "Don't save")?;
+        self.line("notepad: closing").map(|_| ())
     }
 
     /// About: the facts, from pbr.sysinfo.

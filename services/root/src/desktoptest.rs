@@ -196,7 +196,8 @@ fn watch_grants(s: &Session, app: u32, p: &Process, path: &str) -> Result<(bool,
 }
 
 /// Stage 9's apps in the order the runner launches them: their name, the services their
-/// manifests ask for, and the folders they are given by it (their own, and Paint's Pictures).
+/// manifests ask for, and the folders they are given by it (their own, Paint's Pictures and
+/// Notepad's Documents).
 const APPS: &[(&str, u32, &[&str])] = &[
     ("calculator", AppServices::WINDOWS.0, &[]),
     ("snake", AppServices::WINDOWS.0 | AppServices::DATA.0, &["/Home/Apps/snake"]),
@@ -206,6 +207,7 @@ const APPS: &[(&str, u32, &[&str])] = &[
         &["/Home/Apps/paint", "/Home/Pictures"],
     ),
     ("about", AppServices::WINDOWS.0 | AppServices::SYSINFO.0, &[]),
+    ("notepad", AppServices::WINDOWS.0 | AppServices::PICKER.0, &["/Home/Documents"]),
 ];
 
 /// Waits for the runner to launch `name`, checks that it holds what its manifest says (the
