@@ -319,11 +319,15 @@ fn all(sup: &Supervisor) -> Result<String, String> {
     done.push("the display server crashed and came back, with the desktop");
 
     // Step 4: the start menu. The runner opens it with the Windows key and launches the test
-    // window from it; it appears focused, and the runner closes it.
+    // window from it; it appears focused, and the runner closes it once this program has said
+    // it saw it running. (Without that line, a fast machine could launch and close it between
+    // two looks, and this loop would never see it: an app that has ended leaves the list at
+    // once. That was the "hang" seen under KVM.)
     granite::println!("Desktop test: the start menu");
     let end = time::after_ms(STEP_SECS * 1000);
     let launched = loop {
         if let Some(id) = s.app("wintest") {
+            granite::println!("Desktop test: app {id} launched from the start menu");
             break id;
         }
         if time::now() > end {

@@ -1738,6 +1738,8 @@ impl Run<'_> {
         self.view("the window from the start menu, focused", |v| {
             v.window("test").is_some_and(|w| w.is("drawn") && w.is("focused"))
         })?;
+        // The root program must see it running before it goes (it looks every 200 ms).
+        self.line("launched from the start menu")?;
         self.chord(&["ctrl", "w"])?;
         self.line("wintest test: closing")?;
 
