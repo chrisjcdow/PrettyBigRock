@@ -17,6 +17,7 @@ members = [
     "apps/picker",
     "apps/shell",
     "apps/snake",
+    "apps/terminal",
     "boot/bios",
     "boot/common",
     "boot/uefi",

@@ -49,7 +49,7 @@ pub enum Key {
 }
 
 /// A line being edited, with the history of earlier ones.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LineEditor {
     line: Vec<char>,
     /// Where typing goes, from 0 (before the first character) to `line.len()`.
@@ -62,6 +62,22 @@ pub struct LineEditor {
     browsing: Option<usize>,
     /// What was being typed when Up was first pressed, for Down to bring back.
     draft: Vec<char>,
+    /// How many earlier lines are remembered (up to [`MAX_HISTORY`] unless changed).
+    history_max: usize,
+}
+
+impl Default for LineEditor {
+    fn default() -> LineEditor {
+        LineEditor {
+            line: Vec::new(),
+            cursor: 0,
+            bytes: 0,
+            history: VecDeque::new(),
+            browsing: None,
+            draft: Vec::new(),
+            history_max: MAX_HISTORY,
+        }
+    }
 }
 
 impl LineEditor {
@@ -93,6 +109,36 @@ impl LineEditor {
     /// Where typing goes, as a number of characters from the start of the line.
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    /// Remembers up to `max` earlier lines (at least 1) instead of [`MAX_HISTORY`], dropping
+    /// the oldest if there are more now.
+    pub fn set_history_max(&mut self, max: usize) {
+        self.history_max = max.max(1);
+        while self.history.len() > self.history_max {
+            self.history.pop_front();
+        }
+        self.browsing = None;
+    }
+
+    /// Replaces the remembered lines with `lines`, oldest first: what a program kept from
+    /// its last run. Lines that are empty, too long ([`MAX_LINE_BYTES`]), or hold a control
+    /// character are left out (a file may hold anything), a line the same as the one before
+    /// it is kept once, and only the newest [`LineEditor::set_history_max`] are kept.
+    pub fn load_history<'a>(&mut self, lines: impl IntoIterator<Item = &'a str>) {
+        self.history.clear();
+        for line in lines {
+            let good = !line.is_empty()
+                && line.len() <= MAX_LINE_BYTES
+                && !line.chars().any(char::is_control);
+            if good && self.history.back().map(String::as_str) != Some(line) {
+                self.history.push_back(line.into());
+                if self.history.len() > self.history_max {
+                    self.history.pop_front();
+                }
+            }
+        }
+        self.browsing = None;
     }
 
     /// The earlier lines, oldest first.
@@ -182,7 +228,7 @@ impl LineEditor {
     fn enter(&mut self) -> String {
         let line = self.line();
         if !line.is_empty() && self.history.back() != Some(&line) {
-            if self.history.len() == MAX_HISTORY {
+            if self.history.len() == self.history_max {
                 self.history.pop_front();
             }
             self.history.push_back(line.clone());
@@ -402,6 +448,34 @@ mod tests {
             e.key(Key::Up);
         }
         assert_eq!(e.line(), "68");
+    }
+
+    #[test]
+    fn the_history_can_be_longer_and_loaded() {
+        let mut e = LineEditor::new();
+        e.set_history_max(100);
+        for i in 0..150 {
+            type_in(&mut e, &i.to_string());
+            enter(&mut e);
+        }
+        assert_eq!(e.history().count(), 100);
+        assert_eq!(e.history().next(), Some("50"));
+        // Shortening drops the oldest.
+        e.set_history_max(3);
+        assert_eq!(e.history().collect::<Vec<_>>(), ["147", "148", "149"]);
+        e.set_history_max(0);
+        assert_eq!(e.history().count(), 1, "at least one is kept");
+        // Loading replaces what was there, and drops what a file can hold that a line can't.
+        e.set_history_max(4);
+        let long = "x".repeat(MAX_LINE_BYTES + 1);
+        e.load_history(["", "one", "one", "tab\there", "two", &long, "three", "four", "five"]);
+        assert_eq!(e.history().collect::<Vec<_>>(), ["two", "three", "four", "five"]);
+        e.key(Key::Up);
+        assert_eq!(e.line(), "five");
+        // Loading ends any move through the old history.
+        e.load_history(["only"]);
+        e.key(Key::Down);
+        assert_eq!(e.line(), "five", "Down does nothing: no move through the history is on");
     }
 
     #[test]

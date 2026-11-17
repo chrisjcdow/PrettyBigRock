@@ -18,6 +18,7 @@
 //! - sizes the services limit (names, labels, arguments) are checked here, because the services
 //!   would only refuse an over-long one as "malformed", which tells the user nothing.
 
+use crate::clock;
 use crate::help;
 use crate::words::{self, WordsError};
 use alloc::format;
@@ -195,6 +196,34 @@ pub enum Command {
     Reboot,
     /// `potato`
     Potato,
+    /// `time` (and `date`): the wall clock in the user's time zone.
+    Time,
+    /// `tz [HOURS]`: show the time zone's offset, or set it. The offset is in minutes east of
+    /// UTC.
+    Tz(Option<i32>),
+    /// `uptime`
+    Uptime,
+    /// `mem`
+    Mem,
+    /// `fetch` (and `neofetch`)
+    Fetch,
+    /// `calc EXPR…`: the words joined by single spaces.
+    Calc(String),
+    /// `edit [FILE]`: Notepad, with the file if there is one, as typed.
+    Edit(Option<String>),
+    /// `open APP`
+    Open(String),
+    /// `disk`
+    Disk,
+    /// `check [VOLUME] [fix]` (and `fsck`)
+    Check {
+        /// The volume's number, from `volumes`; `None` for the system volume.
+        volume: Option<u32>,
+        /// Repair what can be repaired.
+        fix: bool,
+    },
+    /// `fortune`
+    Fortune,
 }
 
 impl Command {
@@ -234,6 +263,17 @@ impl Command {
             Command::PowerOff => "poweroff",
             Command::Reboot => "reboot",
             Command::Potato => "potato",
+            Command::Time => "time",
+            Command::Tz(_) => "tz",
+            Command::Uptime => "uptime",
+            Command::Mem => "mem",
+            Command::Fetch => "fetch",
+            Command::Calc(_) => "calc",
+            Command::Edit(_) => "edit",
+            Command::Open(_) => "open",
+            Command::Disk => "disk",
+            Command::Check { .. } => "check",
+            Command::Fortune => "fortune",
         }
     }
 }
@@ -251,6 +291,11 @@ pub enum Problem {
     NotANumber {
         /// What the number is (`VOLUME`).
         what: &'static str,
+        /// What was typed.
+        text: String,
+    },
+    /// An offset from UTC that isn't from -12 to 14 hours (or isn't hours at all).
+    BadOffset {
         /// What was typed.
         text: String,
     },
@@ -302,6 +347,13 @@ impl fmt::Display for ParseError {
                     Problem::NotANumber { what, text } => {
                         write!(f, "{what} must be a number, not \"{}\"", shorten(text))?;
                     }
+                    Problem::BadOffset { text } => write!(
+                        f,
+                        "the offset must be hours from {} to {}, such as 2, -5 or 5:30, not \"{}\"",
+                        clock::MIN_HOURS,
+                        clock::MAX_HOURS,
+                        shorten(text)
+                    )?,
                     Problem::TooLong { what, max } => {
                         write!(f, "{what} is too long ({max} bytes at most)")?;
                     }
@@ -336,10 +388,32 @@ pub fn parse_line(line: &str) -> Result<Option<Command>, LineError> {
     parse(&words).map_err(LineError::Parse)
 }
 
+/// The command that 1.3's name for it means: `dir` is `ls`, `cls` is `clear`, and so on. A name
+/// that is no one's other name is given back as it is. (Errors are then about the command by
+/// its own name: `del` with nothing after it says `rm: PATH is missing`.)
+pub fn alias(name: &str) -> &str {
+    match name {
+        "?" => "help",
+        "ver" => "about",
+        "neofetch" => "fetch",
+        "cls" => "clear",
+        "date" => "time",
+        "dir" => "ls",
+        "type" => "cat",
+        "md" => "mkdir",
+        "copy" => "cp",
+        "move" | "ren" => "mv",
+        "del" | "rmdir" => "rm",
+        "fsck" => "check",
+        other => other,
+    }
+}
+
 /// Reads a command from its words: `Ok(None)` if there are none.
 pub fn parse(words: &[String]) -> Result<Option<Command>, ParseError> {
     let Some((name, args)) = words.split_first() else { return Ok(None) };
-    let command = match name.as_str() {
+    let name = alias(name);
+    let command = match name {
         "help" => no_arguments("help", args, Command::Help)?,
         "about" => no_arguments("about", args, Command::About)?,
         "clear" => no_arguments("clear", args, Command::Clear)?,
@@ -354,6 +428,43 @@ pub fn parse(words: &[String]) -> Result<Option<Command>, ParseError> {
         "poweroff" => no_arguments("poweroff", args, Command::PowerOff)?,
         "reboot" => no_arguments("reboot", args, Command::Reboot)?,
         "potato" => no_arguments("potato", args, Command::Potato)?,
+        "time" => no_arguments("time", args, Command::Time)?,
+        "uptime" => no_arguments("uptime", args, Command::Uptime)?,
+        "mem" => no_arguments("mem", args, Command::Mem)?,
+        "fetch" => no_arguments("fetch", args, Command::Fetch)?,
+        "disk" => no_arguments("disk", args, Command::Disk)?,
+        "fortune" => no_arguments("fortune", args, Command::Fortune)?,
+        "tz" => {
+            // No options here: `-5` is an offset, not an option.
+            let operands: Vec<&str> = args.iter().map(String::as_str).collect();
+            let offset = match at_most_one("tz", &operands)? {
+                None => None,
+                // Not hours at all and hours out of range are told alike: the message says
+                // what an offset is.
+                Some(text) => Some(
+                    clock::parse_offset(text)
+                        .map_err(|_| bad("tz", Problem::BadOffset { text: text.into() }))?,
+                ),
+            };
+            Command::Tz(offset)
+        }
+        // Like `echo`, the rest of the line is the sum, so `calc -3+5` and `calc 2 + 3` work.
+        "calc" => {
+            if args.is_empty() {
+                return Err(bad("calc", Problem::Missing("EXPR")));
+            }
+            Command::Calc(args.join(" "))
+        }
+        "edit" => {
+            let (_, operands) = scan("edit", args, "")?;
+            Command::Edit(at_most_one("edit", &operands)?.map(String::from))
+        }
+        "open" => {
+            let (_, operands) = scan("open", args, "")?;
+            let [app] = fixed("open", &operands, ["APP"])?;
+            Command::Open(limited("open", "APP", app, MAX_APP)?)
+        }
+        "check" => check(args)?,
         "echo" => Command::Echo(args.join(" ")),
         "ls" => {
             let (flags, operands) = scan("ls", args, "a")?;
@@ -565,6 +676,22 @@ fn app_ref(command: &'static str, text: &str) -> Result<AppRef, ParseError> {
         return number(command, "APP", text).map(AppRef::Id);
     }
     limited(command, "APP", text, MAX_APP).map(AppRef::Name)
+}
+
+/// `check [VOLUME] [fix]`: the two may come in either order, each once.
+fn check(args: &[String]) -> Result<Command, ParseError> {
+    let (_, operands) = scan("check", args, "")?;
+    let (mut volume, mut fix) = (None, false);
+    for operand in operands {
+        if operand == "fix" && !fix {
+            fix = true;
+        } else if volume.is_none() && operand != "fix" {
+            volume = Some(number("check", "VOLUME", operand)?);
+        } else {
+            return Err(bad("check", Problem::Extra(operand.into())));
+        }
+    }
+    Ok(Command::Check { volume, fix })
 }
 
 /// `adduser NAME [admin|standard] [DISPLAY NAME…]`.
@@ -872,12 +999,179 @@ mod tests {
             "frobnicate: no such command. Type help for the commands."
         );
         assert_eq!(err("LS"), "LS: no such command. Type help for the commands.");
-        assert_eq!(err("?"), "?: no such command. Type help for the commands.");
+        assert_eq!(err("??"), "??: no such command. Type help for the commands.");
         assert_eq!(err("/bin/ls"), "/bin/ls: no such command. Type help for the commands.");
         // A huge word doesn't make a huge message.
         let long = err(&"x".repeat(4000));
         assert!(long.len() < 100, "{long}");
         assert!(long.contains("..."));
+    }
+
+    #[test]
+    fn the_commands_1_3_added_to_m5s() {
+        assert_eq!(ok("time"), Command::Time);
+        assert_eq!(ok("uptime"), Command::Uptime);
+        assert_eq!(ok("mem"), Command::Mem);
+        assert_eq!(ok("fetch"), Command::Fetch);
+        assert_eq!(ok("disk"), Command::Disk);
+        assert_eq!(ok("fortune"), Command::Fortune);
+        for no_args in ["time", "uptime", "mem", "fetch", "disk", "fortune"] {
+            assert!(err(&format!("{no_args} x")).contains("too many arguments"), "{no_args}");
+            assert!(err(&format!("{no_args} -x")).contains("unknown option -x"), "{no_args}");
+        }
+    }
+
+    #[test]
+    fn tz_shows_or_sets_the_offset_in_minutes() {
+        assert_eq!(ok("tz"), Command::Tz(None));
+        assert_eq!(ok("tz 2"), Command::Tz(Some(120)));
+        assert_eq!(ok("tz -5"), Command::Tz(Some(-300)));
+        assert_eq!(ok("tz +14"), Command::Tz(Some(840)));
+        assert_eq!(ok("tz -12"), Command::Tz(Some(-720)));
+        assert_eq!(ok("tz 5:30"), Command::Tz(Some(330)));
+        assert_eq!(ok("tz 0"), Command::Tz(Some(0)));
+        // 1.3's range and what is said outside it.
+        assert_eq!(
+            err("tz 15"),
+            "tz: the offset must be hours from -12 to 14, such as 2, -5 or 5:30, not \"15\". \
+             Usage: tz [HOURS]"
+        );
+        assert!(err("tz -13").contains("from -12 to 14"));
+        assert!(err("tz two").contains("not \"two\""));
+        assert!(err("tz 1 2").contains("too many arguments"));
+        // `-5` is an offset here, not an option.
+        assert!(err("tz -x").contains("not \"-x\""));
+        assert!(err("tz --").contains("not \"--\""));
+    }
+
+    #[test]
+    fn calc_takes_the_rest_of_the_line() {
+        assert_eq!(ok("calc (2+3)*4^2"), Command::Calc(s("(2+3)*4^2")));
+        assert_eq!(ok("calc 2 +  3"), Command::Calc(s("2 + 3")));
+        assert_eq!(ok("calc -3+5"), Command::Calc(s("-3+5")));
+        assert_eq!(ok(r#"calc "1 + 2" * 3"#), Command::Calc(s("1 + 2 * 3")));
+        assert_eq!(err("calc"), "calc: EXPR is missing. Usage: calc EXPR...");
+    }
+
+    #[test]
+    fn edit_and_open_start_apps() {
+        assert_eq!(ok("edit"), Command::Edit(None));
+        assert_eq!(ok("edit notes.txt"), Command::Edit(Some(s("notes.txt"))));
+        assert_eq!(ok(r#"edit "My Notes.txt""#), Command::Edit(Some(s("My Notes.txt"))));
+        assert!(err("edit a b").contains("didn't expect \"b\""));
+        assert!(err("edit -x").contains("unknown option -x"));
+        assert_eq!(ok("open paint"), Command::Open(s("paint")));
+        assert_eq!(err("open"), "open: APP is missing. Usage: open APP");
+        assert!(err("open a b").contains("too many"));
+        assert!(err(&format!("open {}", "x".repeat(65))).contains("too long"));
+    }
+
+    #[test]
+    fn check_takes_a_volume_and_fix_in_either_order() {
+        assert_eq!(ok("check"), Command::Check { volume: None, fix: false });
+        assert_eq!(ok("check fix"), Command::Check { volume: None, fix: true });
+        assert_eq!(ok("check 2"), Command::Check { volume: Some(2), fix: false });
+        assert_eq!(ok("check 2 fix"), Command::Check { volume: Some(2), fix: true });
+        assert_eq!(ok("check fix 2"), Command::Check { volume: Some(2), fix: true });
+        assert_eq!(ok("check 0"), Command::Check { volume: Some(0), fix: false });
+        assert!(err("check Home").contains("VOLUME must be a number, not \"Home\""));
+        assert!(err("check 1 2").contains("didn't expect \"2\""));
+        assert!(err("check fix fix").contains("didn't expect \"fix\""));
+        assert!(err("check -x").contains("unknown option -x"));
+        assert!(err("check 99999999999").contains("must be a number"));
+    }
+
+    #[test]
+    fn the_other_names_1_3_had() {
+        for (other, line, command) in [
+            ("?", "?", Command::Help),
+            ("ver", "ver", Command::About),
+            ("neofetch", "neofetch", Command::Fetch),
+            ("cls", "cls", Command::Clear),
+            ("date", "date", Command::Time),
+            ("dir", "dir", Command::Ls { all: false, path: None }),
+            ("dir", "dir /Home", Command::Ls { all: false, path: Some(s("/Home")) }),
+            ("type", "type a.txt", Command::Cat(s("a.txt"))),
+            ("md", "md new", Command::Mkdir(s("new"))),
+            ("copy", "copy a b", Command::Cp { recursive: false, from: s("a"), to: s("b") }),
+            ("move", "move a b", Command::Mv { from: s("a"), to: s("b") }),
+            ("ren", "ren a b", Command::Mv { from: s("a"), to: s("b") }),
+            ("del", "del a", Command::Rm { recursive: false, path: s("a") }),
+            ("rmdir", "rmdir a", Command::Rm { recursive: false, path: s("a") }),
+            ("fsck", "fsck", Command::Check { volume: None, fix: false }),
+            ("fsck", "fsck fix", Command::Check { volume: None, fix: true }),
+        ] {
+            assert_eq!(ok(line), command, "{other}");
+            assert_ne!(alias(other), other, "{other} is another name");
+        }
+        // A name that is nobody's other name stays as it is.
+        assert_eq!(alias("ls"), "ls");
+        assert_eq!(alias("dirs"), "dirs");
+        // Errors are about the command, by its own name.
+        assert_eq!(err("del"), "rm: PATH is missing. Usage: rm [-r] PATH");
+        assert_eq!(err("ren a"), "mv: TO is missing. Usage: mv FROM TO");
+        assert!(err("ver x").starts_with("about: too many arguments"));
+        // The other names are no other command's: they don't need to be told apart from
+        // anything else, and capitals still aren't commands.
+        assert!(err("DIR").contains("no such command"));
+    }
+
+    #[test]
+    fn every_command_has_a_name_and_a_usage_where_it_is_listed() {
+        // The name a command reports is one `help` lists (potato is the one that isn't).
+        for line in [
+            "help",
+            "about",
+            "fetch",
+            "clear",
+            "time",
+            "tz",
+            "uptime",
+            "mem",
+            "echo x",
+            "calc 1",
+            "ls",
+            "cd",
+            "pwd",
+            "cat a",
+            "info a",
+            "mkdir a",
+            "write a",
+            "append a",
+            "cp a b",
+            "mv a b",
+            "rm a",
+            "edit",
+            "volumes",
+            "df",
+            "disk",
+            "check",
+            "format 1 x",
+            "setup 1 x",
+            "whoami",
+            "settings",
+            "set a b",
+            "users",
+            "adduser x",
+            "run x",
+            "open x",
+            "apps",
+            "grants x",
+            "revoke x y",
+            "stop x",
+            "fortune",
+            "shutdown",
+            "poweroff",
+            "reboot",
+        ] {
+            let name = ok(line).name();
+            assert!(
+                help::COMMANDS.iter().any(|(u, _)| u.split(' ').next() == Some(name)),
+                "{line}: {name} is not in help"
+            );
+            assert!(line.starts_with(name), "{line} is the command {name}");
+        }
+        assert_eq!(ok("potato").name(), "potato");
     }
 
     #[test]

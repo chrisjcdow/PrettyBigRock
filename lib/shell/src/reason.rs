@@ -19,6 +19,7 @@ use core::fmt;
 use granite::interface::CallError;
 use pbr_interfaces::pbr_file::FileError;
 use pbr_interfaces::pbr_sandbox::SandboxError;
+use pbr_interfaces::pbr_sysinfo::SysinfoError;
 use pbr_interfaces::pbr_users::UsersError;
 
 /// Why a command couldn't do what it was asked.
@@ -248,8 +249,10 @@ pub enum UsersOp {
     Shutdown,
     /// `poweroff` and `reboot`.
     Power,
-    /// `settings` and `set`.
+    /// `settings` and `set` (and `tz`, and the time zone `time` asks for).
     Settings,
+    /// `check`.
+    Check,
 }
 
 /// Why a `pbr.users` call failed.
@@ -271,6 +274,7 @@ pub fn users_reason(op: UsersOp, e: &CallError<UsersError>) -> Reason {
         UsersError::Unsuitable => match op {
             UsersOp::Format => "that volume isn't empty, so it won't be formatted",
             UsersOp::Setup => "that volume doesn't have RockFS on it",
+            UsersOp::Check => "that volume isn't one that can be checked",
             _ => "that volume isn't suitable",
         },
         UsersError::NotReady => match op {
@@ -286,12 +290,28 @@ pub fn users_reason(op: UsersOp, e: &CallError<UsersError>) -> Reason {
             "the settings are layout (a keyboard layout there is, such as us, gb or us-intl) \
              and timezone (such as +02:00)"
         }
-        UsersError::NotSupported => {
-            "this computer can't be turned off by software: it has shut down, and you can turn \
-             it off now"
-        }
+        UsersError::NotSupported => match op {
+            UsersOp::Check => "only RockFS volumes can be checked (FAT32 can't be, yet)",
+            _ => {
+                "this computer can't be turned off by software: it has shut down, and you can \
+                 turn it off now"
+            }
+        },
         UsersError::Unknown(n) => return Reason::Text(format!("the users service gave error {n}")),
     })
+}
+
+/// Why a `pbr.sysinfo` call failed.
+pub fn sysinfo_reason(e: &CallError<SysinfoError>) -> Reason {
+    match e {
+        CallError::Service(SysinfoError::NotReady) => {
+            Reason::text("that isn't running yet; try again in a moment")
+        }
+        CallError::Service(SysinfoError::Unknown(n)) => {
+            Reason::Text(format!("the system information service gave error {n}"))
+        }
+        other => call_reason(other),
+    }
 }
 
 /// A failure, with the path it was about: `<path>: <reason>`, ready to follow `<command>: `.
@@ -421,6 +441,25 @@ mod tests {
             users_reason(UsersOp::Add, &CallError::<UsersError>::Malformed),
             Reason::Garbled
         );
+    }
+
+    #[test]
+    fn check_and_sysinfo_errors() {
+        let svc = |e| CallError::Service(e);
+        let info = |e| CallError::Service(e);
+        // FAT32 answers NotSupported to a check: that is not about turning the computer off.
+        let fat = users_reason(UsersOp::Check, &svc(UsersError::NotSupported)).to_string();
+        assert!(fat.contains("RockFS") && !fat.contains("turned off"), "{fat}");
+        let off = users_reason(UsersOp::Power, &svc(UsersError::NotSupported)).to_string();
+        assert!(off.contains("turn it off"));
+        assert!(
+            users_reason(UsersOp::Check, &svc(UsersError::NoSuchVolume))
+                .to_string()
+                .contains("no volume")
+        );
+        assert!(sysinfo_reason(&info(SysinfoError::NotReady)).to_string().contains("try again"));
+        assert!(sysinfo_reason(&info(SysinfoError::Unknown(7))).to_string().contains('7'));
+        assert_eq!(sysinfo_reason(&CallError::Call(granite::Error::TimedOut)), Reason::TimedOut);
     }
 
     #[test]

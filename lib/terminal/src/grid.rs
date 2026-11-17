@@ -10,6 +10,7 @@
 //! Nothing here panics, whatever text it is given. A [`Vec`] is Rust's growable array; every
 //! position is checked against the grid's size before it is used.
 
+use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -69,6 +70,17 @@ pub struct Grid {
     row: usize,
     dirty: Vec<bool>,
     scrolled: usize,
+    /// Rows that scrolled off the top, oldest first, when scrollback is on (see
+    /// [`Grid::set_scrollback`]). Each is kept without its trailing spaces, so a mostly empty
+    /// screen costs little; a column past a row's end is a space.
+    history: VecDeque<Vec<char>>,
+    /// How many rows `history` may hold: 0 keeps none (the console's way).
+    history_limit: usize,
+    /// A number that changes whenever rows move or are wiped: every row that scrolls off the
+    /// top adds one, and so does clearing. A window that shows the grid compares it with the
+    /// last one it saw, to know that what it remembers of the screen (a selection) no longer
+    /// matches. It wraps round, which is harmless: only a change matters.
+    moves: u64,
 }
 
 impl Grid {
@@ -88,7 +100,87 @@ impl Grid {
             // Everything is new to a console that has not drawn it yet.
             dirty: vec![true; rows],
             scrolled: 0,
+            history: VecDeque::new(),
+            history_limit: 0,
+            moves: 0,
         })
+    }
+
+    /// Keeps up to `limit` rows that scroll off the top, to look back at (0 keeps none, which
+    /// is how a grid starts, and drops what was kept). A [`VecDeque`] is a list that is cheap
+    /// to add to at one end and take from the other: the oldest row goes when it is full.
+    pub fn set_scrollback(&mut self, limit: usize) {
+        self.history_limit = limit;
+        self.trim_history();
+    }
+
+    /// How many rows may be kept above the screen (see [`Grid::set_scrollback`]).
+    pub fn history_limit(&self) -> usize {
+        self.history_limit
+    }
+
+    /// How many rows are kept above the screen.
+    pub fn scrollback_len(&self) -> usize {
+        self.history.len()
+    }
+
+    /// The character `back` rows above where the screen is now, at (`col`, `row`): with
+    /// `back` 0 it is [`Grid::cell`]; with `back` 3 the screen is looked at as it was 3 rows
+    /// earlier, so its first row is the kept row 3 from the end. A space where there is
+    /// nothing (before the first kept row, or past the end of a row).
+    pub fn cell_back(&self, back: usize, col: usize, row: usize) -> char {
+        // The rows above the screen, then the screen, as one list: `at` counts along it.
+        let at = (self.history.len() + row).checked_sub(back);
+        match at {
+            Some(at) if at < self.history.len() => {
+                self.history[at].get(col).copied().unwrap_or(' ')
+            }
+            Some(at) => self.cell(col, at - self.history.len()),
+            None => ' ',
+        }
+    }
+
+    /// A number that changes whenever rows scroll off the top or the grid is cleared (see
+    /// the field's note).
+    pub fn moves(&self) -> u64 {
+        self.moves
+    }
+
+    /// Drops the oldest kept rows beyond the limit.
+    fn trim_history(&mut self) {
+        while self.history.len() > self.history_limit {
+            self.history.pop_front();
+        }
+    }
+
+    /// Keeps `row` (a row of this grid) as the newest row above the screen, if rows are kept.
+    fn keep_row(&mut self, row: usize) {
+        if self.history_limit == 0 {
+            return;
+        }
+        let cells = &self.cells[row * self.columns..(row + 1) * self.columns];
+        let used = cells.iter().rposition(|c| *c != ' ').map_or(0, |last| last + 1);
+        self.history.push_back(cells[..used].to_vec());
+        self.trim_history();
+    }
+
+    /// Takes over what `old`, the screen this one replaces, had kept, and adds the rows `old`
+    /// showed, from its first down to its last that has anything on it (kept if this grid
+    /// keeps rows at all; the screen changed size, so they can't stay where they were).
+    /// The old rows keep their own width.
+    pub fn take_history_from(&mut self, mut old: Grid) {
+        if self.history_limit == 0 {
+            return;
+        }
+        let shown = old.cells.rchunks(old.columns).position(|row| row.iter().any(|c| *c != ' '));
+        // `rchunks` counts rows from the bottom, so the last used row is `rows - 1 - position`.
+        let used = shown.map_or(0, |p| old.rows - p);
+        for row in 0..used {
+            old.keep_row(row);
+        }
+        self.history = core::mem::take(&mut old.history);
+        self.trim_history();
+        self.moves = self.moves.wrapping_add(1);
     }
 
     /// Characters across.
@@ -199,6 +291,10 @@ impl Grid {
         if n == 0 {
             return;
         }
+        for row in 0..n {
+            self.keep_row(row);
+        }
+        self.moves = self.moves.wrapping_add(n as u64);
         let keep = (self.rows - n) * self.columns;
         self.cells.copy_within(n * self.columns.., 0);
         self.cells[keep..].fill(' ');
@@ -208,9 +304,13 @@ impl Grid {
         self.scrolled = (self.scrolled + n).min(self.rows);
     }
 
-    /// Empties the grid and puts the cursor at the top left.
+    /// Empties the grid, and forgets the rows kept above it, and puts the cursor at the top
+    /// left.
     pub fn clear(&mut self) {
         self.cells.fill(' ');
+        // Clearing is asked for, so what had scrolled away goes too.
+        self.history.clear();
+        self.moves = self.moves.wrapping_add(1);
         self.col = 0;
         self.row = 0;
         self.dirty.fill(true);
@@ -432,6 +532,84 @@ mod tests {
         let c = g.take_changes();
         assert_eq!(c.scrolled, 4, "never more than the grid has");
         assert_eq!(c.dirty_rows().count(), 4);
+    }
+
+    #[test]
+    fn rows_that_scroll_off_the_top_are_kept_when_asked() {
+        let mut g = grid(4, 2);
+        g.write_str("aaaa\nbbbb\ncc\ndd");
+        assert_eq!(g.scrollback_len(), 0, "nothing is kept unless asked for");
+        let mut g = grid(4, 2);
+        g.set_scrollback(10);
+        g.write_str("aaaa\nbbbb\ncc\ndd");
+        assert_eq!(rows(&g), ["cc  ", "dd  "]);
+        assert_eq!(g.scrollback_len(), 2);
+        // Looking back: the screen as it was 1 row and 2 rows earlier.
+        let seen = |g: &Grid, back: usize| -> Vec<String> {
+            (0..2).map(|r| (0..4).map(|c| g.cell_back(back, c, r)).collect()).collect()
+        };
+        assert_eq!(seen(&g, 0), ["cc  ", "dd  "]);
+        assert_eq!(seen(&g, 1), ["bbbb", "cc  "]);
+        assert_eq!(seen(&g, 2), ["aaaa", "bbbb"]);
+        // Further back than anything kept is blank.
+        assert_eq!(seen(&g, 3), ["    ", "aaaa"]);
+        assert_eq!(seen(&g, 99), ["    ", "    "]);
+    }
+
+    #[test]
+    fn scrollback_is_limited_and_drops_the_oldest() {
+        let mut g = grid(3, 1);
+        g.set_scrollback(2);
+        g.write_str("a\nb\nc\nd\ne");
+        assert_eq!(g.scrollback_len(), 2);
+        assert_eq!(g.cell_back(2, 0, 0), 'c');
+        assert_eq!(g.cell_back(1, 0, 0), 'd');
+        assert_eq!(g.cell_back(0, 0, 0), 'e');
+        // A smaller limit trims at once; none drops it all.
+        g.set_scrollback(1);
+        assert_eq!(g.scrollback_len(), 1);
+        g.set_scrollback(0);
+        assert_eq!(g.scrollback_len(), 0);
+        g.write_str("\nf\ng");
+        assert_eq!(g.scrollback_len(), 0);
+    }
+
+    #[test]
+    fn clearing_forgets_the_kept_rows_and_every_move_is_counted() {
+        let mut g = grid(3, 2);
+        g.set_scrollback(5);
+        let start = g.moves();
+        g.write_str("a\nb\nc");
+        assert_ne!(g.moves(), start, "scrolling is a move");
+        let after = g.moves();
+        g.write_str("x");
+        assert_eq!(g.moves(), after, "writing without scrolling is not");
+        g.clear();
+        assert_eq!(g.scrollback_len(), 0);
+        assert_ne!(g.moves(), after);
+        assert_eq!(g.cell_back(1, 0, 0), ' ');
+    }
+
+    #[test]
+    fn a_replaced_screen_hands_its_rows_to_the_new_one() {
+        let mut old = grid(4, 3);
+        old.set_scrollback(10);
+        old.write_str("one\ntwo\nsix\nfour\nfi");
+        let mut new = grid(6, 2);
+        new.set_scrollback(10);
+        new.take_history_from(old);
+        // The rows scrolled off earlier, then what the old screen showed (not its blank rows).
+        let kept = new.scrollback_len();
+        let all: Vec<String> =
+            (0..kept).map(|i| (0..4).map(|c| new.cell_back(kept - i, c, 0)).collect()).collect();
+        assert_eq!(all, ["one ", "two ", "six ", "four", "fi  "].map(String::from));
+        // Without scrollback on the new grid nothing is taken.
+        let mut old = grid(4, 3);
+        old.set_scrollback(10);
+        old.write_str("abc");
+        let mut plain = grid(4, 3);
+        plain.take_history_from(old);
+        assert_eq!(plain.scrollback_len(), 0);
     }
 
     /// The console's way of keeping the screen up to date, run against a random mess of text

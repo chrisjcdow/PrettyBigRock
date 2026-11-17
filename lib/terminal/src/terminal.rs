@@ -59,6 +59,28 @@ impl Terminal {
         self.grid.take_changes()
     }
 
+    /// Keeps up to `lines` rows that scroll off the top, to look back at ([`Grid::set_scrollback`];
+    /// off by default, as the console has no use for it). A resize keeps the setting.
+    pub fn set_scrollback(&mut self, lines: usize) {
+        self.grid.set_scrollback(lines);
+    }
+
+    /// Remembers up to `max` lines for Up and Down ([`LineEditor::set_history_max`]).
+    pub fn set_history_max(&mut self, max: usize) {
+        self.editor.set_history_max(max);
+    }
+
+    /// Replaces the remembered lines, oldest first ([`LineEditor::load_history`]): what a
+    /// program kept from its last run.
+    pub fn load_history<'a>(&mut self, lines: impl IntoIterator<Item = &'a str>) {
+        self.editor.load_history(lines);
+    }
+
+    /// The remembered lines, oldest first, for a program to keep.
+    pub fn history(&self) -> impl Iterator<Item = &str> {
+        self.editor.history()
+    }
+
     /// Marks the whole grid as changed, for drawing it on a new screen.
     pub fn mark_all_dirty(&mut self) {
         self.grid.mark_all_dirty();
@@ -151,11 +173,20 @@ impl Terminal {
     }
 
     /// Moves to a screen of another size. The text on the old one is not carried over (the
-    /// new screen starts blank, with all of it to be drawn); a line being read is shown again
-    /// at the top. `false`, and nothing changed, if the size is refused (see [`Grid::new`]).
+    /// new screen starts blank, with all of it to be drawn), except that with scrollback on
+    /// ([`Terminal::set_scrollback`]) it goes into the rows kept above the screen, so it can
+    /// still be looked back at. A line being read is shown again at the top. `false`, and
+    /// nothing changed, if the size is refused (see [`Grid::new`]).
     pub fn resize(&mut self, columns: usize, rows: usize) -> bool {
-        let Some(grid) = Grid::new(columns, rows) else { return false };
-        self.grid = grid;
+        let Some(mut grid) = Grid::new(columns, rows) else { return false };
+        // The line being read is taken off the old screen first, so that it isn't kept twice:
+        // once as old text and once as the line shown again on the new screen.
+        if let Some(r) = &mut self.reading {
+            r.view.suspend(&mut self.grid);
+        }
+        grid.set_scrollback(self.grid.history_limit());
+        let old = core::mem::replace(&mut self.grid, grid);
+        self.grid.take_history_from(old);
         if let Some(r) = &mut self.reading {
             r.view = EditView::start(&mut self.grid, &r.prompt, &self.editor);
         }
@@ -327,6 +358,29 @@ mod tests {
         // And a resize with no read going.
         assert!(t.resize(3, 3));
         assert_eq!(t.caret(), None);
+    }
+
+    #[test]
+    fn a_resize_keeps_the_old_screen_to_look_back_at() {
+        let mut t = terminal(8, 3);
+        t.set_scrollback(50);
+        t.write("one\ntwo\nthree\nfour\n");
+        t.begin_read("> ").unwrap();
+        type_in(&mut t, "ab");
+        let kept = t.grid().scrollback_len();
+        assert_eq!(kept, 2, "'one' and 'two' scrolled off");
+        assert!(t.resize(5, 4));
+        // The line being read is shown again on the new screen, and not kept as old text.
+        assert_eq!(rows(&t)[0], "> ab ");
+        assert_eq!(t.caret(), Some((4, 0)));
+        let kept = t.grid().scrollback_len();
+        let lines: Vec<String> = (0..kept)
+            .map(|i| (0..8).map(|c| t.grid().cell_back(kept - i, c, 0)).collect::<String>())
+            .collect();
+        assert_eq!(lines, ["one     ", "two     ", "three   ", "four    "]);
+        // And the setting survives, so scrolling goes on being kept.
+        t.write("a\nb\nc\nd\ne\n");
+        assert!(t.grid().scrollback_len() > kept);
     }
 
     #[test]

@@ -79,6 +79,13 @@ pub trait Cells {
     fn cell(&self, column: usize, row: usize) -> Cell;
     /// Where the cursor is, if it is shown.
     fn cursor(&self) -> Option<(usize, usize)>;
+    /// A number that changes whenever the rows move on the screen (the text scrolled, or was
+    /// looked back at). A selection is made of positions on the screen, so when this changes
+    /// the view drops the selection rather than let it point at other text. The default never
+    /// changes, for a screen whose rows stay where they are.
+    fn moves(&self) -> u64 {
+        0
+    }
 }
 
 /// A grid of characters with a cursor: Terminal's window. It shows as many cells as fit (the
@@ -99,6 +106,7 @@ pub struct TerminalView<'a, M> {
     on_paste: Option<Box<dyn Fn(String) -> M + 'a>>,
     on_scroll: Option<Box<dyn Fn(i32) -> M + 'a>>,
     on_resize: Option<Box<dyn Fn(usize, usize) -> M + 'a>>,
+    on_selection: Option<Box<dyn Fn(String) -> M + 'a>>,
     background: Colour,
     width: Length,
     height: Length,
@@ -118,6 +126,8 @@ struct TermState {
     selection: Option<(At, At)>,
     /// The columns and rows last told to `on_resize`.
     said: Option<At>,
+    /// What [`Cells::moves`] said when the selection was made (or last looked at).
+    moves: u64,
 }
 
 impl<'a, M> TerminalView<'a, M> {
@@ -129,6 +139,7 @@ impl<'a, M> TerminalView<'a, M> {
             on_paste: None,
             on_scroll: None,
             on_resize: None,
+            on_selection: None,
             background: PAPER,
             width: Length::Fill,
             height: Length::Fill,
@@ -160,6 +171,15 @@ impl<'a, M> TerminalView<'a, M> {
     /// again whenever that number changes (the window was resized).
     pub fn on_resize(mut self, f: impl Fn(usize, usize) -> M + 'a) -> TerminalView<'a, M> {
         self.on_resize = Some(Box::new(f));
+        self
+    }
+
+    /// What is sent with the selected text each time the selection changes: as the pointer
+    /// drags, and (with an empty string) when it is dropped, by a click, a resize or the rows
+    /// moving ([`Cells::moves`]). An app with a Copy menu item keeps the last text, to copy
+    /// when the item is chosen.
+    pub fn on_selection(mut self, f: impl Fn(String) -> M + 'a) -> TerminalView<'a, M> {
+        self.on_selection = Some(Box::new(f));
         self
     }
 
@@ -262,6 +282,13 @@ impl<'a, M> TerminalView<'a, M> {
         out
     }
 
+    /// Tells the app (`on_selection`) what is selected now.
+    fn tell_selection(&self, s: &TermState, shell: &mut Shell<'_, M>) {
+        if let Some(f) = &self.on_selection {
+            shell.publish(f(self.selected_text(s)));
+        }
+    }
+
     /// Tells the app how many columns and rows fit, if that differs from what it was last
     /// told. (Nothing is said before the first layout, when the rectangle is empty.)
     fn check_size(&self, tree: &mut Tree, node: &Node, shell: &mut Shell<'_, M>) {
@@ -278,10 +305,26 @@ impl<'a, M> TerminalView<'a, M> {
         if s.said.is_some() && s.selection.take().is_some() {
             s.dragging = false;
             shell.redraw();
+            self.tell_selection(s, shell);
         }
         s.said = Some(now);
         if let Some(f) = &self.on_resize {
             shell.publish(f(now.0, now.1));
+        }
+    }
+
+    /// Drops the selection if the rows have moved since it was made.
+    fn check_moves(&self, tree: &mut Tree, shell: &mut Shell<'_, M>) {
+        let moves = self.cells.moves();
+        let s = tree.state_mut::<TermState>();
+        if s.moves == moves {
+            return;
+        }
+        s.moves = moves;
+        if s.selection.take().is_some() {
+            s.dragging = false;
+            shell.redraw();
+            self.tell_selection(s, shell);
         }
     }
 
@@ -340,6 +383,7 @@ impl<'a, M> TerminalView<'a, M> {
                 shell.focus(id);
                 if s.selection.take().is_some() {
                     shell.redraw();
+                    self.tell_selection(s, shell);
                 }
                 if let Some(at) = self.cell_at(rect, p.at.x, p.at.y, advance, line) {
                     s.anchor = at;
@@ -363,6 +407,7 @@ impl<'a, M> TerminalView<'a, M> {
                     if new != s.selection {
                         s.selection = new;
                         shell.redraw();
+                        self.tell_selection(s, shell);
                     }
                 }
                 Status::Captured
@@ -530,6 +575,7 @@ impl<'a, M: 'a> Widget<'a, M> for TerminalView<'a, M> {
         // every event as well costs a comparison, and also covers a layout that changed the
         // view's size without the window's (a neighbour that grew).
         self.check_size(tree, node, shell);
+        self.check_moves(tree, shell);
         match event {
             Event::Pointer(p) => self.pointer(tree, node, p, shell),
             Event::Key(k) if shell.is_focused(tree.id) => self.key(tree, k, shell),

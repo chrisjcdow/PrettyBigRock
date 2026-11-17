@@ -18,7 +18,13 @@
 //! - [`files`]: the file commands, written against that trait ([`FileShell`]);
 //! - [`apps`]: which app a command means, and the sandbox manager's limits on paths;
 //! - [`reason`]: errors in plain English, for every service the shell talks to;
-//! - [`format`]: sizes, times, listings, tables and prompts.
+//! - [`format`]: sizes, times, listings, tables and prompts;
+//! - [`clock`]: the wall clock in the user's time zone, `tz`, and uptime;
+//! - [`facts`]: what `mem`, `fetch`, `disk` and `check` print from system information;
+//! - [`console`]: the trait ([`Console`]) a terminal implements for the shell to talk to;
+//! - `program` (built only for PrettyBigRock): the shell itself, [`program::Shell`], which runs
+//!   its commands against the real services over any [`Console`]. The text shell
+//!   (`apps/shell`) and Terminal (`apps/terminal`) each supply a terminal and run it.
 //!
 //! Every error line the shell prints is `<command>: <path>: <reason>` (or, for a command
 //! with nothing to name, `<command>: <reason>`), with the reason in plain English, never a Rust
@@ -33,16 +39,24 @@
 extern crate alloc;
 
 pub mod apps;
+pub mod clock;
 pub mod command;
+pub mod console;
+pub mod facts;
 pub mod files;
 pub mod format;
 pub mod fs;
 pub mod help;
 pub mod layout;
+#[cfg(target_os = "prettybigrock")]
+pub mod program;
 pub mod reason;
 pub mod words;
 
-pub use command::{AppRef, Command, LineError, ParseError, Problem, parse, parse_line};
+pub use command::{AppRef, Command, LineError, ParseError, Problem, alias, parse, parse_line};
+pub use console::{Console, Gone};
 pub use files::FileShell;
 pub use fs::{Fs, Item, Space, Stat};
-pub use reason::{Failure, Reason, SandboxOp, UsersOp, file_reason, sandbox_reason, users_reason};
+pub use reason::{
+    Failure, Reason, SandboxOp, UsersOp, file_reason, sandbox_reason, sysinfo_reason, users_reason,
+};

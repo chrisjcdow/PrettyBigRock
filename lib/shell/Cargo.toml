@@ -10,9 +10,16 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+pbr-calc = { path = "../calc" }
 pbr-filetree = { path = "../filetree" }
 pbr-granite = { path = "../granite" }
 pbr-interfaces = { path = "../interfaces" }
+pbr-manifest = { path = "../manifest" }
+
+# The shell itself (`program`), which talks to the real services, is built only for
+# PrettyBigRock; on the host only its parts that are plain computation are.
+[target.'cfg(target_os = "prettybigrock")'.dependencies]
+pbr-files = { path = "../files" }
 
 [lints]
 workspace = true

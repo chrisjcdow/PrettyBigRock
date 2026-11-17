@@ -27,6 +27,7 @@ enum Msg {
     Ptr(Pointer),
     CanvasKey(KeyPress, bool),
     Clear,
+    Selected(String),
 }
 
 /// A grid of the test's own: lines of characters, a colour for each row, a cursor.
@@ -35,6 +36,8 @@ struct Grid {
     colours: Vec<Colour>,
     size: (usize, usize),
     cursor: Option<(usize, usize)>,
+    /// What `Cells::moves` says: the test changes it to move the rows.
+    moves: u64,
 }
 
 impl Grid {
@@ -45,6 +48,7 @@ impl Grid {
             colours: palette.iter().map(|c| Colour::solid(*c)).collect(),
             size: (columns, rows),
             cursor: None,
+            moves: 0,
         }
     }
 
@@ -68,6 +72,10 @@ impl Cells for Grid {
     fn cursor(&self) -> Option<(usize, usize)> {
         self.cursor
     }
+
+    fn moves(&self) -> u64 {
+        self.moves
+    }
 }
 
 struct Term {
@@ -79,11 +87,20 @@ struct Term {
     /// Keys are echoed into the grid, as a shell would: typing a character puts it at the
     /// cursor and moves on, Enter goes to the next line.
     echo: bool,
+    /// Whether `on_selection` is used.
+    selection: bool,
 }
 
 impl Term {
     fn new(columns: usize, rows: usize) -> Term {
-        Term { grid: Grid::new(columns, rows), keys: true, button: false, ok: 0, echo: false }
+        Term {
+            grid: Grid::new(columns, rows),
+            keys: true,
+            button: false,
+            ok: 0,
+            echo: false,
+            selection: false,
+        }
     }
 }
 
@@ -95,6 +112,9 @@ impl App for Term {
             .on_paste(Msg::Paste)
             .on_scroll(Msg::Scroll)
             .on_resize(Msg::Size);
+        if self.selection {
+            t = t.on_selection(Msg::Selected);
+        }
         if self.keys {
             t = t.on_key(|k| Some(Msg::Key(k)));
         } else {
@@ -325,6 +345,60 @@ fn a_click_clears_the_selection_and_nothing_is_copied() {
     // Dragging inside one cell selects nothing either.
     h.drag((at(3, 0).0 - 1, at(3, 0).1), (at(3, 0).0 + 1, at(3, 0).1));
     assert_eq!(copied(&mut h).as_deref(), Some("old"));
+}
+
+/// The texts `on_selection` was sent, in order.
+fn selected(h: &mut Harness<Term>) -> Vec<String> {
+    h.take_messages()
+        .into_iter()
+        .filter_map(|m| match m {
+            Msg::Selected(t) => Some(t),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn on_selection_hears_every_change_of_what_is_selected() {
+    let mut h = harness();
+    h.app_mut().selection = true;
+    h.refresh();
+    h.take_messages();
+    // A drag from one cell to another sends the text each time the selection changes.
+    h.move_to(at(0, 0).0, at(0, 0).1);
+    h.press(input::BUTTON_LEFT as u16);
+    h.move_to(at(2, 0).0, at(2, 0).1);
+    h.move_to(at(4, 0).0, at(4, 0).1);
+    h.release(input::BUTTON_LEFT as u16);
+    assert_eq!(selected(&mut h), ["hel", "hello"]);
+    // A click drops the selection: the empty text.
+    h.click(at(2, 2).0, at(2, 2).1);
+    assert_eq!(selected(&mut h), [""]);
+    // And a click with nothing selected says nothing.
+    h.click(at(2, 2).0, at(2, 2).1);
+    assert!(selected(&mut h).is_empty());
+}
+
+#[test]
+fn rows_that_move_drop_the_selection() {
+    let mut h = harness();
+    h.app_mut().selection = true;
+    h.refresh();
+    h.drag(at(0, 0), at(4, 0));
+    assert_eq!(selected(&mut h).last().map(String::as_str), Some("hello"));
+    // The rows move (the app scrolled): the selection would point at other text, so it goes,
+    // and the app is told. The next event is what makes the view look.
+    h.app_mut().grid.moves += 1;
+    h.refresh();
+    h.move_to(1, 1);
+    assert_eq!(selected(&mut h), [""]);
+    h.set_clipboard_text("old");
+    assert_eq!(copied(&mut h).as_deref(), Some("old"), "nothing is left to copy");
+    // A selection made after the move holds until the rows move again.
+    h.drag(at(0, 1), at(5, 1));
+    assert_eq!(selected(&mut h).last().map(String::as_str), Some("second"));
+    h.move_to(1, 1);
+    assert!(selected(&mut h).is_empty());
 }
 
 #[test]

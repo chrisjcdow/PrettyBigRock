@@ -524,9 +524,12 @@ dependencies = [
 name = "pbr-shell"
 version = "0.0.0"
 dependencies = [
+ "pbr-calc",
+ "pbr-files",
  "pbr-filetree",
  "pbr-granite",
  "pbr-interfaces",
+ "pbr-manifest",
 ]
 
 [[package]]
@@ -579,6 +582,20 @@ dependencies = [
  "pbr-devices",
  "pbr-font",
  "pbr-seat",
+]
+
+[[package]]
+name = "pbr-terminal-app"
+version = "0.0.0"
+dependencies = [
+ "pbr-draw",
+ "pbr-files",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-sandstone",
+ "pbr-shell",
+ "pbr-terminal",
+ "pbr-window",
 ]
 
 [[package]]
