@@ -886,6 +886,11 @@ pub(crate) fn qcode(c: char) -> Option<(String, bool)> {
         '"' => shifted("apostrophe"),
         ':' => shifted("semicolon"),
         '+' => shifted("equal"),
+        '=' => plain("equal"),
+        '(' => shifted("9"),
+        ')' => shifted("0"),
+        '*' => shifted("8"),
+        '^' => shifted("6"),
         _ => None,
     }
 }

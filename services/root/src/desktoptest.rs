@@ -209,6 +209,15 @@ const APPS: &[(&str, u32, &[&str])] = &[
     ("about", AppServices::WINDOWS.0 | AppServices::SYSINFO.0, &[]),
     ("notepad", AppServices::WINDOWS.0 | AppServices::PICKER.0, &["/Home/Documents"]),
     ("files", AppServices::WINDOWS.0 | AppServices::SANDBOX.0 | AppServices::USERS.0, &[]),
+    (
+        "terminal",
+        AppServices::WINDOWS.0
+            | AppServices::SYSINFO.0
+            | AppServices::DATA.0
+            | AppServices::SANDBOX.0
+            | AppServices::USERS.0,
+        &[],
+    ),
 ];
 
 /// The apps among [`APPS`] that are trusted (note 0026, section 8): they hold the session's

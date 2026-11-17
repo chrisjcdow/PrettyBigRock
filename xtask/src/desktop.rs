@@ -1899,6 +1899,7 @@ impl Run<'_> {
         self.about(first)?;
         self.notepad(first)?;
         self.files(first)?;
+        self.terminal(first)?;
         self.screens_dialog(first)?;
         Ok(())
     }
@@ -2453,6 +2454,86 @@ impl Run<'_> {
             v.screens.len() == 2 && v.screens.iter().all(|s| s.mirrors == 0)
         })
         .map(|_| ())
+    }
+
+    /// Types `line` into Terminal and presses Enter, after waiting for its prompt; waits until
+    /// Terminal's mirror shows it was entered.
+    fn terminal_line(&mut self, line: &str) -> Result<(), String> {
+        // The shell is reading when the last thing Terminal's mirror says is a prompt.
+        self.wait("Terminal's prompt", |t| {
+            t.lines()
+                .rev()
+                .find(|l| l.contains("terminal: [console"))
+                .is_some_and(|l| l.contains("terminal: [console:read] "))
+        })?;
+        self.type_typed(line)?;
+        self.chord(&["ret"])?;
+        let entered = format!("> {line}");
+        self.wait(&format!("{line} entered in Terminal"), |t| {
+            t.lines().any(|l| l.contains("terminal: [console] ") && l.ends_with(&entered))
+        })
+        .map(|_| ())
+    }
+
+    /// Terminal: a set of commands typed in the window (note 0026, section 7), `edit` opening
+    /// Notepad, and the clipboard from Notepad to Terminal (note 0025, section 5): Notepad
+    /// copies its text, Terminal pastes it into a line, its line break turned into a space.
+    fn terminal(&mut self, first: &ScreenLine) -> Result<(), String> {
+        let w = self.launch_app("Terminal", "terminal")?;
+        self.check_trusted_tree("terminal")?;
+        self.line("terminal: [console:read] ")?;
+        self.app_pictures(&w, "Terminal", "terminal", first)?;
+        // Give it the keyboard again: the pictures moved the pointer and the window.
+        let v = self.view("Terminal", |v| v.window("Terminal").is_some())?;
+        let w = v.window("Terminal").cloned().ok_or("no Terminal")?;
+        self.click_at(w.x + 120, w.y - 13)?;
+        for (line, shows) in [
+            ("pwd", "terminal: [console] /Home"),
+            ("calc (2+3)*4^2", "terminal: [console] = 80"),
+            ("potato", "terminal: [console] Hello, potato. <3"),
+            ("ver", "terminal: [console] PrettyBigRock 2.0.0-alpha.1"),
+            ("mem", "terminal: [console] Installed memory: "),
+            ("uptime", "terminal: [console] Up "),
+            ("ls Documents", "terminal: [console] rock notes.txt"),
+            ("cd Documents", "terminal: [console:read] chris:/Home/Documents> "),
+            ("fetch", "Memory: "),
+        ] {
+            let before = self.count(shows);
+            self.terminal_line(line)?;
+            self.lines(shows, before + 1)?;
+        }
+        // `edit` launches Notepad with the file; Notepad copies all of it.
+        let text = "Hello from Notepad\nA pretty big rock.";
+        self.terminal_line("edit \"rock notes.txt\"")?;
+        self.line(&format!(
+            "notepad: opened /Home/Documents/rock notes.txt ({} bytes, crc ",
+            text.len()
+        ))?;
+        let v = self.view("Notepad", |v| v.window("Notepad").is_some())?;
+        let n = v.window("Notepad").cloned().ok_or("no Notepad")?;
+        self.click_at(n.x + 120, n.y - 13)?;
+        self.view("Notepad focused", |v| v.window("Notepad").is_some_and(|w| w.is("focused")))?;
+        self.chord(&["ctrl", "a"])?;
+        self.chord(&["ctrl", "c"])?;
+        // The display server says the clipboard holds text (it may have since the gallery's
+        // step: what is pasted below is what shows it is Notepad's).
+        self.wait("text on the clipboard", |t| {
+            t.lines()
+                .rev()
+                .find(|l| l.contains("[display] clipboard "))
+                .is_some_and(|l| l.ends_with("clipboard text"))
+        })?;
+        self.close_app("Notepad", "notepad")?;
+        // Terminal pastes it into a line, with Ctrl+Shift+V.
+        let v = self.view("Terminal", |v| v.window("Terminal").is_some())?;
+        let w = v.window("Terminal").cloned().ok_or("no Terminal")?;
+        self.click_at(w.x + 120, w.y - 13)?;
+        self.view("Terminal focused", |v| v.window("Terminal").is_some_and(|w| w.is("focused")))?;
+        self.type_typed("echo ")?;
+        self.chord(&["ctrl", "shift", "v"])?;
+        self.chord(&["ret"])?;
+        self.line(&format!("terminal: [console] {}", text.replace('\n', " ")))?;
+        self.close_app("Terminal", "terminal")
     }
 
     /// About: the facts, from pbr.sysinfo.
