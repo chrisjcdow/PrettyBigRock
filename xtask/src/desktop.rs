@@ -1893,6 +1893,9 @@ impl Run<'_> {
     /// `APPS`).
     fn apps(&mut self, first: &ScreenLine) -> Result<(), String> {
         self.line("Desktop test: the apps")?;
+        // First, while the root program waits for Calculator: after the last app it goes on to
+        // its next step, which stops the display server.
+        self.screens_dialog(first)?;
         self.calculator(first)?;
         self.snake(first)?;
         self.paint(first)?;
@@ -1900,7 +1903,6 @@ impl Run<'_> {
         self.notepad(first)?;
         self.files(first)?;
         self.terminal(first)?;
-        self.screens_dialog(first)?;
         Ok(())
     }
 
