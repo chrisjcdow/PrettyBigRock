@@ -268,11 +268,14 @@ impl Window {
     }
 }
 
-/// A press delivered to a client: its serial, the window, and when.
+/// A press delivered to a client: its serial, the window, the top window that one belongs to
+/// (itself, unless it is a dialog or popup: kept here because the dialog may be gone by the
+/// time the press is checked), and when.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Press {
     pub(crate) serial: u32,
     pub(crate) window: u32,
+    pub(crate) top: u32,
     pub(crate) time: u64,
 }
 
@@ -893,12 +896,34 @@ impl Desk {
 
     /// Records a press delivered to a client.
     pub(crate) fn record_press(&mut self, id: WindowId, serial: u32, now: u64) {
+        let top = self.root_of(id).number;
         if let Some(c) = self.clients.get_mut(&id.client) {
             if c.presses.len() >= PRESSES_KEPT {
                 c.presses.pop_front();
             }
-            c.presses.push_back(Press { serial, window: id.number, time: now });
+            c.presses.push_back(Press { serial, window: id.number, top, time: now });
         }
+    }
+
+    /// Whether `serial` is a press delivered to `client`'s window `top`, or to one of its own
+    /// dialogs or popups, in the last second: what the file picker asks (note 0025). An app's
+    /// "Save changes?" dialog whose Save then needs the picker answers the user's press in the
+    /// dialog, which closes as the picker opens over the window it belongs to.
+    pub(crate) fn recent_press_in_family(
+        &self,
+        client: ClientId,
+        top: u32,
+        serial: u32,
+        now: u64,
+    ) -> bool {
+        serial != 0
+            && self.clients.get(&client).is_some_and(|c| {
+                c.presses.iter().any(|p| {
+                    p.serial == serial
+                        && (p.window == top || p.top == top)
+                        && now.saturating_sub(p.time) <= SERIAL_LIFE
+                })
+            })
     }
 
     /// Whether `serial` is a press delivered to `client` (to `window`, if given) in the last
@@ -1246,7 +1271,7 @@ impl Desk {
     ) -> Answer<bool> {
         let session = self.system_only(client)?.session;
         let target = self.app_window(session, app, window)?;
-        Ok(self.recent_press(target.client, Some(target.number), serial, now))
+        Ok(self.recent_press_in_family(target.client, target.number, serial, now))
     }
 
     /// `destroy`.

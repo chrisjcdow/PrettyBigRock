@@ -1069,6 +1069,27 @@ fn system_clients_check_serials_and_open_windows_over_others() {
     assert_eq!(h.d.check_serial(picker, 7, w, serial, h.now), Ok(true));
     assert_eq!(h.d.check_serial(picker, 7, w, serial + 1, h.now), Ok(false));
     assert_eq!(h.d.check_serial(picker, 99, w, serial, h.now), Err(WindowError::NoSuchWindow));
+    // A press in Notepad's own dialog ("Save changes?", whose Save asks for the picker) counts
+    // for the window the dialog belongs to, even once the dialog has gone; a press in another
+    // of its windows doesn't.
+    let dlg = h
+        .d
+        .create(a, WindowKind::Dialog, w, "Save?", (200, 100), WindowFlags::MODAL, (0, 0), 0, h.now)
+        .unwrap();
+    h.draw(a, dlg);
+    let (dx, dy, ..) = h.place(7, dlg);
+    h.events(a);
+    h.click(dx + 10, dy + 10);
+    let in_dialog = h.events(a).iter().find(|e| e.kind == kind::BUTTON && e.b == 1).unwrap().serial;
+    h.d.destroy(a, dlg, h.now).unwrap();
+    assert_eq!(h.d.check_serial(picker, 7, w, in_dialog, h.now), Ok(true));
+    let other = h.window(a, (200, 150));
+    let (ox, oy, ..) = h.place(7, other);
+    h.events(a);
+    h.click(ox + 10, oy + 10);
+    let elsewhere = h.events(a).iter().find(|e| e.kind == kind::BUTTON && e.b == 1).unwrap().serial;
+    assert_eq!(h.d.check_serial(picker, 7, w, elsewhere, h.now), Ok(false));
+    h.d.destroy(a, other, h.now).unwrap();
     assert_eq!(
         h.d.create_over(a, 7, w, "Open", (300, 200), WindowFlags(0), h.now),
         Err(WindowError::NotAllowed)
