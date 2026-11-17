@@ -94,6 +94,8 @@ pub enum ElfError {
     BadEntry,
     /// The segments span more than 1 GiB.
     TooBig,
+    /// There wasn't the memory to make a copy of a segment to load.
+    NoMemory,
 }
 
 impl fmt::Display for ElfError {
@@ -111,6 +113,7 @@ impl fmt::Display for ElfError {
             ElfError::NoNote => "it has no valid PrettyBigRock note",
             ElfError::BadEntry => "its entry point isn't in its code",
             ElfError::TooBig => "it's bigger than 1 GiB",
+            ElfError::NoMemory => "not enough memory to load it",
         })
     }
 }
@@ -486,7 +489,10 @@ impl<'a> Program<'a> {
                 len = len.max(at + 8 - seg.vaddr);
             }
         }
-        let mut out = Vec::with_capacity(len as usize);
+        // A loader may be short of memory (a session full of apps): that is an error to answer
+        // with, not a reason to stop.
+        let mut out = Vec::new();
+        out.try_reserve_exact(len as usize).map_err(|_| ElfError::NoMemory)?;
         out.extend_from_slice(
             f.get(seg.file_offset as usize..(seg.file_offset + seg.file_len) as usize)
                 .ok_or(ElfError::Truncated)?,

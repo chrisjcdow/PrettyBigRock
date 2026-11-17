@@ -13,7 +13,7 @@ use crate::thread::Thread;
 use alloc::vec::Vec;
 use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
-use pbr_elf::Program;
+use pbr_elf::{ElfError, Program};
 
 static SELF: AtomicU32 = AtomicU32::new(0);
 
@@ -273,7 +273,10 @@ pub fn spawn(s: &Spawn<'_>) -> core::result::Result<Spawned, SpawnError> {
     sys::call(num::MEMORY_UNMAP, [p.into(), at, span, 0, 0, 0])?;
     let base = at.wrapping_sub(lo);
     for seg in prog.segments() {
-        let data = prog.segment_data(&seg, base).map_err(SpawnError::Program)?;
+        let data = prog.segment_data(&seg, base).map_err(|e| match e {
+            ElfError::NoMemory => SpawnError::System(Error::OutOfMemory),
+            e => SpawnError::Program(e),
+        })?;
         image.write(seg.vaddr - lo, &data)?;
     }
     for seg in prog.segments() {
