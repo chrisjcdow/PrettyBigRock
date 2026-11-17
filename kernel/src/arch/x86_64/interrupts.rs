@@ -5,7 +5,7 @@
 
 use super::{apic, cpu};
 use crate::{kprintln, percpu, sched};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// The timer interrupt's vector.
 pub const TIMER: u8 = 32;
@@ -227,6 +227,7 @@ extern "C" fn dispatch(f: &mut Frame) {
             BREAKPOINTS.fetch_add(1, Ordering::Relaxed);
         }
         2 if crate::panicking() => super::halt_forever(),
+        2 => asked_for_state(),
         0..=31 => fatal(f),
         TIMER => {
             apic::eoi();
@@ -255,6 +256,27 @@ extern "C" fn dispatch(f: &mut Frame) {
             sched::interrupt_exit();
         }
     }
+}
+
+/// Set once a non-maskable interrupt has printed the scheduler's state.
+static STATE_PRINTED: AtomicBool = AtomicBool::new(false);
+
+/// A non-maskable interrupt (NMI) arrives even while a core has interrupts masked. Outside a
+/// panic nothing in the machine sends one, so it is the boot test runner asking, through
+/// QEMU's `inject-nmi`, what the scheduler was doing when a boot stopped making progress: each
+/// core's tick count, run queue and timers, and every thread. QEMU sends it to every core;
+/// the first to arrive prints, once, and the rest carry on.
+///
+/// This is only for a machine that has hung already: printing takes the console's and the
+/// heap's locks, and if the interrupted code on this core held one, this core waits for ever.
+fn asked_for_state() {
+    if STATE_PRINTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let core = percpu::try_this().map(|c| c.index).unwrap_or(0);
+    kprintln!("NMI on core {core}: the scheduler's state, asked for by the test runner");
+    sched::dump();
+    kprintln!("NMI: end of the scheduler's state");
 }
 
 fn user_fault(f: &Frame) -> ! {

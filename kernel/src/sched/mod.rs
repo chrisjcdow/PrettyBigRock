@@ -331,6 +331,7 @@ pub fn dump() {
         _ => "?",
     };
     let now = time::now_ns();
+    crate::kprintln!("now {} ms", now / 1_000_000);
     for c in percpu::all() {
         // SAFETY: a diagnostic read of another core's `current`; it may be stale, never freed
         // (the core's own reference keeps it alive while it's there).

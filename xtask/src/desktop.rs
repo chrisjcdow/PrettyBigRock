@@ -545,6 +545,8 @@ impl Run<'_> {
                 return Err(format!("waiting for {what}: QEMU stopped ({st})"));
             }
             if Instant::now() > end || self.started.elapsed() > self.limit {
+                // The scheduler's state goes to the serial log, before the registers.
+                self.qmp.ask_for_state(self.cfg);
                 let regs = self.registers();
                 let _ = fs::write(self.log.with_extension("registers.txt"), &regs);
                 return Err(format!("waiting for {what}: it didn't happen\n{regs}"));

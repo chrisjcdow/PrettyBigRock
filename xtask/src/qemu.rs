@@ -714,6 +714,8 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
             ));
         }
         if start.elapsed() > limit {
+            qmp.ask_for_state(cfg);
+            let text = fs::read_to_string(&log).unwrap_or_default();
             let regs = name_addresses(qmp.registers(cfg.cores), cfg, image);
             let _ = fs::write(log.with_extension("registers.txt"), &regs);
             break Err(format!(
@@ -1099,6 +1101,19 @@ impl Qmp {
         let event = self.events.iter().find(|e| e.contains("\"SHUTDOWN\""))?;
         let after = event.split("\"reason\"").nth(1)?;
         Some(after.split('"').nth(1)?.to_string())
+    }
+
+    /// For a boot that stopped making progress on x86-64: sends every core a non-maskable
+    /// interrupt, which the kernel answers by printing its scheduler's state to the serial log
+    /// (each core's ticks, run queue and timers, and every thread), and gives it two seconds
+    /// to do so. Elsewhere QEMU has no NMI to send, and nothing happens.
+    pub(crate) fn ask_for_state(&mut self, cfg: &Config) {
+        if cfg.arch != "x86_64" || self.connect().is_err() {
+            return;
+        }
+        if self.command(r#"{"execute":"inject-nmi"}"#).is_ok() {
+            std::thread::sleep(Duration::from_secs(2));
+        }
     }
 
     /// What every core was doing, for a run that failed: QEMU's own view of each virtual
