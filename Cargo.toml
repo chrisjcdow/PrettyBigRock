@@ -11,6 +11,7 @@ members = [
     "apps/calculator",
     "apps/desktop",
     "apps/notepad",
+    "apps/files",
     "apps/paint",
     "apps/permissions",
     "apps/picker",

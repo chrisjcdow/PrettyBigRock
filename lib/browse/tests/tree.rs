@@ -143,8 +143,92 @@ fn hostile_paths() {
         let _ = t.stat(path);
         let _ = t.list(path);
         let _ = t.make_folder(path);
+        let _ = t.make_file(path);
+        let _ = t.rename(path, "/Home/x");
+        let _ = t.rename("/Home/Documents", path);
+        let _ = t.remove(path);
         t.add_folder(path).add_file(path, u64::MAX, u64::MAX).hide(path).read_only(path);
         let _ = t.exists(path);
     }
     assert_eq!(t.stat("/Home").map(|i| i.name), Ok("Home".to_string()));
+}
+
+#[test]
+fn make_file_makes_an_empty_file_stamped_with_the_time() {
+    let mut t = tree();
+    t.set_time(5000);
+    assert_eq!(t.make_file("/Home/new.txt"), Ok(()));
+    let item = t.stat("/Home/new.txt").unwrap();
+    assert_eq!((item.folder, item.size, item.modified), (false, 0, 5000));
+    assert_eq!(t.make_folder("/Home/Made"), Ok(()));
+    assert_eq!(t.stat("/Home/Made").unwrap().modified, 5000);
+    // The same answers as `make_folder`.
+    assert_eq!(t.make_file("/Home/new.txt"), Err(BrowseError::AlreadyExists));
+    assert_eq!(t.make_file("/Home/Documents"), Err(BrowseError::AlreadyExists));
+    assert_eq!(t.make_file("/"), Err(BrowseError::AlreadyExists));
+    assert_eq!(t.make_file("/Nowhere/x"), Err(BrowseError::NotFound));
+    assert_eq!(t.make_file("/Home/new.txt/x"), Err(BrowseError::NotAFolder));
+    assert_eq!(t.make_file("/Home/bad/"), Err(BrowseError::BadName));
+    assert_eq!(t.make_file("/Home/ bad"), Err(BrowseError::BadName));
+    assert_eq!(t.make_file("/Locked/x"), Err(BrowseError::NoRight));
+    assert!(!t.exists("/Locked/x"));
+}
+
+#[test]
+fn rename_moves_a_file_or_a_folder_with_what_is_in_it() {
+    let mut t = tree();
+    assert_eq!(t.rename("/Home/Documents/letter.txt", "/Home/Documents/note.txt"), Ok(()));
+    assert!(!t.exists("/Home/Documents/letter.txt"));
+    assert_eq!(t.stat("/Home/Documents/note.txt").unwrap().size, 120);
+    // A folder takes everything below it, and not a folder whose name only starts the same.
+    t.add_file("/Home/Documents2/keep.txt", 1, 1);
+    assert_eq!(t.rename("/Home/Documents", "/Home/Papers"), Ok(()));
+    assert!(t.exists("/Home/Papers/note.txt"));
+    assert!(!t.exists("/Home/Documents"));
+    assert!(t.exists("/Home/Documents2/keep.txt"));
+    // Into another folder.
+    assert_eq!(t.rename("/Home/Papers/note.txt", "/Home/note.txt"), Ok(()));
+    assert!(t.exists("/Home/note.txt"));
+}
+
+#[test]
+fn rename_answers() {
+    let mut t = tree();
+    t.add_file("/Home/a.txt", 1, 1).add_file("/Home/b.txt", 2, 2);
+    // Nothing is ever replaced, not even by itself.
+    assert_eq!(t.rename("/Home/a.txt", "/Home/b.txt"), Err(BrowseError::AlreadyExists));
+    assert_eq!(t.rename("/Home/a.txt", "/Home/a.txt"), Err(BrowseError::AlreadyExists));
+    assert_eq!(t.stat("/Home/b.txt").unwrap().size, 2);
+    assert_eq!(t.rename("/Home/none", "/Home/x"), Err(BrowseError::NotFound));
+    assert_eq!(t.rename("/Home/a.txt", "/Nowhere/x"), Err(BrowseError::NotFound));
+    assert_eq!(t.rename("/Home/a.txt", "/Home/b.txt/x"), Err(BrowseError::NotAFolder));
+    assert_eq!(t.rename("/Home/a.txt", "/Home/bad "), Err(BrowseError::BadName));
+    assert_eq!(t.rename("/Home/a.txt", "x"), Err(BrowseError::BadName));
+    assert_eq!(t.rename("/", "/x"), Err(BrowseError::NoRight));
+    assert_eq!(
+        t.rename("/Home/Documents", "/Home/Documents/in"),
+        Err(BrowseError::Other("A folder can't go inside itself.".into()))
+    );
+    assert!(t.exists("/Home/Documents/letter.txt"));
+    // A read-only folder can't lose or gain anything.
+    assert_eq!(t.rename("/Locked/Sub", "/Locked/Other"), Err(BrowseError::NoRight));
+    assert_eq!(t.rename("/Home/a.txt", "/Locked/a.txt"), Err(BrowseError::NoRight));
+    assert!(t.exists("/Home/a.txt"));
+}
+
+#[test]
+fn remove_takes_a_file_or_an_empty_folder() {
+    let mut t = tree();
+    assert_eq!(t.remove("/Home/Documents/letter.txt"), Ok(()));
+    assert!(!t.exists("/Home/Documents/letter.txt"));
+    assert_eq!(t.remove("/Home/Documents"), Ok(()));
+    assert!(!t.exists("/Home/Documents"));
+    assert_eq!(t.remove("/Home/Documents"), Err(BrowseError::NotFound));
+    // A folder with something in it, even only a hidden file, stays.
+    assert_eq!(t.remove("/Home"), Err(BrowseError::NotEmpty));
+    assert!(t.exists("/Home/.profile"));
+    assert_eq!(t.remove("/"), Err(BrowseError::NoRight));
+    assert_eq!(t.remove("/Locked/Sub"), Err(BrowseError::NoRight));
+    assert_eq!(t.remove("relative"), Err(BrowseError::BadName));
+    assert!(t.exists("/Locked/Sub"));
 }

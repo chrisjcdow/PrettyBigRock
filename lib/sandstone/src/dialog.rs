@@ -136,6 +136,21 @@ impl<M> Dialog<M> {
         self
     }
 
+    /// Puts other words on the buttons Enter and Escape choose (the ones made by [`Dialog::input`]
+    /// and [`Dialog::message`] say "OK" and "Cancel"): 1.3's New file dialog says "Make it".
+    /// A label that is `None` is left as it was.
+    pub fn button_labels(mut self, default: Option<&str>, cancel: Option<&str>) -> Dialog<M> {
+        for b in &mut self.buttons {
+            match (b.role, default, cancel) {
+                (Some(Role::Default), Some(label), _) | (Some(Role::Cancel), _, Some(label)) => {
+                    b.label = label.to_string();
+                }
+                _ => {}
+            }
+        }
+        self
+    }
+
     /// The window's title.
     pub fn title(&self) -> &str {
         &self.title
@@ -209,4 +224,26 @@ pub(crate) fn view<'a, M>(d: &'a Dialog<M>, theme: &Theme) -> Element<'a, Answer
         buttons = buttons.push(button);
     }
     column.push(Space::new(0, 4)).push(buttons.width(Length::Fill)).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn button_labels_rename_the_default_and_cancel_buttons_only() {
+        let d: Dialog<u8> =
+            Dialog::input("New file", "Name:", "a", |_| 1).button_labels(Some("Make it"), None);
+        assert_eq!(d.buttons[0].label, "Cancel");
+        assert_eq!(d.buttons[1].label, "Make it");
+        // The other words, and a plain button that has neither role.
+        let d: Dialog<u8> = Dialog::question("Delete", "Sure?")
+            .button("Delete", 1)
+            .default_button("Keep it", 2)
+            .button_labels(Some("Keep"), Some("Never mind"));
+        assert_eq!(d.buttons[0].label, "Delete");
+        assert_eq!(d.buttons[1].label, "Keep");
+        let d: Dialog<u8> = Dialog::input("t", "m", "", |_| 1).button_labels(None, Some("No"));
+        assert_eq!((d.buttons[0].label.as_str(), d.buttons[1].label.as_str()), ("No", "OK"));
+    }
 }

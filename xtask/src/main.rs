@@ -106,6 +106,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-about", "about", "apps/about"),
     ("pbr-paint", "paint", "apps/paint"),
     ("pbr-notepad", "notepad", "apps/notepad"),
+    ("pbr-files-app", "files", "apps/files"),
 ];
 
 /// Text files in the start-up archive: (name in the archive, path from the repository root).
@@ -132,6 +133,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("apps/about.app", "apps/about/about.app"),
     ("apps/paint.app", "apps/paint/paint.app"),
     ("apps/notepad.app", "apps/notepad/notepad.app"),
+    ("apps/files.app", "apps/files/files.app"),
     // Keyboard layouts, which the input service reads (note 0021, section 4).
     ("layouts/us.kbd", "services/input/layouts/us.kbd"),
     ("layouts/gb.kbd", "services/input/layouts/gb.kbd"),
@@ -176,6 +178,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-about",
     "pbr-paint",
     "pbr-notepad",
+    "pbr-files-app",
     "pbr-bmp",
     "pbr-browse",
     "pbr-test-echo",
@@ -226,6 +229,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-about",
     "pbr-paint",
     "pbr-notepad",
+    "pbr-files-app",
     "pbr-browse",
     "pbr-testpng",
     "pbr-partition",

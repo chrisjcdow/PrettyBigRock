@@ -691,6 +691,7 @@ pub struct List<'a, M> {
     on_select: Option<Box<dyn Fn(usize) -> M + 'a>>,
     on_activate: Option<Box<dyn Fn(usize) -> M + 'a>>,
     on_sort: Option<Box<dyn Fn(usize) -> M + 'a>>,
+    on_empty_press: Option<Box<dyn Fn() -> M + 'a>>,
     width: Length,
     height: Length,
 }
@@ -707,6 +708,7 @@ impl<'a, M: 'a> List<'a, M> {
             on_select: None,
             on_activate: None,
             on_sort: None,
+            on_empty_press: None,
             width: Length::Fill,
             height: Length::Fill,
         }
@@ -741,6 +743,15 @@ impl<'a, M: 'a> List<'a, M> {
     /// flips the order if it was that column already).
     pub fn on_sort(mut self, f: impl Fn(usize) -> M + 'a) -> List<'a, M> {
         self.on_sort = Some(Box::new(f));
+        self
+    }
+
+    /// What to send when the user presses a button (the left or the right) on the part of the
+    /// list below its last row, where there is no row to pick: Files clears its selection, so
+    /// that a right click there means "this folder", not the row picked before. Nothing is sent
+    /// if this isn't given (a click on empty space does nothing).
+    pub fn on_empty_press(mut self, f: impl Fn() -> M + 'a) -> List<'a, M> {
+        self.on_empty_press = Some(Box::new(f));
         self
     }
 
@@ -1219,6 +1230,8 @@ impl<'a, M: 'a> List<'a, M> {
                         if let Some(f) = f {
                             shell.publish(f(row));
                         }
+                    } else if let Some(f) = &self.on_empty_press {
+                        shell.publish(f());
                     }
                 }
                 Status::Captured

@@ -949,3 +949,60 @@ fn a_column_that_fits_its_title_is_found_by_a_click_on_its_heading() {
     h.click(100, 10);
     assert_eq!(h.take_messages(), vec![Msg::Sort(1), Msg::Sort(0)]);
 }
+
+// ---------------------------------------------------------------------------------------------
+// A press below the last row
+// ---------------------------------------------------------------------------------------------
+
+/// A list that may want to hear of presses on its empty part.
+struct Clearing {
+    selected: Option<usize>,
+    cleared: u32,
+    hear: bool,
+}
+
+impl App for Clearing {
+    type Message = Msg;
+
+    fn view(&self) -> Element<'_, Msg> {
+        let rows = (0..3).map(|i| ListRow::new().cell(format!("row {i}"))).collect();
+        let mut list = List::new(vec![ListColumn::new("Name", Length::Fill)], rows)
+            .selected(self.selected)
+            .on_select(Msg::Select);
+        if self.hear {
+            list = list.on_empty_press(|| Msg::Item(usize::MAX));
+        }
+        list.id("files")
+    }
+
+    fn update(&mut self, m: Msg, _cx: &mut Context<'_, Msg>) {
+        match m {
+            Msg::Select(i) => self.selected = Some(i),
+            Msg::Item(_) => {
+                self.cleared += 1;
+                self.selected = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn a_press_below_the_last_row_is_heard_only_by_a_list_that_asks() {
+    for hear in [false, true] {
+        let mut h = Harness::new(Clearing { selected: None, cleared: 0, hear }, list_settings());
+        h.click(50, row_y(1));
+        assert_eq!(h.app().selected, Some(1));
+        // Rows end at 22 + 60; the heading doesn't count as empty room.
+        click_later(&mut h, 50, 120);
+        assert_eq!(h.app().cleared, u32::from(hear));
+        assert_eq!(h.app().selected, if hear { None } else { Some(1) });
+        // A right press there is heard too (Files opens its folder's menu on it).
+        h.click(50, row_y(0));
+        h.advance(1000);
+        h.right_click_in(WindowId::MAIN, 50, 120);
+        assert_eq!(h.app().cleared, if hear { 2 } else { 0 });
+        h.click(50, 10);
+        assert_eq!(h.app().cleared, if hear { 2 } else { 0 });
+    }
+}

@@ -25,6 +25,18 @@ fn error(e: Error) -> BrowseError {
         }
         Error::File(FileError::NotAFolder) => BrowseError::NotAFolder,
         Error::File(FileError::AlreadyExists) => BrowseError::AlreadyExists,
+        Error::File(FileError::FolderNotEmpty) => BrowseError::NotEmpty,
+        // The words 1.3's RockFS used for these (`rfs_strerror`).
+        Error::File(FileError::NoSpace) => BrowseError::Other(String::from(
+            "There isn't enough free space to save this safely. Delete something you don't need \
+             and try again",
+        )),
+        Error::File(FileError::DiskError) => {
+            BrowseError::Other(String::from("The disk reported an error"))
+        }
+        Error::File(FileError::Damaged) => BrowseError::Other(String::from(
+            "Part of the disk is damaged. Run 'check' in the Terminal",
+        )),
         // A folder above the program's own entries is shown, but nothing can be made there.
         Error::Above | Error::File(FileError::NoRight | FileError::ReadOnly) => {
             BrowseError::NoRight
@@ -66,5 +78,21 @@ impl Folders for Files {
             BrowseError::Other(text) => BrowseError::Other(format!("making {path}: {text}")),
             other => other,
         })
+    }
+
+    fn make_file(&mut self, path: &str) -> Result<(), BrowseError> {
+        path::check_name(path::name(path))?;
+        self.create(path, false, FileRights(FileRights::READ.0 | FileRights::WRITE.0))
+            .map(|_| ())
+            .map_err(error)
+    }
+
+    fn rename(&mut self, from: &str, to: &str) -> Result<(), BrowseError> {
+        path::check_name(path::name(to))?;
+        Files::rename(self, from, to).map_err(error)
+    }
+
+    fn remove(&mut self, path: &str) -> Result<(), BrowseError> {
+        Files::remove(self, path).map_err(error)
     }
 }

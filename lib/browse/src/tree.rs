@@ -4,7 +4,7 @@
 //! A file tree, as browsing needs it: the [`Folders`] trait.
 //!
 //! A *trait* is Rust's way of saying what a type must be able to do (here: list a folder, say
-//! what a path is, make a folder) without saying how. The picker and Files are written against
+//! what a path is, make, rename and remove things) without saying how. The picker and Files are written against
 //! the trait, so the same code browses a program's real file tree on PrettyBigRock and
 //! [`MemTree`], a tree in memory, in the host tests.
 
@@ -23,6 +23,8 @@ pub enum BrowseError {
     NotAFolder,
     /// The name is taken.
     AlreadyExists,
+    /// A folder to be removed still has things in it.
+    NotEmpty,
     /// The program may not do that here (a folder it may only read).
     NoRight,
     /// A name or path that breaks the rules ([`crate::path::check_name`]).
@@ -40,6 +42,15 @@ pub trait Folders {
     fn stat(&mut self, path: &str) -> Result<Item, BrowseError>;
     /// Makes a new, empty folder at `path` (its parent must be there).
     fn make_folder(&mut self, path: &str) -> Result<(), BrowseError>;
+    /// Makes a new, empty file at `path` (its parent must be there). [`BrowseError::AlreadyExists`]
+    /// if anything has that name.
+    fn make_file(&mut self, path: &str) -> Result<(), BrowseError>;
+    /// Gives the file or folder at `from` the new name or place `to`, with everything inside
+    /// it. [`BrowseError::AlreadyExists`] if `to` is taken (nothing is ever replaced).
+    fn rename(&mut self, from: &str, to: &str) -> Result<(), BrowseError>;
+    /// Removes the file at `path`, or the folder there if it is empty
+    /// ([`BrowseError::NotEmpty`] if it isn't).
+    fn remove(&mut self, path: &str) -> Result<(), BrowseError>;
 }
 
 /// What is at one path of a [`MemTree`].
@@ -67,6 +78,8 @@ impl Node {
 #[derive(Clone, Debug)]
 pub struct MemTree {
     nodes: BTreeMap<String, Node>,
+    /// The time (seconds since 1970) given to what `make_folder` and `make_file` make.
+    now: u64,
 }
 
 impl Default for MemTree {
@@ -80,7 +93,15 @@ impl MemTree {
     pub fn new() -> MemTree {
         let mut nodes = BTreeMap::new();
         nodes.insert(String::from("/"), Node::folder());
-        MemTree { nodes }
+        MemTree { nodes, now: 0 }
+    }
+
+    /// Sets the time (seconds since 1970) that files and folders made through [`Folders`] are
+    /// stamped with, as the clock would: a pretend tree has no clock of its own. 0 (the start)
+    /// means "no date".
+    pub fn set_time(&mut self, seconds: u64) -> &mut MemTree {
+        self.now = seconds;
+        self
     }
 
     /// Makes the folder at `path` and any folders above it that are missing. A path that is not
@@ -202,6 +223,92 @@ impl Folders for MemTree {
     /// that is taken in a read-only folder is `NoRight`: the person could not have made it
     /// anyway.
     fn make_folder(&mut self, path: &str) -> Result<(), BrowseError> {
+        self.check_new(path)?;
+        let mut node = Node::folder();
+        node.modified = self.now;
+        self.nodes.insert(String::from(path), node);
+        Ok(())
+    }
+
+    /// The same checks as `make_folder`.
+    fn make_file(&mut self, path: &str) -> Result<(), BrowseError> {
+        self.check_new(path)?;
+        let node =
+            Node { folder: false, size: 0, modified: self.now, hidden: false, read_only: false };
+        self.nodes.insert(String::from(path), node);
+        Ok(())
+    }
+
+    /// The checks come in this order: both paths, the name, what is at `from` (it can't be the
+    /// top), the new parent, the right to write above either place, whether `to` is taken, and
+    /// that a folder isn't being moved inside itself. Everything below a folder moves with it.
+    fn rename(&mut self, from: &str, to: &str) -> Result<(), BrowseError> {
+        path::tidy(from).ok_or(BrowseError::BadName)?;
+        path::tidy(to).ok_or(BrowseError::BadName)?;
+        path::check_name(path::name(to))?;
+        let from_parent = path::parent(from).ok_or(BrowseError::NoRight)?;
+        let to_parent = path::parent(to).ok_or(BrowseError::AlreadyExists)?;
+        if !self.nodes.contains_key(from) {
+            return Err(BrowseError::NotFound);
+        }
+        match self.nodes.get(to_parent) {
+            None => return Err(BrowseError::NotFound),
+            Some(node) if !node.folder => return Err(BrowseError::NotAFolder),
+            Some(_) => {}
+        }
+        if self.read_only_above(from_parent) || self.read_only_above(to_parent) {
+            return Err(BrowseError::NoRight);
+        }
+        if self.nodes.contains_key(to) {
+            return Err(BrowseError::AlreadyExists);
+        }
+        if path::inside(from, to) {
+            return Err(BrowseError::Other(String::from("A folder can't go inside itself.")));
+        }
+        // The keys to move: `from` and everything below it. Collected first, because the map
+        // can't be changed while it is being walked.
+        let moving: Vec<String> =
+            self.nodes.keys().filter(|key| path::inside(from, key)).cloned().collect();
+        for old in moving {
+            if let Some(node) = self.nodes.remove(&old) {
+                let new = alloc::format!("{to}{}", &old[from.len()..]);
+                self.nodes.insert(new, node);
+            }
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, path: &str) -> Result<(), BrowseError> {
+        path::tidy(path).ok_or(BrowseError::BadName)?;
+        let parent = path::parent(path).ok_or(BrowseError::NoRight)?;
+        let node = self.nodes.get(path).ok_or(BrowseError::NotFound)?;
+        if self.read_only_above(parent) {
+            return Err(BrowseError::NoRight);
+        }
+        if node.folder && !self.list(path)?.is_empty() {
+            return Err(BrowseError::NotEmpty);
+        }
+        self.nodes.remove(path);
+        Ok(())
+    }
+}
+
+impl MemTree {
+    /// Whether `folder`, or any folder above it, is read-only.
+    fn read_only_above(&self, folder: &str) -> bool {
+        let mut above = Some(folder);
+        while let Some(folder) = above {
+            if self.nodes.get(folder).is_some_and(|n| n.read_only) {
+                return true;
+            }
+            above = path::parent(folder);
+        }
+        false
+    }
+
+    /// What making a new file or folder at `path` needs: a tidy path, a good name, a parent
+    /// that is a folder, the right to write there, and a name not yet taken.
+    fn check_new(&self, path: &str) -> Result<(), BrowseError> {
         path::tidy(path).ok_or(BrowseError::BadName)?;
         let parent = path::parent(path).ok_or(BrowseError::AlreadyExists)?;
         path::check_name(path::name(path))?;
@@ -209,17 +316,12 @@ impl Folders for MemTree {
         if !parent_node.folder {
             return Err(BrowseError::NotAFolder);
         }
-        let mut above = Some(parent);
-        while let Some(folder) = above {
-            if self.nodes.get(folder).is_some_and(|n| n.read_only) {
-                return Err(BrowseError::NoRight);
-            }
-            above = path::parent(folder);
+        if self.read_only_above(parent) {
+            return Err(BrowseError::NoRight);
         }
         if self.nodes.contains_key(path) {
             return Err(BrowseError::AlreadyExists);
         }
-        self.nodes.insert(String::from(path), Node::folder());
         Ok(())
     }
 }

@@ -528,6 +528,7 @@ fn describe(e: &BrowseError, what: &str) -> String {
         BrowseError::NotFound => format!("\"{}\" isn't there.", path::name(what)),
         BrowseError::NotAFolder => format!("\"{}\" isn't a folder.", path::name(what)),
         BrowseError::AlreadyExists => format!("\"{}\" is there already.", path::name(what)),
+        BrowseError::NotEmpty => format!("\"{}\" isn't empty.", path::name(what)),
         BrowseError::NoRight => String::from("Nothing can be changed here."),
         BrowseError::BadName => {
             String::from("A name can't be empty, contain / or begin or end with a space.")

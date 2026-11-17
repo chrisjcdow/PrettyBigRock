@@ -282,6 +282,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-files-app"
+version = "0.0.0"
+dependencies = [
+ "pbr-browse",
+ "pbr-files",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-manifest",
+ "pbr-sandstone",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-filetree"
 version = "0.0.0"
 
