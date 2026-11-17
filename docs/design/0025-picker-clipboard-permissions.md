@@ -183,6 +183,24 @@ The rules are in note 0022, section 5; what they mean in the apps:
 - Previews of pictures in the picker.
 
 ## Changes
+- 17 November 2026, built (M6 stage 9b): section 2's clipboard in Notepad and Terminal,
+  section 3's Open with…, and section 5's Notepad and Terminal tests. What building settled:
+  - **`pbr.sandbox` gains `@12 openers()`**: the apps with windows that aren't hidden, each
+    with the kinds of file its manifest `opens` (`Available` couldn't grow without a new
+    version). Trusted callers may ask it.
+  - **Opening from Files** is `run`'s three steps: Files opens the file read and write if the
+    user may change it (read only otherwise), `prepare(app, path)`, `choose(launch, path,
+    node)`, `start`, and `cancel` if any step fails. The app gets that one file (nothing more if
+    its own grants already reach it) and the path as its argument. A file no app `opens` goes
+    to Notepad, as 1.3 sent every file that wasn't a picture there. Open with… lists the apps
+    that open the file's kind first, then every other app with windows.
+  - **Notepad asks the picker first, then "Save changes?"** for Open: the question's answer is
+    a press in the question, and an untitled text would need a second picker for Save. New and
+    Close ask first. A Save in the question that needs the picker uses the question's press
+    (note 0022, Changes: `check_serial` counts an app's own dialogs).
+  - **Terminal**: Copy and Paste in a right-click menu and Ctrl+Shift+C and Ctrl+Shift+V; a
+    paste goes into the line being typed, its line breaks turned into spaces, so a paste never
+    runs a command.
 - 14 November 2026, built (M6 stage 8): sections 1, 4 and 5 except what needs the apps of
   stage 9 (Notepad's and Terminal's parts of the tests; section 2's clipboard in the apps and
   section 3's "Open with…" come with them). What building settled:

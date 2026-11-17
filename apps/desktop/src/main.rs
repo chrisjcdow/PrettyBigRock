@@ -819,7 +819,9 @@ impl Desktop {
     /// Gives `event` to the Screens window if it is for that window, answers what the window
     /// asked for, and closes it when it ends; returns the event if it is the desktop's.
     fn for_screens(&mut self, event: Event) -> Option<Event> {
-        let a = self.arranging.as_ref()?;
+        // No Screens window: every event is the desktop's. (Not `?`, which would answer `None`,
+        // "the window took it", and the desktop would hear nothing.)
+        let Some(a) = self.arranging.as_ref() else { return Some(event) };
         let lost = matches!(event, Event::Lost(_));
         let ours =
             window_of(&event).is_some_and(|w| a.rt.windows().iter().any(|(_, win)| *win == w));

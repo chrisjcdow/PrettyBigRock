@@ -245,6 +245,14 @@ traits, which are settled first.
   (note 0026, section 4; note 0014, Changes).
 
 ## Changes
+- 17 November 2026 (M6 stage 9b, note 0026): **one shell, two terminals.** The shell's
+  terminal side is a trait, `pbr_shell::Console` (`read_line`, `write`, `clear`); the shell
+  itself (every command's glue, which was `apps/shell`'s) is `lib/shell`'s `program` module,
+  built only for PrettyBigRock. The text shell runs it on `pbr.terminal`; Terminal runs it on a
+  thread of its own beside its window. Both gain 1.3's commands M5 lacked (note 0026, section
+  1) and 1.3's other names for commands, and the text shell's manifest asks for `sysinfo` for
+  `mem`, `uptime`, `disk` and `fetch`. `lib/terminal`'s grid can keep scrollback (off for the
+  console) and its line editor can load a history.
 - 12 November 2026 (M6 stage 4, note 0021): the console no longer opens keyboards. It takes
   the seat from the input service, which the root program supervises with the other
   services and starts before the console; `rule` gains the `input` lookups (the console as

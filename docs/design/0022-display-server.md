@@ -462,6 +462,12 @@ descriptors (the front end turns them into capabilities).
 - Accessibility: a screen reader needs a way to read windows' contents that the sandbox allows.
 
 ## Changes
+- 17 November 2026 (M6 stage 9b): the maximise button of a window that can't be resized is
+  drawn greyed out (a maximised one's still restores it). **`check_serial` counts a press in
+  the window's own dialogs and popups**: each press is remembered with the top window it
+  belongs to, so an app's "Save changes?" dialog whose Save needs the file picker can ask for
+  it over the window the dialog belonged to, after the dialog has closed. The other serial
+  checks are unchanged.
 - 17 November 2026 (Chris, trying stage 9a): **maximising follows the window's own rules.** A
   window that isn't resizable can't be maximised (not by a double click on its title bar, its
   maximise button or its window menu, which no longer offers it). A single click on a maximised

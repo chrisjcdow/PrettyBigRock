@@ -245,6 +245,43 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 17 November 2026 (stage 9b): **Notepad, Files and Terminal** built, each by a Sonnet
+  subagent to a brief and reviewed, with the Screens dialog (note 0024, Changes). What building
+  settled:
+  - **Notepad** opens and saves through the picker in Documents, keeps a file's Latin-1
+    encoding, `\r\n` line ends and byte order mark when saving it back, holds texts up to
+    1 MiB (1.3: 32000 bytes), and opens a missing file in Documents given as its argument as a
+    new text, as 1.3 did. Its window is 480 x 320 (1.3's 560 x 400 doesn't fit a 2x screen).
+  - **Files** has 1.3's buttons and words, places, sortable columns with dates in the user's
+    time zone, a right-click menu, and refreshes every 2 seconds. New file opens the file in
+    Notepad, as 1.3 did. Delete's default button keeps the file. `lib/browse::Folders` gains
+    `make_file`, `rename` and `remove`. Opening is note 0025's (Changes).
+  - **Terminal** runs `lib/shell`'s shell on its own thread (note 0018, Changes), talking to
+    the window through a queue whose bells are notification bits. Scrollback of 1000 rows,
+    history of 100 lines in `/Home/Apps/terminal/history.txt`, Ctrl+C gives up the line being
+    typed. **Left open**: Ctrl+C can't stop a running command (the shell can't be interrupted
+    yet), and Terminal draws in one colour (`lib/terminal`'s grid has no colour per cell), so
+    1.3's green prompt and coloured `fetch` aren't there yet.
+  - **Commands**: `tz` takes `2`, `-5` or `5:30` and keeps `+HH:MM`; `edit` with no file opens
+    an empty Notepad, as 1.3's did; `shutdown` keeps M5's meaning; M5's `format` stays.
+  - **The desktop boot** (section 7) launches Notepad (typing, saving through the picker,
+    opening it again, 1.3's letter, the question before closing unsaved work), Files (Open, Up,
+    New folder, New file, Rename, Delete, Open with…, 1.3's letter opened in Notepad with
+    that one file granted, a drawing opened in Paint) and Terminal (commands typed in the
+    window, `edit`, and copying in Notepad and pasting in Terminal), each checked from inside
+    with its `[tree]` lines, and on the two-screen machines the Screens dialog (mirroring
+    applied, then put back): section 6's live mirroring check. Trusted apps' trees are checked
+    against their grants, all `Trusted`. Budgets: Notepad, Files and Terminal 8 MiB each.
+  - **The session's budget stays 64 MiB, which no longer holds every app at once**: the desktop
+    and the picker take 16, and the seven M6 apps together 48 more, before the sandbox manager's
+    own memory and the permissions viewer. Five or so apps fit beside each other (the desktop
+    boot never runs more than two). Raising it means raising the users service's 224 MiB too,
+    which holds two sessions and room to restart one: **an open question for Chris** (stage 10).
+  - **The KVM hang** (stage 9a) was the test's: the root program could miss the app launched
+    from the start menu if it opened and closed between two of its looks. It now logs seeing
+    it, and the runner waits for that line before closing it. A non-maskable interrupt now
+    makes the kernel print its scheduler's state, which the runner asks for on x86-64 when a
+    boot hangs.
 - 16 November 2026 (stage 9a): stage 9 is built in two halves: **9a**, Calculator, Snake,
   Paint and About with `lib/calc`, `lib/snake` and `lib/bmp` (each app and library written by
   a Sonnet subagent to a brief, and reviewed); **9b**, Notepad, Files and Terminal. What

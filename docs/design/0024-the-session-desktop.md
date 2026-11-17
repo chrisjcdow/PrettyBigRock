@@ -295,6 +295,19 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 17 November 2026, built (M6 stage 9b): **the Screens dialog** (section 6). A right click on
+  any wallpaper opens a one-row menu, Screens…; the window lists the screens and arranges each
+  (main, scale 1x or 2x, rotation, the screen it mirrors, order left to right, side by side
+  with tops aligned), the pointer's speed and each tablet's screen. Apply and OK send `arrange`
+  and `pointer` together (if `pointer` is refused the screens are put back) and keep the result
+  in `screens.txt`, with what it said about screens and tablets not there now; Cancel puts
+  back what was there when the window opened. The dialog refuses what the display server
+  would (a screen mirroring itself, a chain, no screen left unmirrored) in words. The desktop
+  now applies `screens.txt`'s pointer and tablet lines too, at start and when the screens
+  change. **Left open**: the display server can't list its tablets, so the dialog offers only
+  the tablets `screens.txt` names (a `pbr.window` operation would fix it). The logic is
+  `lib/desktop::arrange`, the window `lib/desktop::screens_window`; in test boots the desktop
+  writes the window's description as `desktop: screens …` lines.
 - 16 November 2026 (M6 stage 9a, asked for by Chris): **the start menu chooses a row when the
   button is let go over it**, not when it is pressed, as other menus do (and as the display
   server's window menu already did): pressing Shut down and moving off before letting go
