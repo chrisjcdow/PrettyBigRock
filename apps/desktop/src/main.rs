@@ -11,7 +11,9 @@
 //! - on the main screen a `Panel` along the bottom: the start button, a button for each window
 //!   (click to focus it, again to minimise it), and the clock, in the user's time zone;
 //! - the start menu (the start button, the Windows key or Ctrl+Esc), a popup of the panel: the
-//!   user's name, every app that has windows and isn't hidden, then Restart and Shut down.
+//!   user's name, every app that has windows and isn't hidden, then Restart and Shut down;
+//! - a right click on a wallpaper opens a small menu with Screens…, a window for arranging the
+//!   screens, scales, rotations, mirroring, the pointer and the tablets ([`screens_window`]).
 //!
 //! What it holds is little (note 0024, section 6): its window capability, with the `Desktop`
 //! flag; its own folder, where it keeps `screens.txt`, the screens' arrangement; a `pbr.sandbox`
@@ -32,19 +34,23 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use granite::endpoint::Endpoint;
+use granite::interface::CallError;
 use granite::time;
+use pbr_desktop::arrange::{self, Request};
 use pbr_desktop::confirm::{self, Confirm, Power};
 use pbr_desktop::icons::Icon;
 use pbr_desktop::menu::{Choice, Item, StartMenu};
 use pbr_desktop::screens::Arrangement;
+use pbr_desktop::screens_window::{self, Pending, SETTLED, ScreensWindow};
 use pbr_desktop::shortcuts::{self, Shortcut};
 use pbr_desktop::taskbar::{self, Part, TaskButton, Taskbar};
+use pbr_desktop::wallmenu::WallMenu;
 use pbr_desktop::{clock, wallpaper};
 use pbr_draw::Damage;
-use pbr_files::{Files, READ};
+use pbr_files::{Files, READ, READ_WRITE};
 use pbr_interfaces::pbr_sandbox::{self as sandbox, Available};
 use pbr_interfaces::pbr_users as users;
-use pbr_interfaces::pbr_window::{ScreenPlace, WindowInfo};
+use pbr_interfaces::pbr_window::{ScreenPlace, WindowError, WindowInfo};
 use pbr_sandstone::{Runtime, WindowId};
 use pbr_window::{Connection, Event, PointerEvent, PointerKind, Win, WindowFlags, WindowKind};
 
@@ -73,8 +79,9 @@ const DOUBLE_CLICK: u64 = 500_000_000;
 /// The start menu's heading: the theme's heading style, which sandstone's dialogs use too, so
 /// the two always match (note 0023; Chris is still to choose it).
 const HEADING: pbr_draw::TextStyle = pbr_sandstone::theme::HEADING;
-/// The left button.
+/// The left button, and the right.
 const LEFT: u16 = 1;
+const RIGHT: u16 = 2;
 
 /// Logs a line with the program's prefix.
 macro_rules! say {
@@ -93,6 +100,20 @@ struct Background {
 struct Menu {
     win: Win,
     hovered: Option<Choice>,
+}
+
+/// The menu of a right click on the wallpaper, while it is open.
+struct WallPopup {
+    win: Win,
+    hovered: bool,
+}
+
+/// The Screens window while it is open: a sandstone app run inside this one, as the question
+/// before Shut down is, and what it last wrote to the log (so that only changes are written).
+struct Arranging {
+    rt: Runtime<ScreensWindow>,
+    last: Vec<String>,
+    views: u32,
 }
 
 struct Desktop {
@@ -118,15 +139,61 @@ struct Desktop {
     /// sandstone app run inside this one ([`confirm`]), and whether its button's place has been
     /// written to the log yet (for the desktop boot's runner).
     asking: Option<(Runtime<Confirm>, bool)>,
+    /// The Screens window, while it is open (one at a time).
+    arranging: Option<Arranging>,
     /// The taskbar, and the screen it is on.
     panel: Option<(u32, Win)>,
     menu: Option<Menu>,
+    /// The right-click menu on a wallpaper.
+    wall_menu: Option<WallPopup>,
     /// The windows for the taskbar, and each app's icon by its number.
     windows: Vec<WindowInfo>,
     icons: Vec<(u32, Icon)>,
     /// The selected icon, and the last click on one: (which, when).
     selected: Option<usize>,
     last_click: Option<(usize, u64)>,
+}
+
+impl Arranging {
+    /// Writes what the Screens window shows to the log when it has changed, for the desktop
+    /// boot's test runner: each widget as the other sandstone apps' test boots do, and what
+    /// the choices come to.
+    fn report(&mut self) {
+        let mut lines = Vec::new();
+        for (id, _) in self.rt.windows() {
+            for d in self.rt.describe(id) {
+                lines.push(format!("widget {} {}", id.0, d.line()));
+            }
+        }
+        lines.extend(self.rt.app().plan_lines());
+        if lines != self.last {
+            self.views += 1;
+            say!("screens view {}", self.views);
+            for l in &lines {
+                say!("screens {l}");
+            }
+            say!("screens view {} done", self.views);
+            self.last = lines;
+        }
+    }
+}
+
+/// The window an event is for, if it is for one.
+fn window_of(event: &Event) -> Option<Win> {
+    match event {
+        Event::Configure { window, .. } | Event::CloseRequested { window } => Some(*window),
+        Event::Pointer(p) => Some(p.window),
+        Event::Key(k) => Some(k.window),
+        _ => None,
+    }
+}
+
+/// What a refusal from the display server comes to, in words.
+fn refusal(e: &CallError<WindowError>) -> String {
+    match e {
+        CallError::Service(w) => String::from(arrange::refusal(w)),
+        other => format!("{other}"),
+    }
 }
 
 fn main(mut start: granite::Start) -> i32 {
@@ -160,8 +227,10 @@ fn main(mut start: granite::Start) -> i32 {
         backgrounds: Vec::new(),
         undrawn: Vec::new(),
         asking: None,
+        arranging: None,
         panel: None,
         menu: None,
+        wall_menu: None,
         windows: Vec::new(),
         icons: Vec::new(),
         selected: None,
@@ -187,6 +256,10 @@ fn main(mut start: granite::Start) -> i32 {
         };
         // What happens in the question's window is the question's.
         let event = match d.for_question(event) {
+            Some(e) => e,
+            None => continue,
+        };
+        let event = match d.for_screens(event) {
             Some(e) => e,
             None => continue,
         };
@@ -237,15 +310,40 @@ impl Desktop {
             say!("screen {} is \"{}\".", s.screen, s.identity);
         }
         let Some(saved) = self.saved_arrangement() else { return };
-        let Some(new) = saved.apply(&self.screens) else { return };
-        match self.conn.client().arrange(&new) {
-            Ok(()) => {
-                say!("arranged {} screens from screens.txt.", new.len());
-                if let Ok(s) = self.conn.client().screens() {
-                    self.screens = s;
+        if let Some(new) = saved.apply(&self.screens) {
+            match self.conn.client().arrange(&new) {
+                Ok(()) => {
+                    say!("arranged {} screens from screens.txt.", new.len());
+                    if let Ok(s) = self.conn.client().screens() {
+                        self.screens = s;
+                    }
                 }
+                Err(e) => say!("the display server refused screens.txt's arrangement: {e}"),
             }
-            Err(e) => say!("the display server refused screens.txt's arrangement: {e}"),
+        }
+        self.apply_pointer(&saved);
+    }
+
+    /// The pointer's speed and the tablets' ties from `screens.txt`, if it says anything about
+    /// them. A tie to a screen that isn't there is left out (it is tied again when the screen
+    /// comes back: this is asked again whenever the screens change).
+    fn apply_pointer(&mut self, saved: &Arrangement) {
+        if saved.speed.is_none() && saved.tablets.is_empty() {
+            return;
+        }
+        let speed = saved
+            .speed
+            .unwrap_or(arrange::SPEED_DEFAULT)
+            .clamp(arrange::SPEED_MIN, arrange::SPEED_MAX);
+        let ties = Request {
+            places: Vec::new(),
+            speed,
+            ties: saved.tablets.iter().map(|(n, s)| (n.clone(), Some(s.clone()))).collect(),
+        }
+        .wire_ties(&self.screens);
+        match self.conn.client().pointer(speed, &ties) {
+            Ok(()) => say!("pointer speed {speed}, {} tablets tied, from screens.txt.", ties.len()),
+            Err(e) => say!("the display server refused screens.txt's pointer: {e}"),
         }
     }
 
@@ -452,6 +550,7 @@ impl Desktop {
             self.close_menu();
             return;
         }
+        self.close_wall_menu();
         let Some((_, panel)) = self.panel else { return };
         let made = self.menu_items();
         let items: Vec<Item<'_>> =
@@ -537,18 +636,8 @@ impl Desktop {
         let mut rt = Runtime::new(Confirm::new(power), confirm::settings());
         if rt.open(&mut self.conn) {
             say!("asking: {}?", power.verb());
-            // The display server gives a new window the keyboard only if its app has it or was
-            // just launched (note 0022, section 4), and the desktop's own windows never have
-            // it. The user asked for this one with the start menu, so the desktop gives it the
-            // keyboard itself, as its taskbar buttons do for other windows.
-            if let Some((_, win)) = rt.windows().first().copied()
-                && let Ok(list) = self.conn.client().windows()
-                && let Some(w) = list
-                    .iter()
-                    .find(|w| w.window as u32 == win.0 && w.title.ends_with(power.verb()))
-                && let Err(e) = self.conn.client().act(w.window, ACT_FOCUS)
-            {
-                say!("giving the question the keyboard: {e}");
+            if let Some((_, win)) = rt.windows().first().copied() {
+                self.give_keyboard(win, power.verb());
             }
             self.asking = Some((rt, false));
         } else {
@@ -561,12 +650,7 @@ impl Desktop {
     /// answer; returns the event if it is the desktop's.
     fn for_question(&mut self, event: Event) -> Option<Event> {
         let Some((rt, _)) = &mut self.asking else { return Some(event) };
-        let window = match &event {
-            Event::Configure { window, .. } | Event::CloseRequested { window } => Some(*window),
-            Event::Pointer(p) => Some(p.window),
-            Event::Key(k) => Some(k.window),
-            _ => None,
-        };
+        let window = window_of(&event);
         // Events lost in the ring: both draw everything again.
         if let Event::Lost(_) = event {
             rt.handle(&mut self.conn, event);
@@ -604,6 +688,235 @@ impl Desktop {
             }
         }
         None
+    }
+
+    // ---- The right-click menu and the Screens window ---------------------------------
+
+    /// Gives the window `win` (one of this app's, titled `title`) the keyboard. The display
+    /// server gives a new window the keyboard only if its app has it or was just launched
+    /// (note 0022, section 4), and the desktop's own windows never have it. The user asked for
+    /// this one (the start menu, the wallpaper's menu), so the desktop gives it the keyboard
+    /// itself, as its taskbar buttons do for other windows.
+    fn give_keyboard(&mut self, win: Win, title: &str) {
+        if let Ok(list) = self.conn.client().windows()
+            && let Some(w) =
+                list.iter().find(|w| w.window as u32 == win.0 && w.title.ends_with(title))
+            && let Err(e) = self.conn.client().act(w.window, ACT_FOCUS)
+        {
+            say!("giving {title} the keyboard: {e}");
+        }
+    }
+
+    /// Opens the wallpaper's menu where the right button went down on a wallpaper window,
+    /// with that press's serial (a popup needs one).
+    fn open_wall_menu(&mut self, p: PointerEvent) {
+        let Some(screen) = self.backgrounds.iter().find(|b| b.win == p.window).map(|b| b.screen)
+        else {
+            return;
+        };
+        let Some((sw, sh)) = self
+            .screens
+            .iter()
+            .find(|s| s.screen == screen)
+            .map(|s| (s.size.width as i32, s.size.height as i32))
+        else {
+            return;
+        };
+        let (w, h) = WallMenu::size();
+        // At the pointer, but all of it on the screen.
+        let x = p.x.min(sw - w).max(0);
+        let y = p.y.min(sh - h).max(0);
+        match self.conn.create_child(
+            WindowKind::Popup,
+            p.window,
+            "Screens menu",
+            (w as u32, h as u32),
+            WindowFlags::default(),
+            (x, y),
+            p.serial,
+        ) {
+            Ok(win) => {
+                self.wall_menu = Some(WallPopup { win, hovered: false });
+                say!("wallpaper menu open.");
+            }
+            Err(e) => say!("the wallpaper's menu: {e:?}"),
+        }
+    }
+
+    fn draw_wall_menu(&mut self) {
+        let Some(m) = &self.wall_menu else { return };
+        let (win, menu) = (m.win, WallMenu { hovered: m.hovered });
+        let r = self.conn.draw(win, |canvas| {
+            menu.draw(canvas);
+            Damage::new()
+        });
+        if let Err(e) = r {
+            say!("drawing the wallpaper's menu: {e:?}");
+        }
+    }
+
+    fn close_wall_menu(&mut self) {
+        if let Some(m) = self.wall_menu.take() {
+            let _ = self.conn.destroy(m.win);
+            say!("wallpaper menu closed.");
+        }
+    }
+
+    /// A pointer event in the wallpaper's menu: its one item is chosen when the button is let
+    /// go over it, as in the start menu.
+    fn wall_menu_pointer(&mut self, p: PointerEvent) {
+        let Some(m) = &mut self.wall_menu else { return };
+        let over = WallMenu::hits(p.x, p.y);
+        match p.what {
+            PointerKind::Moved if over != m.hovered => {
+                m.hovered = over;
+                self.draw_wall_menu();
+            }
+            PointerKind::Left if m.hovered => {
+                m.hovered = false;
+                self.draw_wall_menu();
+            }
+            PointerKind::Button { button: LEFT, pressed: false } if over => {
+                self.close_wall_menu();
+                self.open_screens();
+            }
+            _ => {}
+        }
+    }
+
+    /// Opens the Screens window, or brings the one that is open forward.
+    fn open_screens(&mut self) {
+        if let Some(a) = &self.arranging {
+            if let Some((_, win)) = a.rt.windows().first().copied() {
+                self.give_keyboard(win, "Screens");
+            }
+            return;
+        }
+        let places = match self.conn.client().screens() {
+            Ok(s) => s,
+            Err(e) => {
+                say!("asking for the screens: {e}");
+                return;
+            }
+        };
+        // The pointer's speed and the tablets known are what screens.txt keeps: the display
+        // server has no way to say which tablets there are (note 0022, Changes).
+        let saved = self.saved_arrangement().unwrap_or_default();
+        let window = ScreensWindow::new(&places, saved.speed, &saved.tablets);
+        let mut rt = Runtime::new(window, screens_window::settings());
+        if !rt.open(&mut self.conn) {
+            say!("couldn't open the screens window.");
+            return;
+        }
+        say!("screens window open");
+        if let Some((_, win)) = rt.windows().first().copied() {
+            self.give_keyboard(win, "Screens");
+        }
+        self.arranging = Some(Arranging { rt, last: Vec::new(), views: 0 });
+    }
+
+    /// Gives `event` to the Screens window if it is for that window, answers what the window
+    /// asked for, and closes it when it ends; returns the event if it is the desktop's.
+    fn for_screens(&mut self, event: Event) -> Option<Event> {
+        let a = self.arranging.as_ref()?;
+        let lost = matches!(event, Event::Lost(_));
+        let ours =
+            window_of(&event).is_some_and(|w| a.rt.windows().iter().any(|(_, win)| *win == w));
+        if !lost && !ours {
+            return Some(event);
+        }
+        let mut a = self.arranging.take()?;
+        a.rt.handle(&mut self.conn, event);
+        while let Some(pending) = a.rt.app_mut().take_request() {
+            self.arrange_for(&mut a, pending);
+        }
+        for line in a.rt.app_mut().take_log() {
+            say!("screens {line}");
+        }
+        if a.rt.finished() {
+            self.close_screens(&a);
+        } else {
+            a.report();
+            self.arranging = Some(a);
+        }
+        // Lost events are everyone's: the desktop draws again too.
+        lost.then_some(event)
+    }
+
+    /// Does what Apply or OK asked: asks the display server, and if it accepts, keeps the
+    /// arrangement in `screens.txt`. The window is told what happened either way.
+    fn arrange_for(&mut self, a: &mut Arranging, pending: Pending) {
+        let n = pending.request.places.len();
+        match self.arrange_to(&pending.request) {
+            Ok(()) => {
+                say!("screens arranged {n}");
+                let saved = self.save_arrangement(&pending.request);
+                if let Err(e) = &saved {
+                    say!("screens.txt couldn't be kept: {e}");
+                }
+                a.rt.app_mut().accepted(pending.close, n, saved);
+            }
+            Err(why) => {
+                say!("screens refused: {why}");
+                a.rt.app_mut().refused(&why);
+            }
+        }
+        // The window draws what the answer says (and ends, after OK).
+        a.rt.handle(&mut self.conn, Event::Notified(SETTLED));
+    }
+
+    /// Asks the display server for the screens' places and the pointer, all or nothing: if the
+    /// pointer is refused after the screens were accepted, the screens go back as they were.
+    fn arrange_to(&mut self, request: &Request) -> Result<(), String> {
+        let before = self.screens.clone();
+        if let Err(e) = self.conn.client().arrange(&request.places) {
+            return Err(refusal(&e));
+        }
+        let ties = request.wire_ties(&request.places);
+        if let Err(e) = self.conn.client().pointer(request.speed, &ties) {
+            let _ = self.conn.client().arrange(&before);
+            return Err(refusal(&e));
+        }
+        if let Ok(s) = self.conn.client().screens() {
+            self.screens = s;
+        }
+        Ok(())
+    }
+
+    /// Writes `request` to `screens.txt`, keeping what it said about screens and tablets that
+    /// aren't here now.
+    fn save_arrangement(&self, request: &Request) -> Result<(), String> {
+        let old = self.saved_arrangement().unwrap_or_default();
+        let text = request.arrangement(&old).to_text();
+        let path = format!("{}/screens.txt", Files::data_folder(NAME));
+        let file = match self.files.open(&path, READ_WRITE) {
+            Ok(f) => f,
+            Err(_) => self.files.create(&path, false, READ_WRITE).map_err(pbr_files::describe)?,
+        };
+        file.save(text.as_bytes()).map_err(pbr_files::describe)
+    }
+
+    /// The Screens window has ended: closes its windows, and if it ended any way but OK after
+    /// Apply had gone through, puts back what was there when it opened.
+    fn close_screens(&mut self, a: &Arranging) {
+        for (_, win) in a.rt.windows() {
+            let _ = self.conn.destroy(win);
+        }
+        say!("screens window closed");
+        let app = a.rt.app();
+        if app.is_done() || !app.has_applied() {
+            return;
+        }
+        let opened = app.plan().opened();
+        match self.arrange_to(opened) {
+            Ok(()) => {
+                say!("screens put back {}", opened.places.len());
+                if let Err(e) = self.save_arrangement(opened) {
+                    say!("screens.txt couldn't be put back: {e}");
+                }
+            }
+            Err(why) => say!("screens couldn't be put back: {why}"),
+        }
     }
 
     // ---- What it asks of others --------------------------------------------------------
@@ -727,6 +1040,19 @@ impl Desktop {
             }
             return;
         }
+        if let Some(m) = &self.wall_menu
+            && p.window == m.win
+        {
+            self.wall_menu_pointer(p);
+            return;
+        }
+        // A right click on a wallpaper (any screen's) opens the menu with Screens….
+        if matches!(p.what, PointerKind::Button { button: RIGHT, pressed: true }) {
+            self.close_menu();
+            self.close_wall_menu();
+            self.open_wall_menu(p);
+            return;
+        }
         if !pressed {
             return;
         }
@@ -771,6 +1097,7 @@ impl Desktop {
         let main = self.main_screen().map(|s| s.screen);
         let on_main = self.backgrounds.iter().any(|b| b.win == p.window && Some(b.screen) == main);
         self.close_menu();
+        self.close_wall_menu();
         if !on_main {
             return;
         }
@@ -802,6 +1129,8 @@ impl Desktop {
                     self.draw_panel();
                 } else if self.menu.as_ref().is_some_and(|m| m.win == window) {
                     self.draw_menu();
+                } else if self.wall_menu.as_ref().is_some_and(|m| m.win == window) {
+                    self.draw_wall_menu();
                 }
             }
             // A popup closed by the display server (a click elsewhere): it is the app's to
@@ -809,6 +1138,8 @@ impl Desktop {
             Event::CloseRequested { window } => {
                 if self.menu.as_ref().is_some_and(|m| m.win == window) {
                     self.close_menu();
+                } else if self.wall_menu.as_ref().is_some_and(|m| m.win == window) {
+                    self.close_wall_menu();
                 }
             }
             Event::Pointer(p) => self.pointer(p),
@@ -817,6 +1148,7 @@ impl Desktop {
             Event::WindowMenu { window, choice } => self.window_menu(window, choice),
             Event::Screens => {
                 self.close_menu();
+                self.close_wall_menu();
                 self.arrange();
                 self.make_windows();
                 // Sizes may have changed: everything is drawn again as it is configured.

@@ -16,6 +16,9 @@
 //! and the rest of what the desktop works out:
 //!
 //! - [`screens`]: its screen arrangement, `screens.txt`;
+//! - [`arrange`]: what the Screens dialog works out, the choices turned into an arrangement;
+//! - [`screens_window`]: the Screens dialog itself;
+//! - [`wallmenu`]: the small menu on a right click on the wallpaper;
 //! - [`clock`]: the taskbar's time and date;
 //! - [`confirm`]: asking before Shut down and Restart.
 //!
@@ -28,14 +31,17 @@
 
 extern crate alloc;
 
+pub mod arrange;
 pub mod clock;
 pub mod confirm;
 pub mod icons;
 pub mod look;
 pub mod menu;
 pub mod screens;
+pub mod screens_window;
 pub mod shortcuts;
 pub mod taskbar;
+pub mod wallmenu;
 pub mod wallpaper;
 
 use pbr_draw::{Canvas, Colour, TextStyle};

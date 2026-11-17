@@ -18,6 +18,7 @@ pbr-sandstone = { path = "../sandstone" }
 
 [dev-dependencies]
 pbr-testpng = { path = "../testpng" }
+pbr-window = { path = "../window" }
 pbr-sandstone = { path = "../sandstone", features = ["testing"] }
 
 [lints]

@@ -12,6 +12,7 @@ use pbr_desktop::icons::{self, Icon};
 use pbr_desktop::menu::{Choice, Item, StartMenu};
 use pbr_desktop::shortcuts::{self, Shortcut};
 use pbr_desktop::taskbar::{self, TaskButton, Taskbar};
+use pbr_desktop::wallmenu::WallMenu;
 use pbr_desktop::wallpaper;
 use pbr_draw::Rect;
 use pbr_draw::TextStyle;
@@ -160,4 +161,27 @@ fn the_desktop_with_its_shortcuts_and_a_taskbar() {
     shortcuts::draw(&mut canvas, &list, Some(2), height);
     bar.draw(&mut canvas.sub(Rect::new(0, height, 640, taskbar::HEIGHT)));
     sheet.check("desktop-empty");
+}
+
+/// The wallpaper's menu, with and without its item under the pointer, on grey so that the
+/// rounded corners can be seen.
+fn wall_menu_picture(hovered: bool, scale: u32) -> Sheet {
+    let (w, h) = WallMenu::size();
+    let mut sheet = Sheet::new(w as u32 * scale, h as u32 * scale, 0x6f7480);
+    WallMenu { hovered }.draw(&mut sheet.canvas(scale));
+    sheet
+}
+
+#[test]
+fn wall_menu() {
+    wall_menu_picture(false, 1).check("wall-menu");
+    wall_menu_picture(true, 2).check("wall-menu-hover-2x");
+}
+
+#[test]
+fn wall_menu_hits_only_its_item() {
+    let (w, h) = WallMenu::size();
+    assert!(WallMenu::hits(w / 2, h / 2));
+    assert!(!WallMenu::hits(w / 2, 0) && !WallMenu::hits(w / 2, h - 1));
+    assert!(!WallMenu::hits(-1, h / 2) && !WallMenu::hits(w, h / 2));
 }
