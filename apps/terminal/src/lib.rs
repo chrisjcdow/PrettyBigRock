@@ -51,9 +51,10 @@ pub const SCROLLBACK: usize = 1000;
 pub const HISTORY: usize = 100;
 /// The history's file, in the app's own folder.
 pub const HISTORY_FILE: &str = "history.txt";
-/// The window opens at 1.3's size, in logical pixels: 512 x 384 (82 columns by 31 rows of
-/// the view's 6 x 12 cells).
-pub const SIZE: (u32, u32) = (512, 384);
+/// The window opens at 480 x 320 logical pixels (77 columns by 26 rows of the view's 6 x 12
+/// cells). 1.3's was 512 x 384, which with its frame doesn't fit a 2x screen of 1024 x 768
+/// (512 x 384 logical); Notepad opens at the same size.
+pub const SIZE: (u32, u32) = (480, 320);
 /// The smallest the window can be made: 28 columns by 7 rows.
 pub const MIN_SIZE: (u32, u32) = (190, 100);
 /// What the grid is until the view says how many columns and rows fit.

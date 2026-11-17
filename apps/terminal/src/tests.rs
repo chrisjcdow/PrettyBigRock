@@ -132,8 +132,8 @@ fn it_opens_on_the_shells_welcome_and_prompt() {
         ]
     );
     assert!(r.h.app().is_reading());
-    // 512 x 384 logical pixels is 82 columns by 31 rows of 6 x 12.
-    assert_eq!(r.h.app().grid_size(), (82, 31));
+    // 480 x 320 logical pixels is 77 columns by 25 rows of 6 x 12, inside the view's margins.
+    assert_eq!(r.h.app().grid_size(), (77, 25));
     // The view has the keyboard, and the cursor is after the prompt.
     assert_eq!(r.h.focused().unwrap().what.role, "terminal");
     let d = r.h.find("terminal").unwrap().1;
@@ -364,22 +364,22 @@ fn busy(n: usize) -> Rig {
 #[test]
 fn page_up_and_page_down_look_back_and_forward() {
     let mut r = busy(100);
-    // 31 rows: the last is the prompt, before it line 100.
+    // 25 rows: the last is the prompt, before it line 100.
     let live = r.shown();
     assert_eq!(live.last().unwrap(), "chris:/Home>");
     assert_eq!(live[live.len() - 2], "line 100");
     assert!(r.h.app().kept_rows() > 70);
     r.h.key(Key::PageUp);
     // A page is the rows less 2, so two rows are on both screens.
-    assert_eq!(r.h.app().scrolled_back(), 29);
+    assert_eq!(r.h.app().scrolled_back(), 23);
     let back = r.shown();
-    assert_eq!(back.last().unwrap(), "line 72", "29 rows further back");
-    assert_eq!(back[0], "line 42");
+    assert_eq!(back.last().unwrap(), "line 78", "23 rows further back");
+    assert_eq!(back[0], "line 54");
     r.h.key(Key::PageUp);
-    assert_eq!(r.h.app().scrolled_back(), 58);
-    assert_eq!(r.shown()[0], "line 13");
+    assert_eq!(r.h.app().scrolled_back(), 46);
+    assert_eq!(r.shown()[0], "line 31");
     r.h.key(Key::PageDown);
-    assert_eq!(r.h.app().scrolled_back(), 29);
+    assert_eq!(r.h.app().scrolled_back(), 23);
     r.h.key(Key::PageDown);
     r.h.key(Key::PageDown);
     assert_eq!(r.h.app().scrolled_back(), 0, "never past the live screen");
@@ -423,9 +423,9 @@ fn only_a_thousand_rows_are_kept() {
     }
     assert_eq!(r.h.app().scrolled_back(), SCROLLBACK);
     // 3 rows of welcome, 1500 lines (line k is row k + 2, counting from 0) and the prompt:
-    // 1504 rows, of which 31 are on the screen, so the 1000 kept are the last 1000 of the
-    // 1473 above it, from row 473.
-    assert_eq!(r.shown()[0], "line 471");
+    // 1504 rows, of which 25 are on the screen, so the 1000 kept are the last 1000 of the
+    // 1479 above it, from row 479.
+    assert_eq!(r.shown()[0], "line 477");
 }
 
 #[test]
@@ -452,7 +452,7 @@ fn typing_jumps_back_to_the_bottom() {
     // Keys that are not typing leave the place alone: a page key, and one the window keeps.
     r.h.key(Key::PageUp);
     r.h.key(Key::Escape);
-    assert_eq!(r.h.app().scrolled_back(), 29);
+    assert_eq!(r.h.app().scrolled_back(), 23);
     // Backspace is editing, so it goes back to the bottom.
     r.h.key(Key::Backspace);
     assert_eq!(r.h.app().scrolled_back(), 0);
@@ -466,7 +466,7 @@ fn scrolled_back_text_stays_put_while_output_arrives() {
     // More lines scroll in at the bottom; what is being looked at doesn't move.
     r.says("more 1\nmore 2\nmore 3\n");
     assert_eq!(r.shown(), before);
-    assert_eq!(r.h.app().scrolled_back(), 32);
+    assert_eq!(r.h.app().scrolled_back(), 26);
     r.h.key(Key::PageDown);
     r.h.key(Key::PageDown);
     assert_eq!(r.shown().last().unwrap(), "chris:/Home>");
@@ -613,7 +613,7 @@ fn a_selection_is_dropped_when_the_rows_move() {
 #[test]
 fn the_grid_follows_the_windows_size() {
     let mut r = fresh();
-    assert_eq!(r.h.app().grid_size(), (82, 31));
+    assert_eq!(r.h.app().grid_size(), (77, 25));
     r.h.resize(300, 200);
     // (300 - 16) / 6 = 47 columns; (200 - 12) / 12 = 15 rows.
     assert_eq!(r.h.app().grid_size(), (47, 15));
