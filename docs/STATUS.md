@@ -99,6 +99,14 @@ Note 0025's and 0026's Changes list everything settled.
   waits, `sched/mod.rs` `tick`) are never woken. Kernel work, for Opus; not started. Logs
   on Impala in `build/hangs/` (`kvm-hang-1.txt`, `kvm-hang-2.txt` and its registers; the
   kernel they ran is the one built from `57684d3`/`90b9ed7`).
+- **To do next session** (Chris, 17 November, trying 9a with `cargo xtask run`):
+  - **Grey out the maximise button** on windows that can't be resized (the display server's
+    title-bar drawing; pictures change). Chris chose greyed over hidden; hiding it could later
+    be a user setting (note 0024, section 5), with other appearance options once there is a
+    Settings app.
+  - **Restart closes QEMU under `cargo xtask run`**: `xtask/src/qemu.rs` always passes
+    `-no-reboot`, which the desktop test needs (it checks a restart by QEMU stopping with
+    `guest-reset`). Pass it for test boots only, checking every test path still gets it.
 - **Windows fit their screen** (after 9a, Chris's choice): resizable app windows open no bigger
   than the work area (note 0022's Changes); Paint is resizable with a scrolling picture and
   File and Edit menus (note 0026's Changes). A window dragged by hand to a smaller screen keeps
