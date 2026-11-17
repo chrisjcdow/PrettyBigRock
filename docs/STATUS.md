@@ -96,7 +96,9 @@ Note 0025's and 0026's Changes list everything settled.
   logged by anyone; the root program, whose calls all time out in 30 s, never reports; cores
   sit in `idle_loop`/`wait_for_interrupt`, one in `sched::tick`. Hypothesis: a core stops
   getting timer interrupts, so threads asleep on it (each core wakes only its own timed
-  waits, `sched/mod.rs` `tick`) are never woken. Kernel work, for Opus; not started.
+  waits, `sched/mod.rs` `tick`) are never woken. Kernel work, for Opus; not started. Logs
+  on Impala in `build/hangs/` (`kvm-hang-1.txt`, `kvm-hang-2.txt` and its registers; the
+  kernel they ran is the one built from `57684d3`/`90b9ed7`).
 - **Windows fit their screen** (after 9a, Chris's choice): resizable app windows open no bigger
   than the work area (note 0022's Changes); Paint is resizable with a scrolling picture and
   File and Edit menus (note 0026's Changes). A window dragged by hand to a smaller screen keeps
