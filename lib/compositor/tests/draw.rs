@@ -128,6 +128,7 @@ fn hand(number: u32, x: i32, y: i32, title: &str) -> SceneWindow {
         trusted: false,
         system: false,
         maximised: false,
+        resizable: true,
         shown: None,
         pressed: None,
     }
@@ -164,9 +165,17 @@ fn every_state_of_a_windows_decorations() {
             focused: true,
             system: true,
             kind: WindowKind::System,
+            resizable: false,
             ..hand(3, 14, 102, "File picker")
         },
-        SceneWindow { system: true, kind: WindowKind::System, ..hand(4, 284, 102, "Permissions") },
+        // Neither system window can be resized: their maximise buttons are greyed out,
+        // focused or not.
+        SceneWindow {
+            system: true,
+            kind: WindowKind::System,
+            resizable: false,
+            ..hand(4, 284, 102, "Permissions")
+        },
         SceneWindow {
             focused: true,
             trusted: true,
@@ -213,6 +222,8 @@ fn the_window_menu_with_a_row_hovered() {
     let c = rig.client("Notepad", 0);
     rig.open(c, WindowKind::Normal, "letter.txt", (200, 130));
     let mut scene = rig.desk.scene();
+    // The menu below offers Restore, so the window is drawn as a maximised one.
+    scene.windows[0].maximised = true;
     scene.menu = Some(Menu {
         window: scene.windows[0].id,
         rect: Rect::new(60, 40, 220, 4 + 22 * 5),

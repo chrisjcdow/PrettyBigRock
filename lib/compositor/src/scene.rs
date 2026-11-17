@@ -25,7 +25,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use pbr_draw::Rect;
-use pbr_interfaces::pbr_window::{Cursor, WindowKind};
+use pbr_interfaces::pbr_window::{Cursor, WindowFlags, WindowKind};
 
 /// One window to draw.
 #[derive(Clone, Debug)]
@@ -48,6 +48,10 @@ pub struct SceneWindow {
     pub system: bool,
     /// Maximised.
     pub maximised: bool,
+    /// The app lets the user resize it. One that can't be resized can't be maximised either,
+    /// so its maximise button is drawn greyed out (unless it is maximised already, when the
+    /// button restores it).
+    pub resizable: bool,
     /// The frame on the screen, if the app has committed one.
     pub shown: Option<Shown>,
     /// A title bar button being held down.
@@ -92,6 +96,7 @@ impl Desk {
                     trusted: cflags & flags::TRUSTED != 0,
                     system: w.kind == WindowKind::System,
                     maximised: w.restore.is_some(),
+                    resizable: w.flags.contains(WindowFlags::RESIZABLE),
                     shown: w.shown,
                     pressed: match self.pointer.grab {
                         Grab::Button(g, b) if g == *id => Some(b),

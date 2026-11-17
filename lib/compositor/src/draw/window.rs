@@ -211,7 +211,14 @@ fn draw_button(c: &mut Canvas, r: Rect, button: Button, w: &SceneWindow) {
         (true, Button::Maximise) => Colour::solid(0x5cb85c),
         (true, Button::Minimise) => Colour::solid(0xe7b44a),
     };
-    if w.pressed == Some(button) {
+    // The mark is white, except on a button that does nothing: maximise on a window that
+    // can't be resized. That one is greyed out, lighter than an unfocused window's buttons so
+    // it shows either way, and doesn't look pressed.
+    let mut mark = Colour::WHITE;
+    if button == Button::Maximise && !w.resizable && !w.maximised {
+        disc = Colour::solid(0xdcdfe4);
+        mark = Colour::solid(0xf2f3f5);
+    } else if w.pressed == Some(button) {
         // A quarter of the way to black.
         disc = Colour::between(disc, Colour::BLACK, 1, 4);
     }
@@ -236,7 +243,7 @@ fn draw_button(c: &mut Canvas, r: Rect, button: Button, w: &SceneWindow) {
             c.fill_rect(Rect::new(x + 4, y + 6, 6, 5), disc);
             c.stroke_rect(Rect::new(x + 4, y + 6, 6, 5), 1, Colour::WHITE);
         }
-        Button::Maximise => c.stroke_rect(Rect::new(x + 4, y + 5, 8, 6), 1, Colour::WHITE),
+        Button::Maximise => c.stroke_rect(Rect::new(x + 4, y + 5, 8, 6), 1, mark),
         Button::Minimise => c.fill_rect(Rect::new(x + 4, y + 7, 8, 2), Colour::WHITE),
     }
 }
