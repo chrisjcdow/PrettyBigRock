@@ -1131,3 +1131,39 @@ their libraries, with their tests, and two fixes left from stage 8.
 
 Results: GitHub's CI passed on all four configurations, every boot, on `64ad2ea` (stage 9a's
 last commit). No Stress run in 9a.
+
+## Session 22: 17 November 2026, M6 stage 9b (Notepad, Files, Terminal)
+
+Chris asked for stage 9b: Notepad, Files and Terminal with their tests, the 9a leftovers, the
+Screens dialog, the clipboard in the apps and the Notepad and Terminal parts of note 0025's
+desktop tests, ending stage 9 with a Stress run.
+
+- **Leftovers**: the maximise button is greyed out on windows that can't be resized;
+  `-no-reboot` is passed for boot tests only, so Restart restarts under `cargo xtask run`.
+- **The KVM hang**: an NMI now makes the kernel print its scheduler's state, and the runner
+  sends one when a boot stops making progress on x86-64. The third KVM run caught the hang
+  with it: every core ticking, timers firing, the root program still polling. The root program
+  looked every 200 ms for the app launched from the start menu, and under KVM it could open and
+  be closed in between; an ended app leaves the list at once, so it was never seen. The root
+  program now logs seeing it and the runner waits for that line. Not a kernel bug.
+- **The apps**, each by a Sonnet subagent in its own worktree, reviewed whole with every
+  picture: Notepad; Files (my part: `pbr.sandbox @12 openers()` and the launch behind Open
+  with…); Terminal, with the shell moved into `lib/shell` behind a `Console` trait and shared
+  with the text shell, both gaining 1.3's commands; the desktop's Screens dialog. Review
+  changes: `about`'s stale "milestone 5", a comment about the window's size, Files logging its
+  rows for the runner, Terminal opening at 480 x 320.
+- **Display server**: `check_serial` counts a press in the window's own dialog, so Notepad's
+  "Save changes?" can ask the picker for a name.
+- **Found by the desktop boots** (six KVM runs to pass): the desktop dropped every event
+  unless a Screens window was open (a `?` returning `None`); the sandbox manager *panicked*
+  when the session ran short copying Notepad's program, taking the session with it (spawning
+  now answers `NoMemory`), because the root program held every test app's process, and with
+  it its budget, to the end of the test; Terminal's `edit` didn't tell Notepad the file's
+  path; the runner clicked a row in the double-click time, matched lines from earlier steps,
+  and did the Screens step after the root program had moved on.
+- **Session budget**: 64 MiB still runs the test, but not every app at once; for Chris.
+- **App names**: Chris approved Rock Art (Paint) and Boomslang (Snake); Slate (Notepad) maybe;
+  otherwise the generic names stay.
+
+Results: the x86-64 UEFI and BIOS desktop boots passed under KVM here (all three boots each).
+GitHub's CI and Stress (5 runs) were started on `m6`.

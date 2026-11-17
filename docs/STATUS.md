@@ -4,11 +4,12 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 16 November 2026 (session 21). **M6 stage 9a built**: Calculator, Snake, Paint and
-About, with `lib/calc`, `lib/snake` and `lib/bmp`, and stage 8's two leftovers fixed. GitHub's
-CI passed on all four configurations, every boot, on `64ad2ea`. Stage 9b (Notepad, Files, Terminal) is next.
+Updated 17 November 2026 (session 22). **M6 stage 9 built**: 9b added Notepad, Files and
+Terminal, the desktop's Screens dialog, Open with…, and the 9a leftovers; the KVM "hang" was
+the test's own. The x86-64 desktop boots passed here under KVM; GitHub's CI and a Stress run
+(5 runs) were started on `m6` for all four configurations. Stage 10 is next.
 
-## M6 (the desktop, 2.0 alpha): stages 0 to 8 and 9a built
+## M6 (the desktop, 2.0 alpha): stages 0 to 9 built
 
 ### Stage 9a, session 21
 Note 0026's Changes list what building settled.
@@ -29,14 +30,43 @@ Note 0026's Changes list what building settled.
   and the second failed at Shut down (KVM only, below). ARM64 and the self-test boots left to
   GitHub's CI.
 
-### Stage 9b: what is left
-- Notepad, Files, Terminal (note 0026, section 1), by Sonnet; Terminal's `calc` uses
-  `lib/calc` (`format(eval(text)?)`); Files' Open with… launches Paint with the path as its
-  argument (Paint already opens it).
-- The Screens dialog; Notepad/Terminal parts of note 0025's desktop tests; the clipboard in
-  the apps; the rest of section 7's desktop-boot table. Stress at the end of stage 9.
-- Watch the session budget (64 MiB) as Notepad, Files and Terminal are added.
+### Stage 9b, session 22
+Notes 0018, 0022, 0024, 0025 and 0026 have what building settled in their Changes.
+- **Leftovers from 9a**: the maximise button is greyed out on windows that can't be resized
+  (compositor pictures redrawn); `-no-reboot` only for boot tests, so Restart restarts under
+  `cargo xtask run`.
+- **The KVM hang** was the desktop test's: the root program polls every 200 ms for the app
+  launched from the start menu, and under KVM it could open and close in between; it now
+  logs seeing it and the runner waits for that line. Found with a new diagnostic: on x86-64 an
+  NMI makes the kernel print its scheduler's state, and the runner sends one when a boot hangs.
+- **Apps** (each by a Sonnet subagent, reviewed): `apps/notepad`, `apps/files` (with
+  `lib/browse` making, renaming and removing), `apps/terminal` (with the shell moved into
+  `lib/shell::program` behind a `Console` trait, shared with the text shell, and 1.3's missing
+  commands in both), the desktop's **Screens dialog** (`lib/desktop::arrange`,
+  `screens_window`). Manifests and grants are Opus's: Notepad (windows, picker, documents rw,
+  opens txt md), Files (trusted, windows), Terminal (trusted, windows, sysinfo, data); the text
+  shell asks for sysinfo too. Budgets 8 MiB each.
+- **Capability work (Opus)**: `pbr.sandbox @12 openers()`; Files' Open with… (`prepare`,
+  `choose` with the file read-write only if the user may change it, `start`, `cancel` on
+  failure); `check_serial` counts a press in the window's own dialog (Notepad's "Save
+  changes?" → picker); spawning short of memory answers `NoMemory` instead of panicking the
+  sandbox manager (`ElfError::NoMemory`).
+- **Found by the boots**: the desktop dropped every event when no Screens window was open (a
+  `?`); the root program held every test app's process to the end, pinning their budgets in
+  the session until Files couldn't open Notepad (`ended` now takes the process); Terminal's
+  `edit` didn't pass the path to Notepad; runner races (double clicks, lines seen before).
+- **Desktop boot**: Notepad, Files and Terminal steps as note 0026 section 7 lists, each app's
+  `[tree]` lines checked (trusted apps against grants that are all `Trusted`), the clipboard
+  from Notepad to Terminal, and on two-screen machines the Screens dialog's live mirroring.
+  Screenshots: `build/screens/desktop-x86_64-uefi.{notepad,files,terminal}-{1x,2x}.png`.
 
+### Stage 10: what it has to do
+- Note 0026 section 9's stage 10: the whole of section 7's desktop boot (check what is still
+  missing from the table), the review of everything M6 added that hands out, derives, checks
+  or revokes capabilities, README/ROADMAP/DESIGN.md, every M6 note marked built,
+  `2.0.0-alpha.1`, Stress with 120 boots of each kind, Chris tries it on Harriet.
+- Chris's decisions waiting: the session budget (below), the app names (below), the heading
+  font, the lock-order checker.
 
 ### After stage 8 (16 November)
 - Chris ran `m6` on Harriet with `run-prettybigrock.bat` (UEFI and BIOS): the desktop, the
@@ -90,7 +120,7 @@ Note 0025's and 0026's Changes list everything settled.
   KVM-only `Broken pipe` at Shut down is gone with it (the runner's last write is now the
   release; `click_ending` also tolerates QEMU stopping). Desktop boots under KVM passed on
   x86-64 UEFI and BIOS, all three boots.
-- **Open: a hang under KVM, seen twice in six runs** (x86-64 UEFI desktop boot, both at the
+- **Solved in 9b: the hang under KVM, seen twice in six runs** (x86-64 UEFI desktop boot, both at the
   start-menu step, just after the test window ends; never emulated or on CI; both after the
   start menu began choosing on release, none in the four KVM runs before). Nothing more is
   logged by anyone; the root program, whose calls all time out in 30 s, never reports; cores
@@ -99,14 +129,8 @@ Note 0025's and 0026's Changes list everything settled.
   waits, `sched/mod.rs` `tick`) are never woken. Kernel work, for Opus; not started. Logs
   on Impala in `build/hangs/` (`kvm-hang-1.txt`, `kvm-hang-2.txt` and its registers; the
   kernel they ran is the one built from `57684d3`/`90b9ed7`).
-- **To do next session** (Chris, 17 November, trying 9a with `cargo xtask run`):
-  - **Grey out the maximise button** on windows that can't be resized (the display server's
-    title-bar drawing; pictures change). Chris chose greyed over hidden; hiding it could later
-    be a user setting (note 0024, section 5), with other appearance options once there is a
-    Settings app.
-  - **Restart closes QEMU under `cargo xtask run`**: `xtask/src/qemu.rs` always passes
-    `-no-reboot`, which the desktop test needs (it checks a restart by QEMU stopping with
-    `guest-reset`). Pass it for test boots only, checking every test path still gets it.
+- **Done in 9b**: the greyed maximise button and Restart under `cargo xtask run` (Chris, 17
+  November).
 - **Windows fit their screen** (after 9a, Chris's choice): resizable app windows open no bigger
   than the work area (note 0022's Changes); Paint is resizable with a scrolling picture and
   File and Edit menus (note 0026's Changes). A window dragged by hand to a smaller screen keeps
@@ -134,6 +158,17 @@ Note 0025's and 0026's Changes list everything settled.
 - Releases: `fynbos-1.0`, `v1.1`, `v1.2`, `v1.3`. M6 ends with `2.0.0-alpha.1`.
 
 ## Open questions
+- **The session's budget** (64 MiB) no longer holds every app at once: desktop and picker take
+  16, the seven M6 apps 48 more, plus the sandbox manager and the viewer. Five or so apps fit
+  together. Raising it means raising the users service's 224 MiB (two sessions and room to
+  restart one). For Chris (note 0026, Changes).
+- **App names** (17 November): keep the generic names unless Chris strongly approves a
+  change; names must make sense for the app, puns welcome. Approved: **Rock Art** (Paint),
+  **Boomslang** (Snake). Undecided: **Slate** (Notepad). Proposed for stage 10, before
+  `2.0.0-alpha.1` (only manifest titles and the runner's window titles change).
+- Terminal: per-cell colour in `lib/terminal`'s grid (1.3's green prompt, coloured `fetch`);
+  stopping a running command with Ctrl+C. The display server can't list tablets (the Screens
+  dialog offers only those in `screens.txt`).
 - DESIGN.md section 16: Q5 cryptography; Q6 a kernel name; Q7 running Linux programs.
 - The heading font. Named time zones with summer time (note 0024). Note 0022's open questions.
 - A lock-order checker for plain `SpinLock`s before M7.
