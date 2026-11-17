@@ -208,7 +208,12 @@ const APPS: &[(&str, u32, &[&str])] = &[
     ),
     ("about", AppServices::WINDOWS.0 | AppServices::SYSINFO.0, &[]),
     ("notepad", AppServices::WINDOWS.0 | AppServices::PICKER.0, &["/Home/Documents"]),
+    ("files", AppServices::WINDOWS.0 | AppServices::SANDBOX.0 | AppServices::USERS.0, &[]),
 ];
+
+/// The apps among [`APPS`] that are trusted (note 0026, section 8): they hold the session's
+/// whole tree, each entry for the reason `Trusted`, with the rights the session has.
+const TRUSTED: &[&str] = &["files", "terminal"];
 
 /// Waits for the runner to launch `name`, checks that it holds what its manifest says (the
 /// `services`, and the folders `own` read and write, given for the manifest), then logs what it
@@ -225,8 +230,9 @@ fn follow_app(s: &Session, name: &str, services: u32, own: &[&str]) -> Result<()
         }
         time::sleep_ms(200);
     };
+    let trusted = TRUSTED.contains(&name);
     let d = s.sandbox.details(id).map_err(|e| format!("{name}'s details: {e}"))?;
-    if d.services.0 != services || d.trusted || d.system {
+    if d.services.0 != services || d.trusted != trusted || d.system {
         return Err(format!("{name} holds {d:?}"));
     }
     let rw = FileRights::READ.0 | FileRights::WRITE.0;
@@ -242,7 +248,8 @@ fn follow_app(s: &Session, name: &str, services: u32, own: &[&str]) -> Result<()
                 let manifest = own.contains(&g.path.as_str())
                     && g.rights.0 == rw
                     && g.reason == GrantReason::Manifest;
-                if !manifest && g.reason != GrantReason::Chosen {
+                let whole_tree = trusted && g.reason == GrantReason::Trusted;
+                if !manifest && !whole_tree && g.reason != GrantReason::Chosen {
                     return Err(format!("{name} holds {g:?}"));
                 }
             }

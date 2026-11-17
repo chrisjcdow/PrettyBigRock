@@ -618,6 +618,17 @@ impl Run<'_> {
         self.button(false)
     }
 
+    /// A click of the right button at (`x`, `y`): a right-click menu.
+    fn right_click_at(&mut self, x: i32, y: i32) -> Result<(), String> {
+        self.move_to(x, y)?;
+        for down in [true, false] {
+            let b = format!(r#"{{"type":"btn","data":{{"button":"right","down":{down}}}}}"#);
+            self.qmp.send(true, &[b])?;
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        Ok(())
+    }
+
     /// Presses keys in order and lets them go the other way round (QEMU's names for them).
     fn chord(&mut self, keys: &[&str]) -> Result<(), String> {
         let key = |name: &str, down: bool| {
@@ -1880,6 +1891,7 @@ impl Run<'_> {
         self.paint(first)?;
         self.about(first)?;
         self.notepad(first)?;
+        self.files(first)?;
         Ok(())
     }
 
@@ -1901,6 +1913,35 @@ impl Run<'_> {
     /// what the sandbox manager says it granted (the root program's line), and what its
     /// manifest gives (`want`: path and whether read and write).
     fn check_tree(&mut self, program: &str, want: &[(&str, bool)]) -> Result<(), String> {
+        let (tree, grants) = self.tree_and_grants(program)?;
+        let mut wanted: Vec<(String, bool)> =
+            want.iter().map(|(p, rw)| (p.to_string(), *rw)).collect();
+        wanted.sort();
+        if tree != grants || grants != wanted {
+            return Err(format!(
+                "{program}'s tree is {tree:?}, its grants {grants:?}, its manifest gives {wanted:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// For a trusted app: its `[tree]` lines are what the sandbox manager says it granted, which
+    /// the root program has checked are the session's whole tree, each entry `Trusted`.
+    fn check_trusted_tree(&mut self, program: &str) -> Result<(), String> {
+        let (tree, grants) = self.tree_and_grants(program)?;
+        if tree != grants || tree.is_empty() || !tree.iter().any(|(p, _)| p == "/Home") {
+            return Err(format!("{program}'s tree is {tree:?}, its grants {grants:?}"));
+        }
+        Ok(())
+    }
+
+    /// The app's own `[tree]` lines and the root program's line of what it was granted, each
+    /// as (path, read and write), sorted.
+    #[allow(clippy::type_complexity)] // two lists of the same simple pairs
+    fn tree_and_grants(
+        &mut self,
+        program: &str,
+    ) -> Result<(Vec<(String, bool)>, Vec<(String, bool)>), String> {
         let grants_at = format!("({program}) grants: ");
         let tree_at = format!("[tree] {program} ");
         let text = self.wait(&format!("{program}'s tree and grants"), |t| {
@@ -1925,17 +1966,9 @@ impl Run<'_> {
                 Some((path.to_string(), rights == "rw"))
             })
             .collect();
-        let mut wanted: Vec<(String, bool)> =
-            want.iter().map(|(p, rw)| (p.to_string(), *rw)).collect();
         tree.sort();
         grants.sort();
-        wanted.sort();
-        if tree != grants || grants != wanted {
-            return Err(format!(
-                "{program}'s tree is {tree:?}, its grants {grants:?}, its manifest gives {wanted:?}"
-            ));
-        }
-        Ok(())
+        Ok((tree, grants))
     }
 
     /// Pictures of window `w` (titled `title`) for people, as `NAME-1x.png` and, dragged to
@@ -2213,6 +2246,163 @@ impl Run<'_> {
         self.lines("notepad: asked save changes", asked + 2)?;
         self.click_program_widget("notepad", "Notepad", "Don't save")?;
         self.line("notepad: closing").map(|_| ())
+    }
+
+    /// Clicks the row `name` in Files' folder list while it shows `folder`, and waits for it
+    /// to be selected. (Enter then opens it: the runner doesn't double-click rows, whose timing
+    /// a slow machine can spoil.)
+    fn files_select(&mut self, folder: &str, name: &str) -> Result<(), String> {
+        let start = format!("folder {folder}: ");
+        let g = self
+            .program_view("files", &format!("{folder} in Files"), |g| g.other(&start).is_some())?;
+        let names = g.names(&start).unwrap_or_default();
+        let row = names
+            .iter()
+            .position(|n| n == name)
+            .ok_or(format!("no {name} in {folder}: {names:?}"))?;
+        self.click_row("files", "Files", "files", row)?;
+        let picked = format!("{name}|");
+        self.program_view("files", &format!("{name} selected"), |g| {
+            g.widget("files").is_some_and(|w| w.value.starts_with(&picked) || w.value == name)
+        })
+        .map(|_| ())
+    }
+
+    /// Selects `name` in Files' `folder` and opens it with Enter: a folder in Files itself.
+    fn files_enter(&mut self, folder: &str, name: &str) -> Result<(), String> {
+        self.files_select(folder, name)?;
+        self.chord(&["ret"])?;
+        self.program_view("files", &format!("{folder}/{name} in Files"), |g| {
+            g.other(&format!("folder {folder}/{name}: ")).is_some()
+        })
+        .map(|_| ())
+    }
+
+    /// Clicks `name`, a button of one of Files' dialogs (not its toolbar's, which may have the
+    /// same words).
+    fn files_dialog_button(&mut self, name: &str) -> Result<(), String> {
+        let g = self.program_view("files", &format!("a dialog's {name}"), |g| {
+            g.widgets.iter().any(|w| w.label == name && w.window != 0)
+        })?;
+        let w = g
+            .widgets
+            .iter()
+            .find(|w| w.label == name && w.window != 0)
+            .cloned()
+            .ok_or(format!("no dialog button {name}"))?;
+        let (_, win) = self.program_window(&g, "Files", w.window)?;
+        self.click_at(win.x + w.x + w.width / 2, win.y + w.y + w.height / 2)
+    }
+
+    /// One of Files' toolbar buttons, then a name typed in the dialog it opens (over the name
+    /// it offers).
+    fn files_named(&mut self, button: &str, name: &str) -> Result<(), String> {
+        self.click_program_widget("files", "Files", button)?;
+        self.program_view("files", &format!("{button}'s dialog"), |g| {
+            g.widgets.iter().any(|w| w.window != 0 && w.focused)
+        })?;
+        self.chord(&["ctrl", "a"])?;
+        self.type_typed(name)?;
+        self.chord(&["ret"])
+    }
+
+    /// Closes the window titled `title` (`program` the app's name): gives it the keyboard
+    /// with a click on its title bar, then Ctrl+W.
+    fn close_app(&mut self, title: &str, program: &str) -> Result<(), String> {
+        let closing = format!("{program}: closing");
+        let before = self.count(&closing);
+        let v = self.view(&format!("{title} shown"), |v| v.window(title).is_some())?;
+        let w = v.window(title).cloned().ok_or(format!("no {title}"))?;
+        self.click_at(w.x + 120, w.y - 13)?;
+        self.view(&format!("{title} focused"), |v| {
+            v.window(title).is_some_and(|w| w.is("focused"))
+        })?;
+        self.chord(&["ctrl", "w"])?;
+        self.lines(&closing, before + 1)
+    }
+
+    /// Files: Open, Up, New folder, New file (which opens it in Notepad, as 1.3 did), Rename,
+    /// Delete, Open with… (Notepad), a text file on 1.3's disk opened in Notepad (which is
+    /// given that one file), and a picture opened in Paint.
+    fn files(&mut self, first: &ScreenLine) -> Result<(), String> {
+        let w = self.launch_app("Files", "files")?;
+        self.check_trusted_tree("files")?;
+        self.app_pictures(&w, "Files", "files", first)?;
+        let docs = "/Home/Documents";
+        // Open and Up.
+        self.files_enter("/Home", "Documents")?;
+        self.click_program_widget("files", "Files", "Up")?;
+        self.program_view("files", "/Home again", |g| g.other("folder /Home: ").is_some())?;
+        self.files_enter("/Home", "Documents")?;
+        // New folder, New file.
+        self.files_named("New folder", "Rocks")?;
+        self.line(&format!("files: made {docs}/Rocks"))?;
+        self.files_named("New file", "pebble.txt")?;
+        self.line(&format!("files: made {docs}/pebble.txt"))?;
+        self.line(&format!("files: opened {docs}/pebble.txt with notepad as app "))?;
+        self.line(&format!("notepad: opened {docs}/pebble.txt (0 bytes, crc 00000000)"))?;
+        self.close_app("Notepad", "notepad")?;
+        // Rename, then Delete (asking first).
+        self.files_select(docs, "pebble.txt")?;
+        self.files_named("Rename", "boulder.txt")?;
+        self.line(&format!("files: renamed {docs}/pebble.txt to {docs}/boulder.txt"))?;
+        self.files_select(docs, "boulder.txt")?;
+        self.click_program_widget("files", "Files", "Delete")?;
+        self.files_dialog_button("Delete")?;
+        self.line(&format!("files: deleted {docs}/boulder.txt"))?;
+        // Open with…, from the right-click menu: Notepad is offered first for a .txt.
+        let saved = "rock notes.txt";
+        self.files_select(docs, saved)?;
+        let g = self.program_view("files", "the list", |g| g.widget("files").is_some())?;
+        let list = g.widget("files").cloned().ok_or("no list")?;
+        let (_, win) = self.program_window(&g, "Files", list.window)?;
+        let names = g.names(&format!("folder {docs}: ")).unwrap_or_default();
+        let row = names.iter().position(|n| n == saved).ok_or("rock notes.txt went")? as i32;
+        self.right_click_at(win.x + list.x + 40, win.y + list.y + 1 + 21 + 20 * row + 10)?;
+        self.click_program_widget("files", "Files", "Open with\u{2026}")?;
+        self.program_view("files", "the Open with… list", |g| g.widget("apps").is_some())?;
+        self.click_program_widget("files", "Files", "withopen")?;
+        self.line(&format!("files: opened {docs}/{saved} with notepad as app "))?;
+        self.line(&format!("notepad: opened {docs}/{saved} (37 bytes, crc "))?;
+        self.close_app("Notepad", "notepad")?;
+        // 1.3's letter, from 1.3's disk: Notepad is given that one file to open.
+        let g = self.program_view("files", "the places", |g| g.other("places ").is_some())?;
+        let places = g.names("places ").unwrap_or_default();
+        let mut found = None;
+        for (row, name) in places.iter().enumerate().filter(|(_, p)| p.starts_with("Data")) {
+            self.click_row("files", "Files", "places", row)?;
+            let start = format!("folder /Volumes/{name}: ");
+            let g = self
+                .program_view("files", &format!("{name} listed"), |g| g.other(&start).is_some())?;
+            if g.names(&start).unwrap_or_default().iter().any(|n| n == "Documents") {
+                found = Some(name.clone());
+                break;
+            }
+        }
+        let place = found.ok_or(format!("no volume with 1.3's Documents among {places:?}"))?;
+        let classic = format!("/Volumes/{place}/Documents");
+        self.files_enter(&format!("/Volumes/{place}"), "Documents")?;
+        self.files_select(&classic, "letter.txt")?;
+        self.chord(&["ret"])?;
+        self.line(&format!("notepad: opened {classic}/letter.txt (76 bytes, crc 672be5ea)"))?;
+        self.line(&format!("[tree] notepad {classic}/letter.txt "))?;
+        self.close_app("Notepad", "notepad")?;
+        // A picture, in Paint: the drawing Paint saved in Pictures.
+        let pictures = places.iter().position(|p| p == "Pictures").ok_or("no Pictures place")?;
+        self.click_row("files", "Files", "places", pictures)?;
+        let start = "folder /Home/Pictures: ";
+        let g = self.program_view("files", "Pictures listed", |g| g.other(start).is_some())?;
+        let names = g.names(start).unwrap_or_default();
+        let drawing = names
+            .iter()
+            .find(|n| n.starts_with("Drawing ") && n.ends_with(".bmp"))
+            .cloned()
+            .ok_or(format!("no drawing in Pictures: {names:?}"))?;
+        self.files_select("/Home/Pictures", &drawing)?;
+        self.chord(&["ret"])?;
+        self.line(&format!("paint: opened /Home/Pictures/{drawing}"))?;
+        self.close_app("Paint", "paint")?;
+        self.close_app("Files", "files")
     }
 
     /// About: the facts, from pbr.sysinfo.

@@ -33,6 +33,7 @@ mod program {
 
     use alloc::format;
     use alloc::string::String;
+    use alloc::vec;
     use alloc::vec::Vec;
     use granite::endpoint::Endpoint;
     use pbr_browse::{BrowseError, Folders, Item};
@@ -220,7 +221,13 @@ mod program {
                 say!("{line}");
             }
             if describe {
-                let mut lines = Vec::new();
+                // What the lists hold, as the picker writes it: their descriptions say only
+                // which row is picked, and the runner needs the rows to click one.
+                let app = rt.app();
+                let mut lines = vec![
+                    format!("places {}", app.place_titles().join("|")),
+                    format!("folder {}: {}", app.folder(), app.names().join("|")),
+                ];
                 for (id, win) in rt.windows() {
                     lines.push(format!("window {} is {}", id.0, win.number()));
                     for d in rt.describe(id) {
