@@ -90,11 +90,13 @@ Note 0025's and 0026's Changes list everything settled.
   KVM-only `Broken pipe` at Shut down is gone with it (the runner's last write is now the
   release; `click_ending` also tolerates QEMU stopping). Desktop boots under KVM passed on
   x86-64 UEFI and BIOS, all three boots.
-- **Open: a hang under KVM, seen once** (x86-64 UEFI desktop boot, at the start-menu step,
-  1 run in 4): after the test window ended, nothing more was logged by anyone and every core
-  sat idle in `wait_for_interrupt`; the root program, whose calls all time out in 30 s, never
-  reported. That looks like a sleeping thread never woken (a lost timer?) rather than a loop.
-  Not seen emulated or on CI. Log not kept in the repository; watch for it.
+- **Open: a hang under KVM, seen twice in six runs** (x86-64 UEFI desktop boot, both at the
+  start-menu step, just after the test window ends; never emulated or on CI; both after the
+  start menu began choosing on release, none in the four KVM runs before). Nothing more is
+  logged by anyone; the root program, whose calls all time out in 30 s, never reports; cores
+  sit in `idle_loop`/`wait_for_interrupt`, one in `sched::tick`. Hypothesis: a core stops
+  getting timer interrupts, so threads asleep on it (each core wakes only its own timed
+  waits, `sched/mod.rs` `tick`) are never woken. Kernel work, for Opus; not started.
 - **Windows fit their screen** (after 9a, Chris's choice): resizable app windows open no bigger
   than the work area (note 0022's Changes); Paint is resizable with a scrolling picture and
   File and Edit menus (note 0026's Changes). A window dragged by hand to a smaller screen keeps
