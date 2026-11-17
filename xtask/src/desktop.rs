@@ -2269,6 +2269,10 @@ impl Run<'_> {
             .iter()
             .position(|n| n == name)
             .ok_or(format!("no {name} in {folder}: {names:?}"))?;
+        // A click on the row where the last click was, within the double-click time (half a
+        // second), would open it at once, and the Enter that follows would go to whatever it
+        // opened in. Wait that out first.
+        std::thread::sleep(Duration::from_millis(600));
         self.click_row("files", "Files", "files", row)?;
         let picked = format!("{name}|");
         self.program_view("files", &format!("{name} selected"), |g| {
