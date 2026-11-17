@@ -138,6 +138,11 @@ Note 0025's and 0026's Changes list everything settled.
 - The heading font. Named time zones with summer time (note 0024). Note 0022's open questions.
 - A lock-order checker for plain `SpinLock`s before M7.
 - Checking a volume while it stays mounted (note 0026).
+- Window options apps may ask for (style, size hints, full screen, staying on top), chosen from
+  what the display server offers, which keeps the last word; full screen only in answer to a
+  press, always left with a key the server keeps, and announced by it; the user overrides with
+  rules and the window menu. Wants its own design note (a `pbr.window` version 2) when needed;
+  not for M6. Discussed with Chris, 17 November.
 
 ## Working notes
 - `CLAUDE.md` has the workspace set-up and test commands. Additionally:
