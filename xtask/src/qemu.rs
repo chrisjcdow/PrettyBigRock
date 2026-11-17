@@ -299,7 +299,8 @@ pub fn check_shell(work: &Path) -> Result<(), String> {
 /// The QEMU command for a configuration, with the firmware found on this computer.
 ///
 /// `headless` is a boot test: nobody is looking, so on the configurations with a virtio-gpu
-/// the test runner stands in for the viewer (see [`Screens::TwoVirtioGpu`]).
+/// the test runner stands in for the viewer (see [`Screens::TwoVirtioGpu`]), and a restart
+/// stops QEMU instead of restarting the machine.
 pub(crate) fn command(
     cfg: &Config,
     image: &Path,
@@ -466,7 +467,12 @@ pub(crate) fn command_on(
             cmd.args(["-device", "virtio-tablet-pci,id=tablet1,display=gpu2,head=1"]);
         }
     }
-    cmd.arg("-no-reboot");
+    // A boot test is told `-no-reboot`: when the guest restarts the machine QEMU stops with
+    // `guest-reset` instead, which is how the desktop test checks Restart (note 0026, section
+    // 6). Someone watching (`cargo xtask run`) wants Restart to restart.
+    if headless {
+        cmd.arg("-no-reboot");
+    }
     Ok(cmd)
 }
 
