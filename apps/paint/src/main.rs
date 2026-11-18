@@ -110,7 +110,7 @@ mod program {
 
         fn pick(&mut self, window: Option<Win>, serial: u32, pick: Pick) -> Result<(), String> {
             let Some(picker) = &mut self.picker else {
-                return Err(String::from("Paint has no file picker"));
+                return Err(String::from("Rock Art has no file picker"));
             };
             let ask = match pick {
                 Pick::Open => Ask::open("open a picture"),

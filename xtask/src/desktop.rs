@@ -2044,9 +2044,9 @@ impl Run<'_> {
 
     /// Snake: it starts, pauses, turns towards the food and eats it, and ends against a wall.
     fn snake(&mut self, first: &ScreenLine) -> Result<(), String> {
-        let w = self.launch_app("Snake", "snake")?;
+        let w = self.launch_app("Boomslang", "snake")?;
         self.check_tree("snake", &[("/Home/Apps/snake", true)])?;
-        self.app_pictures(&w, "Snake", "snake", first)?;
+        self.app_pictures(&w, "Boomslang", "snake", first)?;
         self.chord(&["spc"])?;
         self.wait("the game started", |t| last_snake(t).is_some_and(|s| s.state == "playing"))?;
         self.chord(&["p"])?;
@@ -2134,16 +2134,16 @@ impl Run<'_> {
     /// Paint: chooses a colour and a size, draws, saves through the picker, starts a new
     /// picture, opens what it saved (the same picture), and opens the picture 1.3's Paint saved on 1.3's disk.
     fn paint(&mut self, first: &ScreenLine) -> Result<(), String> {
-        let w = self.launch_app("Paint", "paint")?;
+        let w = self.launch_app("Rock Art", "paint")?;
         self.check_tree("paint", &[("/Home/Apps/paint", true), ("/Home/Pictures", true)])?;
-        self.app_pictures(&w, "Paint", "paint", first)?;
+        self.app_pictures(&w, "Rock Art", "paint", first)?;
         // Red (the fourth colour) and the third brush size, from the toolbar.
         let g = self.program_view("paint", "the toolbar and the picture", |g| {
             g.widget("tools").is_some() && g.widget("picture").is_some()
         })?;
         let tools = g.widget("tools").cloned().ok_or("no toolbar")?;
         let picture = g.widget("picture").cloned().ok_or("no picture")?;
-        let (_, win) = self.program_window(&g, "Paint", tools.window)?;
+        let (_, win) = self.program_window(&g, "Rock Art", tools.window)?;
         for (tool, line) in [
             (pbr_paint_tool(3, true), "paint: colour 3 size "),
             (pbr_paint_tool(2, false), "paint: colour 3 size 2"),
@@ -2163,7 +2163,7 @@ impl Run<'_> {
         let drawn = self.paint_changed(before, "the stroke drawn")?;
         // Saved through the picker, in Pictures, as the name it offers.
         let saved = self.count("paint: saved ");
-        self.app_picker("Paint", &["ctrl", "s"], "saving a picture")?;
+        self.app_picker("Rock Art", &["ctrl", "s"], "saving a picture")?;
         self.program_view("picker", "Drawing N.bmp offered", |g| {
             g.widget("name").is_some_and(|w| w.focused && w.value.starts_with("Drawing "))
         })?;
@@ -2189,7 +2189,7 @@ impl Run<'_> {
             return Err("New left the picture as it was".into());
         }
         let (before, _) = self.paint_picture();
-        self.app_picker("Paint", &["ctrl", "o"], "opening a picture")?;
+        self.app_picker("Rock Art", &["ctrl", "o"], "opening a picture")?;
         self.pick_row("/Home/Pictures", &name)?;
         self.line(&format!("paint: opened {path}"))?;
         let opened = self.paint_changed(before, "the saved picture opened")?;
@@ -2199,7 +2199,7 @@ impl Run<'_> {
         // 1.3's picture, on 1.3's disk: the volume with Pictures/rock.bmp.
         let rock = rock_crc()?;
         let (before, _) = self.paint_picture();
-        let g = self.app_picker("Paint", &["ctrl", "o"], "opening 1.3's picture")?;
+        let g = self.app_picker("Rock Art", &["ctrl", "o"], "opening 1.3's picture")?;
         let place = self.classic_volume(&g, "Pictures")?;
         self.pick_row(&format!("/Volumes/{place}"), "Pictures")?;
         self.pick_row(&format!("/Volumes/{place}/Pictures"), "rock.bmp")?;
@@ -2442,7 +2442,7 @@ impl Run<'_> {
         self.files_select("/Home/Pictures", &drawing)?;
         self.chord(&["ret"])?;
         self.lines(&opened, before + 1)?;
-        self.close_app("Paint", "paint")?;
+        self.close_app("Rock Art", "paint")?;
         self.close_app("Files", "files")
     }
 

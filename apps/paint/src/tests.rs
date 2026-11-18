@@ -64,7 +64,7 @@ impl Disk for Fake {
 
     fn pick(&mut self, window: Option<Win>, serial: u32, pick: Pick) -> Result<(), String> {
         if self.no_picker {
-            return Err("Paint has no file picker".into());
+            return Err("Rock Art has no file picker".into());
         }
         self.asked.push((window, serial, pick));
         Ok(())
@@ -526,13 +526,13 @@ fn no_picker_or_one_that_fails_says_so() {
     menu(&mut h, FILE, "Open…");
     assert_eq!(
         dialog_text(&h).as_deref(),
-        Some("Couldn't open the file picker. Paint has no file picker.")
+        Some("Couldn't open the file picker. Rock Art has no file picker.")
     );
     let mut h = harness_scaled(Fake { no_picker: true, ..Fake::default() }, 1);
     menu(&mut h, FILE, "Save");
     assert_eq!(
         dialog_text(&h).as_deref(),
-        Some("Couldn't save the picture. Paint has no file picker.")
+        Some("Couldn't save the picture. Rock Art has no file picker.")
     );
     // A picker that was asked and then failed.
     let mut h = harness();
@@ -597,8 +597,7 @@ fn a_smaller_picture_sits_at_the_top_left_on_white_and_a_bigger_one_is_cut() {
 
 #[test]
 fn a_file_paint_cant_open_gets_1_3s_words() {
-    let sentence =
-        "bad.bmp isn't a picture Paint can open. It opens uncompressed 24- or 32-bit .bmp files.";
+    let sentence = "bad.bmp isn't a picture Rock Art can open. It opens uncompressed 24- or 32-bit .bmp files.";
     let mut fake = Fake::default();
     fake.files.insert("/Home/Pictures/bad.bmp".into(), b"This is not a bitmap.".to_vec());
     let mut compressed = pbr_bmp::encode(&pbr_bmp::Picture::new(2, 2, vec![0; 4]).unwrap());

@@ -570,7 +570,7 @@ impl<D: Disk> Paint<D> {
             Asked::Open => format!("Couldn't open the file picker. {why}."),
             Asked::Save => format!("Couldn't save the picture. {why}."),
         };
-        cx.show(Dialog::message("Paint", &message));
+        cx.show(Dialog::message("Rock Art", &message));
     }
 
     /// Save (`ask_always` false) or Save as.
@@ -599,7 +599,7 @@ impl<D: Disk> Paint<D> {
             Err(why) => {
                 let why = why_text(&why);
                 self.log.push(format!("couldn't save {path}: {why}"));
-                cx.show(Dialog::message("Paint", &format!("Couldn't save the picture. {why}.")));
+                cx.show(Dialog::message("Rock Art", &format!("Couldn't save the picture. {why}.")));
             }
         }
     }
@@ -609,18 +609,19 @@ impl<D: Disk> Paint<D> {
     fn open_file(&mut self, path: &str, cx: &mut Context<'_, Message>) {
         let name = base_name(path);
         let not_a_picture = format!(
-            "{name} isn't a picture Paint can open. It opens uncompressed 24- or 32-bit .bmp files."
+            "{name} isn't a picture Rock Art can open. It opens uncompressed 24- or 32-bit \
+             .bmp files."
         );
         let bytes = match self.disk.read(path, MAX_FILE) {
             Ok(bytes) => bytes,
             Err(DiskError::TooBig) => {
                 self.log.push(format!("couldn't open {path}: it is too big"));
-                cx.show(Dialog::message("Paint", &not_a_picture));
+                cx.show(Dialog::message("Rock Art", &not_a_picture));
                 return;
             }
             Err(DiskError::Failed(why)) => {
                 self.log.push(format!("couldn't open {path}: {why}"));
-                cx.show(Dialog::message("Paint", &format!("Couldn't open {name}. {why}.")));
+                cx.show(Dialog::message("Rock Art", &format!("Couldn't open {name}. {why}.")));
                 return;
             }
         };
@@ -628,7 +629,7 @@ impl<D: Disk> Paint<D> {
             Ok(picture) => picture,
             Err(e) => {
                 self.log.push(format!("couldn't open {path}: {e}"));
-                cx.show(Dialog::message("Paint", &not_a_picture));
+                cx.show(Dialog::message("Rock Art", &not_a_picture));
                 return;
             }
         };
@@ -791,7 +792,7 @@ impl<D: Disk> App for Paint<D> {
     }
 
     /// "NAME" or "Untitled", with "• " before it while there are unsaved changes. Sandstone
-    /// puts "Paint" before it.
+    /// puts the manifest's title, "Rock Art", before it.
     fn title(&self) -> String {
         let name = self.path.as_deref().map_or("Untitled", base_name);
         format!("{}{name}", if self.dirty { "• " } else { "" })

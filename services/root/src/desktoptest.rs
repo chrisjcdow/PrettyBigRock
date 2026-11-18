@@ -399,7 +399,9 @@ fn all(sup: &Supervisor) -> Result<String, String> {
     for (name, services, own) in APPS {
         follow_app(&s, name, *services, own)?;
     }
-    done.push("Calculator, Snake, Paint and About, each holding only what its manifest gives");
+    done.push(
+        "Calculator, Boomslang, Rock Art and About, each holding only what its manifest gives",
+    );
 
     // A note in an app's own folder, for the second boot to find.
     let (_, saver) = s.launch("wintest", "name=Saver save")?;
