@@ -1192,3 +1192,9 @@ M6 hands out and releases `2.0.0-alpha.1`.
   they are reserved when a service starts, and with the users service at 320 MiB a 1 GiB
   machine had too little left to start the display server again (the desktop boot's step 3
   failed). Chris chose 2 GiB machines: the test machines and `run-prettybigrock.bat`.
+- **Double clicks**: the desktop timed them by when it read each click, and after the first it
+  redraws its whole wallpaper, which emulated ARM64 can take longer than the half second
+  allowed. `lib/window` now keeps the time the display server puts in every event, and the
+  desktop and sandstone use it.
+
+Results: under KVM here, all four x86-64 boots passed with 2 GiB; ARM64 and Stress on GitHub.

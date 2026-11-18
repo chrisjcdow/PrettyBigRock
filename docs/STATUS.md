@@ -33,7 +33,13 @@ Chris split stage 10: 10a (this) the failures and section 7; 10b the review and 
   (programs and folders keep their names). **Session budget 96 MiB**, users service 320 MiB,
   and since budgets are reserved at start (not just limits: the display server couldn't be
   restarted in 1 GiB), **test machines and `run-prettybigrock.bat` have 2048 MiB**.
+- **Double clicks** are timed by the click's own time (`PointerEvent::time`, note 0023's
+  Changes), in sandstone and the desktop's icons: after the first click the desktop redraws
+  its wallpaper, which emulated ARM64 may take longer than half a second to do.
 - Seen, for Chris: "About PrettyBigRock" is cut to "About PrettyBi" under its desktop icon.
+- Tests run here: host tests of every changed crate; under KVM, all four x86-64 boots (UEFI and
+  BIOS, self-test and desktop) with 2 GiB, and the UEFI desktop boot after the last change.
+  ARM64 left to GitHub's CI; Stress (5 runs) started on `f7ad74f`'s successor.
 
 ### Stage 10b: what it has to do
 - **The capability review** (Opus, in a fresh session): everything M6 added that hands out,
