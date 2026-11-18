@@ -245,6 +245,12 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 18 November 2026 (M6 stage 10a): **the session's budget is 96 MiB and the machines have 2
+  GiB** (Chris's choice). 96 MiB holds the desktop, the picker and every M6 app at once. The
+  users service's budget goes from 224 to 320 MiB (three sessions, for two and room to start
+  one again, and its own). Budgets are reserved when a service starts, so on a 1 GiB machine
+  that left too little to start the display server again after a crash: the test machines
+  and `run-prettybigrock.bat` now have 2048 MiB.
 - 18 November 2026 (M6 stage 10a): **the rest of section 7's table in the desktop boot.** The
   second boot, after the root program's test, compares each screen of the desktop just started
   with the desktop drawn on the host by `lib/desktop` (the wallpaper, the icons and the

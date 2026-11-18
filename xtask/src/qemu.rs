@@ -949,8 +949,10 @@ const TABLET_Y: u32 = 3000;
 /// The memory every test machine has, in MiB. It was 512 until M6: the services' budgets (a
 /// fixed share of memory each, note 0006, section 9) then grew by a display driver's buffers
 /// (note 0020), and a service being restarted needs its budget free while the one it replaces
-/// still holds its own, which 512 MiB no longer left room for.
-const MEMORY_MIB: &str = "1024";
+/// still holds its own, which 512 MiB no longer left room for. It was 1024 until M6's stage
+/// 10, when a session's budget grew to 96 MiB (note 0026, Changes) and the users service's with
+/// it, leaving too little to start the display server again in 1 GiB.
+const MEMORY_MIB: &str = "2048";
 
 /// The first picture the guest has asked the runner to look at that it hasn't yet: the
 /// picture's number and the display device's name.
