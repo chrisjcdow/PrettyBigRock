@@ -1197,4 +1197,6 @@ M6 hands out and releases `2.0.0-alpha.1`.
   allowed. `lib/window` now keeps the time the display server puts in every event, and the
   desktop and sandstone use it.
 
-Results: under KVM here, all four x86-64 boots passed with 2 GiB; ARM64 and Stress on GitHub.
+Results: under KVM here, all four x86-64 boots passed with 2 GiB. GitHub's CI passed on all
+four configurations, every boot, on `5555c63` and on the stage's last commit. Stress (5 runs)
+was started; its result is for the next session to check first.
