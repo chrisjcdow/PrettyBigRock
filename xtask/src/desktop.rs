@@ -2276,8 +2276,11 @@ impl Run<'_> {
     /// a slow machine can spoil.)
     fn files_select(&mut self, folder: &str, name: &str) -> Result<(), String> {
         let start = format!("folder {folder}: ");
-        let g = self
-            .program_view("files", &format!("{folder} in Files"), |g| g.other(&start).is_some())?;
+        // Wait for a listing with the name in it: just after a rename the last listing Files
+        // wrote may be the one from before.
+        let g = self.program_view("files", &format!("{name} in {folder}"), |g| {
+            g.names(&start).is_some_and(|n| n.iter().any(|n| n == name))
+        })?;
         let names = g.names(&start).unwrap_or_default();
         let row = names
             .iter()
@@ -2377,6 +2380,11 @@ impl Run<'_> {
         self.click_program_widget("files", "Files", "Delete")?;
         self.files_dialog_button("Delete")?;
         self.line(&format!("files: deleted {docs}/boulder.txt"))?;
+        // The rows below it move up once Files has listed the folder again.
+        let start = format!("folder {docs}: ");
+        self.program_view("files", "boulder.txt gone", |g| {
+            g.names(&start).is_some_and(|n| !n.iter().any(|n| n == "boulder.txt"))
+        })?;
         // Open with…, from the right-click menu: Notepad is offered first for a .txt.
         let saved = "rock notes.txt";
         // Notepad opened this file in its own step: count the lines that say so.
