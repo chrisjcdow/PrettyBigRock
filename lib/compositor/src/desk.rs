@@ -108,8 +108,9 @@ pub const SERIAL_LIFE: u64 = 1_000_000_000;
 pub const PING_EVERY: u64 = 2_000_000_000;
 /// How long a client has to answer a ping before it is "not responding".
 pub const PING_WAIT: u64 = 5_000_000_000;
-/// How long after the user launched an app its first window may still take the focus.
-pub const LAUNCH_FOCUS: u64 = 2_000_000_000;
+/// How long after the user launched an app its first window may still take the focus, as
+/// long as the user hasn't pressed a key or button since (note 0022, section 4).
+pub const LAUNCH_FOCUS: u64 = 30_000_000_000;
 /// How many presses' serials are remembered for each client.
 const PRESSES_KEPT: usize = 32;
 /// The largest a window may be, in logical pixels, each way (the drawing library's limit).
@@ -455,6 +456,9 @@ pub struct Desk {
     pub(crate) kept_keys: Vec<u16>,
     /// The windows Alt+Tab goes through while Alt is held, and how far it has gone.
     pub(crate) switching: Option<(Vec<WindowId>, usize)>,
+    /// When the user last pressed a key or a button (not a key's repeats): a window of an
+    /// app launched before then doesn't take the focus.
+    pub(crate) last_press: u64,
     /// Shutting down (`farewell`, `halted`).
     pub(crate) farewell: Option<Farewell>,
     damage: Damage,
@@ -502,6 +506,7 @@ impl Desk {
             keys_to: Vec::new(),
             kept_keys: Vec::new(),
             switching: None,
+            last_press: 0,
             farewell: None,
             damage: Damage::new(),
             full_damage: true,
@@ -1135,9 +1140,12 @@ impl Desk {
         self.sort_stack(session);
         self.check_scale_quietly(id);
         // The focus (note 0022, section 4): only if the client has it already, or the user
-        // launched it just now. Otherwise the taskbar shows it wants attention.
+        // launched it and has pressed nothing since (they are waiting for it, however slowly
+        // it starts). Otherwise the taskbar shows it wants attention.
         let has_focus = self.focused_client(session) == Some(client);
-        let fresh = launched != 0 && now.saturating_sub(launched) <= LAUNCH_FOCUS;
+        let fresh = launched != 0
+            && self.last_press <= launched
+            && now.saturating_sub(launched) <= LAUNCH_FOCUS;
         let takes = match kind {
             WindowKind::Normal | WindowKind::Dialog | WindowKind::System => has_focus || fresh,
             _ => false,

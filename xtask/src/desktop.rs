@@ -1592,9 +1592,8 @@ impl Run<'_> {
         self.desktop_ready(1)?;
         self.keep_screens("desktop")?;
         self.line("Desktop test: drive the windows")?;
-        // (Beta, opened last, is on top. Whether it also has the focus depends on how soon
-        // after its launch it opened, which a slow emulated machine can stretch past the two
-        // seconds the rule allows; the host tests check that rule.)
+        // (Beta, opened last, is on top, and has the focus: nothing was pressed since it was
+        // launched. The host tests check that rule; the runner clicks before it relies on it.)
         let v = self.view("Alpha and Beta drawn", |v| {
             let drawn = |t: &str| v.window(t).is_some_and(|w| w.is("drawn"));
             drawn("Alpha") && drawn("Beta") && (!two || v.screens.iter().any(|s| s.scale == 200))
@@ -1711,6 +1710,19 @@ impl Run<'_> {
 
         // ---- Step 2: a hung app, and a hostile one. ----
         self.line("Desktop test: the hung window")?;
+        // Both were launched with nothing pressed since, so each window took the focus as it
+        // opened (note 0022, section 4). Dragging Hung by its title bar gives it the focus
+        // (the display server pings only the app with the focus, and the probe checks what it
+        // can't do without it) and moves it off the probe's window, which the runner clicks
+        // next.
+        let v = self.view("Hung and the probe", |v| {
+            v.window("Hung").is_some_and(|w| w.is("drawn")) && v.window("probe").is_some()
+        })?;
+        let h = v.window("Hung").cloned().ok_or("no Hung")?;
+        self.drag_window(&h, 420, h.y)?;
+        self.view("Hung moved and focused", |v| {
+            v.window("Hung").is_some_and(|w| w.x == 420 && w.is("focused"))
+        })?;
         self.view("Hung not responding", |v| {
             v.window("Hung").is_some_and(|w| w.is("not-responding"))
         })?;

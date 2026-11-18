@@ -397,9 +397,10 @@ fn only_the_user_gives_a_new_window_the_focus() {
     // The app with the focus opens a second window: it gets it.
     let wa2 = h.window(a, (100, 100));
     assert!(h.focused(7, wa2));
-    // Launched by the user more than two seconds ago: too late.
+    // Launched by the user, who has pressed something since: no focus.
     let c = h.client(9, "Paint", 0, true);
-    h.later(3 * SEC);
+    h.later(SEC);
+    h.press_key(30, 0, 'a');
     let wc = h.window(c, (100, 100));
     assert!(!h.focused(9, wc) && h.focused(7, wa2));
     // Clicking it gives it the focus and raises it.
@@ -407,6 +408,16 @@ fn only_the_user_gives_a_new_window_the_focus() {
     h.click(x + 5, y + 5);
     assert!(h.focused(9, wc));
     assert!(!h.line(9, wc).contains("attention"));
+    // Launched by the user, who waits without pressing anything while it starts slowly: it
+    // gets the focus. But not once it is more than LAUNCH_FOCUS late.
+    let d = h.client(10, "Files", 0, true);
+    h.later(10 * SEC);
+    let wd = h.window(d, (100, 100));
+    assert!(h.focused(10, wd));
+    let e = h.client(11, "Terminal", 0, true);
+    h.later(31 * SEC);
+    let we = h.window(e, (100, 100));
+    assert!(!h.focused(11, we) && h.focused(10, wd));
 }
 
 #[test]

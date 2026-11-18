@@ -136,9 +136,9 @@ raises it (with its dialogs).
 
 - **The keyboard** goes to the window with the **focus**, and nowhere else. A window gets the
   focus when the user clicks it, chooses it in the taskbar, or switches to it with Alt+Tab. A
-  new window gets the focus only if its client has the focus already or was launched by the
-  user less than 2 seconds ago (the sandbox manager says when, in `client`); otherwise its
-  taskbar button is highlighted. So an app in the background can't pop up a window and catch
+  new window gets the focus only if its client has the focus already, or was launched by the
+  user (the sandbox manager says when, in `client`) less than 30 seconds ago and the user has
+  pressed no key or button since; otherwise its taskbar button is highlighted. So an app in the background can't pop up a window and catch
   what the user was typing.
 - **Keys the display server keeps** and never sends to apps: the Windows key and Ctrl+Esc (the
   start menu, sent to the desktop client), Alt+Tab, and Ctrl+W (close the focused window, as
@@ -462,6 +462,11 @@ descriptors (the front end turns them into capabilities).
 - Accessibility: a screen reader needs a way to read windows' contents that the sandbox allows.
 
 ## Changes
+- 18 November 2026 (M6 stage 10): **a launched app's first window takes the focus if the user
+  has pressed nothing since the launch** (within 30 seconds), not only within 2 seconds of it.
+  On slow machines (GitHub's runners, ARM64 emulated) apps often took longer than 2 seconds to
+  open, and the user, still waiting for them, had to click them. Pressing anything in between
+  still keeps the focus where it is.
 - 17 November 2026 (M6 stage 9b): the maximise button of a window that can't be resized is
   drawn greyed out (a maximised one's still restores it). **`check_serial` counts a press in
   the window's own dialogs and popups**: each press is remembered with the top window it

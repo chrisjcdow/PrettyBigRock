@@ -158,6 +158,7 @@ impl Desk {
                 }
             }
             value::PRESSED => {
+                self.last_press = now;
                 if self.kept(e, now) {
                     self.kept_keys.push(code);
                     return;
@@ -447,6 +448,7 @@ impl Desk {
         if !self.takes_input() {
             return;
         }
+        self.last_press = now;
         if !first {
             // Another button while one is held: to whoever has the pointer, if a window does.
             if let Grab::Pressed(w) = self.pointer.grab {

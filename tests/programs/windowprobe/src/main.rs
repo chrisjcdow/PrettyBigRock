@@ -116,13 +116,28 @@ fn main(mut start: granite::Start) -> i32 {
 
 /// Waits for `win`'s configure event and gives its serial. `Connection` asks for the window's
 /// buffers as it passes.
-fn wait_configure(conn: &mut Connection, win: Win) -> Option<u32> {
+fn wait_configure(conn: &mut Connection, win: Win) -> Option<(u32, bool)> {
     let deadline = time::after_ms(5_000);
     loop {
-        if let Event::Configure { window, serial, .. } = conn.next_event(deadline)?
+        if let Event::Configure { window, serial, focused, .. } = conn.next_event(deadline)?
             && window == win
         {
-            return Some(serial);
+            return Some((serial, focused));
+        }
+    }
+}
+
+/// Waits up to two minutes for `win` to lose the focus. Launched by the user (the root program
+/// counts as one) with nothing pressed since, its window took the focus as it opened (note
+/// 0022, section 4); the runner then clicks the hung window, which takes it.
+fn wait_unfocused(conn: &mut Connection, win: Win) -> Option<()> {
+    granite::println!("windowprobe: waiting to lose the focus");
+    let deadline = time::after_ms(120_000);
+    loop {
+        if let Event::Configure { window, focused: false, .. } = conn.next_event(deadline)?
+            && window == win
+        {
+            return Some(());
         }
     }
 }
@@ -257,7 +272,7 @@ fn run(p: &mut Probe, conn: &mut Connection, pk: Endpoint) -> Result<(), i32> {
     let w = win.number();
     let c = conn.client();
     p.refused("a commit before it has buffers", c.commit(w, 0, &[]), WindowError::Stale)?;
-    let serial = wait_configure(conn, win).ok_or_else(|| {
+    let (serial, focused) = wait_configure(conn, win).ok_or_else(|| {
         granite::println!("windowprobe: FAILED: its own window: got no configure event");
         103
     })?;
@@ -285,6 +300,13 @@ fn run(p: &mut Probe, conn: &mut Connection, pk: Endpoint) -> Result<(), i32> {
     p.refused("frame of window 999", c.frame(999), WindowError::NoSuchWindow)?;
 
     // 7. The clipboard, without the focus.
+    if focused {
+        wait_unfocused(conn, win).ok_or_else(|| {
+            granite::println!("windowprobe: FAILED: its window kept the focus");
+            112
+        })?;
+    }
+    let c = conn.client();
     let text = Memory::create(5).map_err(|_| 104)?;
     text.write(0, b"stolen").map_err(|_| 104)?;
     p.refused(
@@ -302,7 +324,7 @@ fn run(p: &mut Probe, conn: &mut Connection, pk: Endpoint) -> Result<(), i32> {
         granite::println!("windowprobe: FAILED: making a 16000x100 window: got {e:?}");
         105
     })?;
-    let serial = wait_configure(conn, big).ok_or_else(|| {
+    let (serial, _) = wait_configure(conn, big).ok_or_else(|| {
         granite::println!("windowprobe: FAILED: the big window: got no configure event");
         106
     })?;
