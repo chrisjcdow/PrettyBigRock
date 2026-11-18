@@ -4,12 +4,55 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 17 November 2026 (session 22). **M6 stage 9 built**: 9b added Notepad, Files and
-Terminal, the desktop's Screens dialog, Open with…, and the 9a leftovers; the KVM "hang" was
-the test's own. The x86-64 desktop boots passed here under KVM; GitHub's CI and a Stress run
-(5 runs) were started on `m6` for all four configurations. Stage 10 is next.
+Updated 18 November 2026 (session 23). **M6 stage 10a built**: the CI and Stress failures of
+17 November fixed (a new window's focus on slow machines, a runner race in Files), the rest of
+note 0026 section 7's table in the desktop boot, Paint and Snake renamed Rock Art and
+Boomslang, sessions of 96 MiB on 2 GiB machines. **Stage 10b is next**: the capability
+review and the release (below).
 
-## M6 (the desktop, 2.0 alpha): stages 0 to 9 built
+## M6 (the desktop, 2.0 alpha): stages 0 to 9 and 10a built
+
+### Stage 10a, session 23
+Chris split stage 10: 10a (this) the failures and section 7; 10b the review and the release.
+- **The failures on 17 November** (CI on all but x86-64 BIOS, all six Stress jobs). (1) Apps
+  launched from the start menu opened without the focus: on slow machines they took longer
+  than note 0022's 2 seconds. Now the first window takes the focus if the user has pressed
+  nothing since the launch, within 30 s (note 0022's Changes; `Desk::last_press`). The hostile
+  probe relied on opening too late; it now waits to lose the focus, and the runner drags Hung
+  (to be pinged it must have the focus) off the probe. (2) The runner read Files' listing from
+  before a rename or delete (wrong row, "no boulder.txt"); it now waits for the new one.
+- **Section 7's table, the rest** (note 0026's Changes): the second boot compares each screen
+  with the desktop drawn on the host by `lib/desktop` (clock left out; xtask now uses
+  `pbr-desktop` and `pbr-draw`), checks the clock against the host's, launches Terminal from
+  its icon, `ls` finds what the first boot saved, `set layout gb` types `£€` and `us-intl`
+  `êñ`, and Terminal is minimised from the title bar and the taskbar and brought back. The
+  desktop logs `icon APP "TITLE" ICON at X,Y`, `taskbar "TITLE" at X,Y [state]` and `clock …`.
+  Calculator, Notepad, Terminal (1x, 2x) and Paint (1x) are compared with their host
+  pictures; Snake, About, Files, the picker and Paint at 2x only kept (they differ by nature).
+- **Chris's decisions**: Paint's title **Rock Art**, Snake's **Boomslang**, Notepad stays
+  (programs and folders keep their names). **Session budget 96 MiB**, users service 320 MiB,
+  and since budgets are reserved at start (not just limits: the display server couldn't be
+  restarted in 1 GiB), **test machines and `run-prettybigrock.bat` have 2048 MiB**.
+- Seen, for Chris: "About PrettyBigRock" is cut to "About PrettyBi" under its desktop icon.
+
+### Stage 10b: what it has to do
+- **The capability review** (Opus, in a fresh session): everything M6 added that hands out,
+  derives, checks or revokes capabilities. From `git diff 9345496 HEAD`: the kernel's changes
+  (`obj/endpoint.rs`, `syscall.rs`, `power.rs`); `services/sandbox` (window capabilities and
+  `launched`, rights and limits, `grant @10`, `openers @12` and Open with…'s
+  prepare/choose/start/cancel, badges by kind, picker caps moved, `DESCRIBED`, `NoMemory`);
+  `services/users` (sessions, `pbr.users @12 check`, sysinfo, layouts, debug); the display
+  server's clients (`services/display/src/clients.rs`, `client()` per app, watched; system
+  and desktop flags; `check_serial`); `services/input` (who may take the seat, `set_layout`);
+  `services/power`; `services/storage @6` and `services/rockfs` (check, `pbr.fs.host @3`);
+  `lib/fsserve` (`limit`, nested shares); `lib/manifest` (app keys, rules, settings);
+  `apps/picker`, `apps/permissions` (take back, stop), `apps/desktop`; the supervisor's
+  `@4 memory`. Write findings into the notes' Changes; fix what is wrong.
+- Then: README, ROADMAP, DESIGN.md (Q8 settled, section 8's text), every M6 note (0019 to
+  0026) marked built; tag and release `2.0.0-alpha.1` with disk images (Q14) and
+  `run-prettybigrock.bat`'s choice of one or two screens; Stress (runs=5: 120 boots of each
+  kind); Chris tries it on Harriet.
+- Still waiting for Chris: the heading font, the lock-order checker.
 
 ### Stage 9a, session 21
 Note 0026's Changes list what building settled.
@@ -59,14 +102,6 @@ Notes 0018, 0022, 0024, 0025 and 0026 have what building settled in their Change
   `[tree]` lines checked (trusted apps against grants that are all `Trusted`), the clipboard
   from Notepad to Terminal, and on two-screen machines the Screens dialog's live mirroring.
   Screenshots: `build/screens/desktop-x86_64-uefi.{notepad,files,terminal}-{1x,2x}.png`.
-
-### Stage 10: what it has to do
-- Note 0026 section 9's stage 10: the whole of section 7's desktop boot (check what is still
-  missing from the table), the review of everything M6 added that hands out, derives, checks
-  or revokes capabilities, README/ROADMAP/DESIGN.md, every M6 note marked built,
-  `2.0.0-alpha.1`, Stress with 120 boots of each kind, Chris tries it on Harriet.
-- Chris's decisions waiting: the session budget (below), the app names (below), the heading
-  font, the lock-order checker.
 
 ### After stage 8 (16 November)
 - Chris ran `m6` on Harriet with `run-prettybigrock.bat` (UEFI and BIOS): the desktop, the
@@ -158,14 +193,9 @@ Note 0025's and 0026's Changes list everything settled.
 - Releases: `fynbos-1.0`, `v1.1`, `v1.2`, `v1.3`. M6 ends with `2.0.0-alpha.1`.
 
 ## Open questions
-- **The session's budget** (64 MiB) no longer holds every app at once: desktop and picker take
-  16, the seven M6 apps 48 more, plus the sandbox manager and the viewer. Five or so apps fit
-  together. Raising it means raising the users service's 224 MiB (two sessions and room to
-  restart one). For Chris (note 0026, Changes).
-- **App names** (17 November): keep the generic names unless Chris strongly approves a
-  change; names must make sense for the app, puns welcome. Approved: **Rock Art** (Paint),
-  **Boomslang** (Snake). Undecided: **Slate** (Notepad). Proposed for stage 10, before
-  `2.0.0-alpha.1` (only manifest titles and the runner's window titles change).
+- **App names**: keep the generic names unless Chris strongly approves a change; names must
+  make sense for the app, puns welcome. Rock Art (Paint) and Boomslang (Snake) done in 10a;
+  Chris kept Notepad (18 November).
 - Terminal: per-cell colour in `lib/terminal`'s grid (1.3's green prompt, coloured `fetch`);
   stopping a running command with Ctrl+C. The display server can't list tablets (the Screens
   dialog offers only those in `screens.txt`).

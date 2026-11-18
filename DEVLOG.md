@@ -1167,3 +1167,28 @@ desktop tests, ending stage 9 with a Stress run.
 
 Results: the x86-64 UEFI and BIOS desktop boots passed under KVM here (all three boots each).
 GitHub's CI and Stress (5 runs) were started on `m6`.
+
+## Session 23: 18 November 2026, M6 stage 10a (section 7's table, and the failures)
+
+Chris asked for stage 10, and agreed to split it: 10a fixes what failed on 17 November and
+finishes the desktop boot's check of everything 1.3 did; 10b, next, reviews every capability
+M6 hands out and releases `2.0.0-alpha.1`.
+
+- **What failed on 17 November**: GitHub's CI on three configurations and all six Stress
+  jobs. Mostly an app launched from the start menu never got the focus: note 0022 gave a new
+  window the focus only within 2 seconds of its launch, and on GitHub's runners (ARM64 above
+  all) apps took longer. Now the window takes the focus if the user has pressed no key or
+  button since the launch, within 30 seconds (note 0022's Changes). The hostile probe's
+  clipboard checks had relied on its window opening too late for the focus; the probe now
+  waits to lose it, and the runner drags the hung window off it. The rest were the runner's:
+  after a rename or a delete it read Files' listing from before.
+- **Section 7's table**: the second boot now compares each screen with the desktop drawn on
+  the host, checks the taskbar's clock, launches Terminal from its desktop icon, finds what
+  the first boot saved, types `£€` and `êñ` on the UK and US international layouts, and
+  minimises a window from its title bar and its taskbar button. Four apps' first windows are
+  compared with their host pictures. Note 0026's Changes have the details.
+- **Names**: Paint is Rock Art and Snake Boomslang; Notepad stays (Chris).
+- **The session's budget**: Chris chose 96 MiB. I first told him budgets were only limits;
+  they are reserved when a service starts, and with the users service at 320 MiB a 1 GiB
+  machine had too little left to start the display server again (the desktop boot's step 3
+  failed). Chris chose 2 GiB machines: the test machines and `run-prettybigrock.bat`.

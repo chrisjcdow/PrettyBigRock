@@ -164,8 +164,10 @@ its test harness, and the widget gallery in the desktop boot) and 8 (the file pi
 `pbr.sysinfo`) are built, and so is stage 9: the apps (9a: Calculator, Snake, Paint and
 About, with `lib/calc`, `lib/snake` and `lib/bmp`; 9b: Notepad, Files with Open with…,
 Terminal on the shell it now shares with the text shell, and the desktop's Screens dialog).
-Stage 10, "done when" (the whole of section 7's check, the capability review, the release
-`2.0.0-alpha.1`), is next. The stages are in note 0026, section 9.
+Stage 10, "done when", is in two parts: 10a (built) finished section 7's check in the
+desktop boot, renamed Paint and Snake (Rock Art and Boomslang) and gave sessions 96 MiB on 2
+GiB machines; 10b, next, is the capability review and the release `2.0.0-alpha.1`. The
+stages are in note 0026, section 9.
 
 ## M7: Real hardware I, Roxy
 - AHCI; USB 2 (EHCI) with keyboard, mouse and storage; Roxy's onboard Ethernet chip.
