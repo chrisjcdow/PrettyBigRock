@@ -1227,6 +1227,7 @@ fn the_wheel_scrolls_across_with_a_sideways_wheel() {
             raw_y: 0,
             buttons: 0,
             serial: 0,
+            time: 0,
         })
     };
     h.move_to(100, 50);
@@ -1503,6 +1504,7 @@ fn the_look_of_a_text_scrolled_across_and_down_with_both_bars() {
             raw_y: 0,
             buttons: 0,
             serial: 0,
+            time: 0,
         }));
         h.check_picture(&format!("text_editor-scrolled-{scale}x"));
     }

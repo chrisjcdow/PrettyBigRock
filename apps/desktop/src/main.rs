@@ -1161,7 +1161,10 @@ impl Desktop {
             return;
         }
         let hit = shortcuts::at(self.apps.len(), self.usable_height(), p.x, p.y);
-        let now = time::now();
+        // When the click happened, not when it is read: after the first click the wallpaper is
+        // drawn again with the icon selected, which can take longer than a double click's
+        // half second on a slow machine.
+        let now = p.time;
         let double = hit.is_some()
             && self.last_click.is_some_and(|(i, t)| Some(i) == hit && now - t < DOUBLE_CLICK);
         self.last_click = hit.map(|i| (i, now));

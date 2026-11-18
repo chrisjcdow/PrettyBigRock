@@ -95,6 +95,7 @@ where
         raw_y: y * 256,
         buttons: 0,
         serial: 0,
+        time: 0,
     }));
 }
 
@@ -151,6 +152,7 @@ fn a_thumb_let_go_outside_the_window_stops_following_the_pointer() {
         raw_y: 100 * 256,
         buttons: 0,
         serial: 0,
+        time: 0,
     }));
     assert_eq!(offsets(&h), dragged);
 }

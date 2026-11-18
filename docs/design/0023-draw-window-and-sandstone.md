@@ -239,6 +239,11 @@ testable without a screen.
 - Drag and drop between widgets and apps.
 
 ## Changes
+- 18 November 2026 (M6 stage 10a): **`PointerEvent::time`** in `lib/window`, when the display
+  server sent the event (it always put it in the ring; the library dropped it). Sandstone's
+  lists and the desktop's icons tell a double click by it instead of by when they read the
+  click: after the first click an app redraws, which on a slow machine (ARM64 emulated) can
+  take longer than the half second a double click allows.
 - 16 November 2026 (M6 stage 9a): what the apps needed of sandstone. **`Button::colour`**: a
   button of one flat colour with a white bold label, as 1.3's calculator keys. **`Canvas`** (in
   `widget/terminal.rs` since stage 7) gains `label`, what `describe` calls it; Snake, Paint and

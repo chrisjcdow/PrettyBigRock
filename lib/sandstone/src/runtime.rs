@@ -589,7 +589,9 @@ impl<A: App> Runtime<A> {
             }
             pbr_window::PointerKind::Button { button, pressed: true } => {
                 let button = Button::from_code(button);
-                let now = p.now();
+                // When the press happened, not when it is read: an app still drawing after the
+                // first click may read the second long after it came.
+                let now = e.time;
                 let w = &mut self.windows[i];
                 let clicks = match w.last_press {
                     Some((t, last, b, n))

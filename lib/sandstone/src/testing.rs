@@ -798,6 +798,7 @@ where
             raw_y: y * 256,
             buttons: self.buttons,
             serial,
+            time: self.display.now,
         };
         self.send(Incoming::Pointer(ev));
     }

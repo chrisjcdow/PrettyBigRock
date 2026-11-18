@@ -90,6 +90,9 @@ pub struct PointerEvent {
     pub buttons: u32,
     /// Button events only: quote it to start a move or a resize, or to paste.
     pub serial: u32,
+    /// When the display server sent it (monotonic nanoseconds). An app busy drawing may read
+    /// two clicks long after they came; this tells it how far apart they really were.
+    pub time: u64,
 }
 
 /// Something that happened, for the app.
@@ -210,6 +213,9 @@ pub fn decode(b: &[u8; 32]) -> Option<Incoming> {
     let window = Win(u32_at(b, 4));
     let serial = u32_at(b, 8);
     let (a, bb, c) = (u32_at(b, 12), u32_at(b, 16), u32_at(b, 20));
+    let mut at = [0u8; 8];
+    at.copy_from_slice(&b[24..32]);
+    let time = u64::from_le_bytes(at);
     let pointer = |what, raw_x: i32, raw_y: i32, buttons, serial| {
         Incoming::App(Event::Pointer(PointerEvent {
             window,
@@ -220,6 +226,7 @@ pub fn decode(b: &[u8; 32]) -> Option<Incoming> {
             raw_y,
             buttons,
             serial,
+            time,
         }))
     };
     Some(match u32::from(kind) {
