@@ -17,6 +17,8 @@ pbr-elf = { path = "../lib/elf", features = ["alloc"] }
 pbr-testpng = { path = "../lib/testpng" }
 pbr-bmp = { path = "../lib/bmp" }
 pbr-crc = { path = "../lib/crc" }
+pbr-desktop = { path = "../lib/desktop" }
+pbr-draw = { path = "../lib/draw" }
 
 [dev-dependencies]
 pbr-partition = { path = "../lib/partition" }

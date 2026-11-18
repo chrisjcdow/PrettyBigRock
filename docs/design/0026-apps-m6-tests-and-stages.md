@@ -245,6 +245,20 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 18 November 2026 (M6 stage 10a): **the rest of section 7's table in the desktop boot.** The
+  second boot, after the root program's test, compares each screen of the desktop just started
+  with the desktop drawn on the host by `lib/desktop` (the wallpaper, the icons and the
+  taskbar; the clock left out), checks the taskbar's clock against the host's, launches
+  Terminal with a double click on its icon, finds what the first boot saved (`ls`), types `£€`
+  on the UK layout and `êñ` on US international after `set layout`, and minimises Terminal
+  from its title bar and from its taskbar button and brings it back. The desktop writes where
+  its icons and taskbar buttons are, and the clock, for the runner. **Windows compared with
+  pictures**: Calculator, Notepad and Terminal at 1x and 2x and Paint at 1x are compared with
+  their host tests' pictures; Snake's food, About's facts, the dates in Files and the picker,
+  and Paint at 2x (wider than the small second screen) differ from boot to boot, so those are
+  kept for people to look at. **Names** (Chris): Paint's title is **Rock Art** and Snake's
+  **Boomslang**; their programs, folders and manifest files keep the old names, and Notepad
+  stays Notepad.
 - 17 November 2026 (stage 9b): **Notepad, Files and Terminal** built, each by a Sonnet
   subagent to a brief and reviewed, with the Screens dialog (note 0024, Changes). What building
   settled:

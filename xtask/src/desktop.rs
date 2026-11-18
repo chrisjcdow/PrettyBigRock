@@ -407,6 +407,17 @@ pub fn last_program_view(text: &str, program: &str) -> Option<GalleryView> {
     Some(view)
 }
 
+/// Reads the desktop's line for an app's icon, `[desktop] desktop: icon APP "TITLE" ICON at
+/// X,Y`: (the app, its title, its icon, the middle of the icon in the space).
+fn icon_line(l: &str) -> Option<(String, String, pbr_desktop::icons::Icon, (i32, i32))> {
+    let rest = l.split_once("desktop: icon ")?.1;
+    let (app, rest) = rest.split_once(" \"")?;
+    let (title, rest) = rest.split_once("\" ")?;
+    let (icon, at) = rest.split_once(" at ")?;
+    let icon = pbr_desktop::icons::Icon::from_name(icon);
+    Some((app.to_string(), title.to_string(), icon, pair(at.trim(), ',')?))
+}
+
 /// A running desktop boot.
 struct Run<'a> {
     cfg: &'a Config,
@@ -850,6 +861,7 @@ impl Run<'_> {
         self.desktop_ready(1)?;
         self.line("Desktop test: after restarting")?;
         self.line("Desktop test passed")?;
+        self.after_restarting()?;
         // Shut down asks first (note 0024, Changes); Escape says no, and nothing happens.
         self.choose_from_start_menu("Shut down", 1)?;
         self.line("desktop: asking: Shut down?")?;
@@ -898,6 +910,272 @@ impl Run<'_> {
         self.click_ending(q.x + bx, q.y + by)?;
         self.line("users: chris asked to turn the computer off")?;
         self.stopped("guest-shutdown")
+    }
+
+    /// What the second boot checks of note 0026 section 7's table before shutting down, with
+    /// the root program's test done: the desktop as drawn on the host, the taskbar's clock,
+    /// an app launched from its icon, what the first boot saved, keyboard layouts, and
+    /// minimising from the title bar and the taskbar.
+    fn after_restarting(&mut self) -> Result<(), String> {
+        self.desktop_pictures()?;
+        self.clock()?;
+        // Terminal, from its icon on the desktop.
+        let w = self.icon_launch("terminal", "Terminal")?;
+        self.line("terminal: [console:read] ")?;
+        // What the first boot saved through Notepad and Paint is still there.
+        for (line, shows) in [
+            ("ls Documents", "terminal: [console] rock notes.txt"),
+            ("ls Pictures", "terminal: [console] Drawing 1.bmp"),
+        ] {
+            self.terminal_line(line)?;
+            self.line(shows)?;
+        }
+        self.layouts()?;
+        self.minimise(&w)?;
+        self.close_app("Terminal", "terminal")
+    }
+
+    /// Compares each screen of the desktop just started, with no windows open, with the
+    /// desktop drawn on the host by the desktop's own drawing code (`lib/desktop`): the
+    /// wallpaper, on the main screen the icons and the taskbar. The clock is left out (and the
+    /// pointer is put on it).
+    fn desktop_pictures(&mut self) -> Result<(), String> {
+        let v = self.view("only the desktop's windows", |v| {
+            !v.windows.is_empty() && v.windows.iter().all(|w| w.title.starts_with("Desktop"))
+        })?;
+        let shown: Vec<ScreenLine> = v.screens.iter().filter(|s| s.mirrors == 0).cloned().collect();
+        let bar = v.window("Desktop \u{2014} Taskbar").cloned().ok_or("no taskbar")?;
+        let main =
+            shown.iter().find(|s| s.number == bar.screen).cloned().ok_or("no main screen")?;
+        let height = main.height - pbr_desktop::taskbar::HEIGHT;
+        let empty = pbr_desktop::taskbar::Taskbar {
+            width: main.width,
+            start_open: false,
+            buttons: &[],
+            time: "",
+            date: "",
+        };
+        let c = empty.clock_rect();
+        let clock = pbr_draw::Rect::new(c.x, height + c.y, c.width, c.height);
+        self.move_to(main.x + clock.x + clock.width / 2, main.y + clock.y + clock.height / 2)?;
+        // The icons, in the desktop's order: the last of its `icon` lines, one per app.
+        let text = self.text();
+        let apps: usize = text
+            .lines()
+            .rev()
+            .find_map(|l| l.split_once("desktop: ready, ").and_then(|(_, r)| r.split_once(' ')))
+            .and_then(|(n, _)| num(n))
+            .ok_or("the desktop didn't say how many apps")?;
+        let mut icons: Vec<(pbr_desktop::icons::Icon, String)> = text
+            .lines()
+            .rev()
+            .filter_map(|l| icon_line(l).map(|(_, title, icon, _)| (icon, title)))
+            .take(apps)
+            .collect();
+        icons.reverse();
+        for s in &shown {
+            let f = (s.scale / 100).max(1);
+            let (pw, ph) = (s.width as u32 * f, s.height as u32 * f);
+            let mut want = vec![0u32; (pw * ph) as usize];
+            pbr_desktop::wallpaper::draw(&mut want, pw, ph, pw, f);
+            let mut skip = None;
+            if s.number == main.number {
+                let mut canvas = pbr_draw::Canvas::new(&mut want, pw, ph, pw)
+                    .ok_or("no canvas")?
+                    .with_scale(f);
+                let list: Vec<pbr_desktop::shortcuts::Shortcut<'_>> = icons
+                    .iter()
+                    .map(|(icon, label)| pbr_desktop::shortcuts::Shortcut { icon: *icon, label })
+                    .collect();
+                pbr_desktop::shortcuts::draw(&mut canvas, &list, None, height);
+                let r = pbr_draw::Rect::new(0, height, s.width, pbr_desktop::taskbar::HEIGHT);
+                empty.draw(&mut canvas.sub(r));
+                skip = Some(clock);
+            }
+            self.compare_screen(&v, s, &want, skip, &format!("desktop-{}", s.number))?;
+        }
+        Ok(())
+    }
+
+    /// Compares what screen `s` shows with `want` (its pixels, `0xRRGGBB`, the spare byte
+    /// ignored), but for the rectangle `skip` (in logical pixels, from the screen's corner),
+    /// trying again for a while: the desktop draws its wallpapers when it has nothing else to
+    /// do. The screenshot is kept beside the log as `NAME.png` either way.
+    fn compare_screen(
+        &mut self,
+        v: &View,
+        s: &ScreenLine,
+        want: &[u32],
+        skip: Option<pbr_draw::Rect>,
+        name: &str,
+    ) -> Result<(), String> {
+        let (device, head) = self.qemu_screen(v, s.number)?;
+        let f = (s.scale / 100).max(1) as i32;
+        let shot_file = self.log.with_extension(format!("{name}.ppm"));
+        let kept = self.log.with_extension(format!("{name}.png"));
+        let skipped = |x: i32, y: i32| {
+            skip.is_some_and(|r| {
+                x >= r.x * f && x < (r.x + r.width) * f && y >= r.y * f && y < (r.y + r.height) * f
+            })
+        };
+        let end = Instant::now() + PICTURE;
+        loop {
+            let _ = fs::remove_file(&shot_file);
+            self.qmp.screendump(device, head, &shot_file)?;
+            let bytes =
+                fs::read(&shot_file).map_err(|e| format!("{}: {e}", shot_file.display()))?;
+            let _ = fs::remove_file(&shot_file);
+            let shot = pictures::read_ppm(&bytes)?;
+            if shot.pixels.len() != want.len() {
+                return Err(format!(
+                    "screen {} is {}x{} pixels, not {}x{}",
+                    s.number,
+                    shot.width,
+                    shot.height,
+                    s.width * f,
+                    s.height * f
+                ));
+            }
+            let w = shot.width as i32;
+            let differ = shot.pixels.iter().zip(want).enumerate().find_map(|(i, (p, r))| {
+                let (x, y) = (i as i32 % w, i as i32 / w);
+                ((p & 0xFF_FFFF) != (r & 0xFF_FFFF) && !skipped(x, y)).then_some((x, y, *p, *r))
+            });
+            let png = pbr_testpng::Picture {
+                width: shot.width,
+                height: shot.height,
+                pixels: shot.pixels.iter().map(|p| p | 0xFF00_0000).collect(),
+            };
+            if let Ok(png) = pbr_testpng::encode(&png) {
+                let _ = fs::write(&kept, png);
+            }
+            match differ {
+                None => return Ok(()),
+                Some((x, y, p, r)) if Instant::now() > end => {
+                    return Err(format!(
+                        "screen {} differs from the desktop drawn on the host at {x},{y}: \
+                         {:06x}, not {:06x} (the screenshot is kept: {})",
+                        s.number,
+                        p & 0xFF_FFFF,
+                        r & 0xFF_FFFF,
+                        kept.display()
+                    ));
+                }
+                Some(_) => std::thread::sleep(Duration::from_millis(500)),
+            }
+        }
+    }
+
+    /// The taskbar's clock shows the time and date: the guest's clock is the host's (QEMU
+    /// starts it from the host's, in UTC), and the test user's time zone is +00:00.
+    fn clock(&mut self) -> Result<(), String> {
+        let text = self.line("desktop: clock ")?;
+        let shown = text
+            .lines()
+            .rev()
+            .find_map(|l| l.split_once("desktop: clock ").map(|(_, r)| r.trim().to_string()))
+            .ok_or("no clock")?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs();
+        // It was drawn up to a few minutes ago (the clock line is written when it changes).
+        let fits = (0..=5u64).any(|m| {
+            let (time, date) = pbr_desktop::clock::local(now.saturating_sub(m * 60), 0);
+            format!("{time} {date}") == shown
+        });
+        if !fits {
+            let (time, date) = pbr_desktop::clock::local(now, 0);
+            return Err(format!("the taskbar's clock shows {shown}, at {time} {date}"));
+        }
+        Ok(())
+    }
+
+    /// Launches `app` with a double click on its desktop icon, and waits for its window,
+    /// titled `title`, drawn and with the focus.
+    fn icon_launch(&mut self, app: &str, title: &str) -> Result<WindowLine, String> {
+        let text = self.line(&format!("desktop: icon {app} "))?;
+        let (x, y) = text
+            .lines()
+            .rev()
+            .filter_map(icon_line)
+            .find(|(a, ..)| a == app)
+            .map(|(.., at)| at)
+            .ok_or(format!("no icon for {app}"))?;
+        self.move_to(x, y)?;
+        // The two clicks quickly (the desktop's double click is within half a second).
+        for down in [true, false, true, false] {
+            let b = format!(r#"{{"type":"btn","data":{{"button":"left","down":{down}}}}}"#);
+            self.qmp.send(true, &[b])?;
+            std::thread::sleep(Duration::from_millis(60));
+        }
+        self.line(&format!("desktop: launched {app} as app "))?;
+        let v = self.view(&format!("{title} drawn and focused"), |v| {
+            v.window(title).is_some_and(|w| w.is("drawn") && w.is("focused"))
+        })?;
+        v.window(title).cloned().ok_or(format!("no {title}"))
+    }
+
+    /// Keyboard layouts (note 0021), changed in Terminal with `set layout`: on the UK layout
+    /// Shift+3 types £ and AltGr+4 €; on US international a circumflex then e types ê, and
+    /// AltGr+n ñ. The keys are pressed by name (QEMU's), whatever they type.
+    fn layouts(&mut self) -> Result<(), String> {
+        let tries: [(&str, &[&[&str]], &str); 2] = [
+            ("gb", &[&["shift", "3"], &["alt_r", "4"]], "\u{a3}\u{20ac}"),
+            ("us-intl", &[&["shift", "6"], &["e"], &["alt_r", "n"]], "\u{ea}\u{f1}"),
+        ];
+        for (layout, keys, shows) in tries {
+            self.terminal_line(&format!("set layout {layout}"))?;
+            self.wait("Terminal's prompt", |t| {
+                t.lines()
+                    .rev()
+                    .find(|l| l.contains("terminal: [console"))
+                    .is_some_and(|l| l.contains("terminal: [console:read] "))
+            })?;
+            self.type_typed("echo ")?;
+            for k in keys {
+                self.chord(k)?;
+            }
+            self.chord(&["ret"])?;
+            self.line(&format!("terminal: [console] {shows}"))?;
+        }
+        self.terminal_line("set layout us")
+    }
+
+    /// Minimises window `w` with its title bar's button and brings it back from the taskbar,
+    /// then minimises and restores it with its taskbar button alone.
+    fn minimise(&mut self, w: &WindowLine) -> Result<(), String> {
+        let title = w.title.clone();
+        let is = |state: &'static str| {
+            let title = title.clone();
+            move |v: &View| v.window(&title).is_some_and(|w| w.is(state))
+        };
+        // The minimise button: third from the right of the frame (`lib/compositor`'s
+        // `decor.rs`: 22 apart, 16 across, 5 down from the frame's top).
+        let v = self.view("the window", |v| v.window(&title).is_some())?;
+        let w = v.window(&title).cloned().ok_or("no window")?;
+        self.click_at(w.x + w.width + 1 - 3 * 22 + 8, w.y - 27 + 5 + 8)?;
+        self.view(&format!("{title} minimised"), is("minimised"))?;
+        self.taskbar_click(&title)?;
+        self.view(&format!("{title} back"), is("focused"))?;
+        self.taskbar_click(&title)?;
+        self.view(&format!("{title} minimised from the taskbar"), is("minimised"))?;
+        self.taskbar_click(&title)?;
+        self.view(&format!("{title} back again"), is("focused")).map(|_| ())
+    }
+
+    /// Clicks the taskbar button of the window titled `title`, where the desktop last said it
+    /// was.
+    fn taskbar_click(&mut self, title: &str) -> Result<(), String> {
+        let want = format!("desktop: taskbar \"{title}\" at ");
+        let text = self.line(&want)?;
+        let at = text
+            .lines()
+            .rev()
+            .find_map(|l| l.split_once(want.as_str()).map(|(_, r)| r))
+            .and_then(|r| pair(r.split_whitespace().next()?, ','))
+            .ok_or(format!("no taskbar button for {title}"))?;
+        self.click_at(at.0, at.1)
     }
 
     /// Clicks at (`x`, `y`) where the click turns the machine off: QEMU may stop before the
@@ -972,16 +1250,17 @@ impl Run<'_> {
         Ok(())
     }
 
-    /// Compares what the screen shows of window `w` with the reference picture `name`
-    /// (`tests/pictures/sandstone/NAME.png`, drawn on the host by the gallery's own tests),
-    /// pixel for pixel, over the part of the window that is on its screen. The screenshot is
-    /// kept beside the log as a PNG either way, for people to look at.
-    fn compare_window(&mut self, v: &View, w: &WindowLine, name: &str) -> Result<(), String> {
+    /// Compares what the screen shows of window `w` with the reference picture `picture`
+    /// (`tests/pictures/PICTURE.png`, drawn on the host by the tests of the gallery or the
+    /// app), pixel for pixel, over the part of the window that is on its screen. The
+    /// screenshot is kept beside the log as a PNG either way, for people to look at.
+    fn compare_window(&mut self, v: &View, w: &WindowLine, picture: &str) -> Result<(), String> {
+        let name = picture.rsplit('/').next().unwrap_or(picture);
         let s = v.screen(w.screen).cloned().ok_or(format!("no screen holds {}", w.title))?;
         let (device, head) = self.qemu_screen(v, s.number)?;
         let f = (s.scale / 100).max(1) as i32;
         let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("../tests/pictures/sandstone/{name}.png"));
+            .join(format!("../tests/pictures/{picture}.png"));
         let want =
             pbr_testpng::decode(&fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?)?;
         let shot_file = self.log.with_extension(format!("{name}.ppm"));
@@ -1027,8 +1306,9 @@ impl Run<'_> {
                 None => return Ok(()),
                 Some((x, y, p, r)) if Instant::now() > end => {
                     return Err(format!(
-                        "the gallery on screen differs from {name}.png at {x},{y}: {:06x}, not {:06x} \
+                        "{} on screen differs from {picture}.png at {x},{y}: {:06x}, not {:06x} \
                          (the screenshot is kept: {})",
+                        w.title,
                         p & 0xFF_FFFF,
                         r & 0xFF_FFFF,
                         kept.display()
@@ -1470,7 +1750,7 @@ impl Run<'_> {
         self.view("the gallery focused", |v| v.window("Gallery").is_some_and(|w| w.is("focused")))?;
         self.move_to(first.x + first.width - 8, first.y + 8)?;
         let v = self.view("the gallery", |v| v.window("Gallery").is_some())?;
-        self.compare_window(&v, &g, "gallery-1x")?;
+        self.compare_window(&v, &g, "sandstone/gallery-1x")?;
 
         // On the 2x screen: dragged by its title bar, it is told the new scale and draws itself
         // twice as fine.
@@ -1487,7 +1767,7 @@ impl Run<'_> {
                 v.window("Gallery").is_some_and(|w| w.scale == 200 && w.screen == second.number)
             })?;
             let g2 = v.window("Gallery").cloned().ok_or("no Gallery")?;
-            self.compare_window(&v, &g2, "gallery-2x")?;
+            self.compare_window(&v, &g2, "sandstone/gallery-2x")?;
             // And back where it was.
             self.move_to(g2.x + 60, g2.y - 13)?;
             self.button(true)?;
@@ -2003,9 +2283,25 @@ impl Run<'_> {
         name: &str,
         first: &ScreenLine,
     ) -> Result<(), String> {
+        // Calculator, Notepad, Paint and Terminal open the same every time, and are compared
+        // with the pictures their host tests draw (Paint only at 1x: at 2x it is wider than
+        // the small second screen). Snake's food, About's facts and Files' dates differ from
+        // boot to boot, so theirs are only kept, for people to look at.
+        let same = |scale: &str| {
+            ["calculator", "notepad", "terminal"].contains(&name)
+                || (name == "paint" && scale == "1x")
+        };
+        let picture = |run: &mut Self, v: &View, w: &WindowLine, scale: &str| {
+            let shot = format!("{name}-{scale}");
+            if same(scale) {
+                run.compare_window(v, w, &format!("{name}/{shot}"))
+            } else {
+                run.keep_window(v, w, &shot)
+            }
+        };
         self.move_to(first.x + first.width - 8, first.y + 8)?;
         let v = self.view(title, |v| v.window(title).is_some())?;
-        self.keep_window(&v, w, &format!("{name}-1x"))?;
+        picture(self, &v, w, "1x")?;
         if self.cfg.screens == Screens::TwoVirtioGpu {
             let second = v.screens.iter().find(|s| s.number != 1).cloned().ok_or("no screen 2")?;
             self.drag_window(w, second.x + 20, second.y + 40)?;
@@ -2014,7 +2310,7 @@ impl Run<'_> {
                 v.window(title).is_some_and(|p| p.scale == 200 && p.screen == second.number)
             })?;
             let w2 = v.window(title).cloned().ok_or(format!("no {title}"))?;
-            self.keep_window(&v, &w2, &format!("{name}-2x"))?;
+            picture(self, &v, &w2, "2x")?;
             self.drag_window(&w2, w.x, w.y)?;
             self.view(&format!("{title} back"), |v| {
                 v.window(title).is_some_and(|p| p.scale == 100 && p.is("focused"))
@@ -2594,6 +2890,16 @@ impl Run<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reading_the_desktops_icon_lines() {
+        let l = "[desktop] desktop: icon paint \"Rock Art\" paint at 58,382";
+        let (app, title, icon, at) = icon_line(l).unwrap();
+        assert_eq!((app.as_str(), title.as_str(), at), ("paint", "Rock Art", (58, 382)));
+        assert_eq!(icon, pbr_desktop::icons::Icon::Paint);
+        assert!(icon_line("[desktop] desktop: icon paint at 58,382").is_none());
+        assert!(icon_line("[desktop] desktop: ready, 7 apps, 2 screens.").is_none());
+    }
 
     #[test]
     fn reading_snakes_game_and_steering() {

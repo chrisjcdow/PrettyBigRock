@@ -152,6 +152,8 @@ struct Desktop {
     /// The selected icon, and the last click on one: (which, when).
     selected: Option<usize>,
     last_click: Option<(usize, u64)>,
+    /// What the taskbar's clock last showed, as written to the log.
+    clock_said: String,
 }
 
 impl Arranging {
@@ -236,11 +238,13 @@ fn main(mut start: granite::Start) -> i32 {
         icons: Vec::new(),
         selected: None,
         last_click: None,
+        clock_said: String::new(),
     };
     d.who();
     d.find_apps();
     d.arrange();
     d.make_windows();
+    d.say_icons();
     d.tick();
     say!("ready, {} apps, {} screens.", d.apps.len(), d.screens.len());
     let mut code = 0;
@@ -491,6 +495,12 @@ impl Desktop {
     fn draw_panel(&mut self) {
         let Some((_, win)) = self.panel else { return };
         let (time, date) = clock::local(time::wall_seconds(), self.timezone);
+        // For the desktop boot's runner, which checks the clock shows the time.
+        let said = format!("{time} {date}");
+        if said != self.clock_said {
+            say!("clock {said}");
+            self.clock_said = said;
+        }
         let width = self.taskbar_width();
         let start_open = self.menu.is_some();
         let made = self.buttons();
@@ -980,6 +990,52 @@ impl Desktop {
                 .collect();
         }
         self.draw_panel();
+        self.say_taskbar();
+    }
+
+    /// Writes where each taskbar button is to the log, for the desktop boot's runner: the
+    /// middle of each, in the space, with the window's title and state.
+    fn say_taskbar(&self) {
+        let Some((screen, _)) = self.panel else { return };
+        let Some(s) = self.screens.iter().find(|s| s.screen == screen) else { return };
+        let buttons: Vec<TaskButton<'_>> = self
+            .windows
+            .iter()
+            .map(|w| TaskButton {
+                icon: Icon::App,
+                title: &w.title,
+                focused: w.focused,
+                minimised: w.minimised,
+                attention: w.attention,
+                not_responding: w.not_responding,
+            })
+            .collect();
+        let width = s.size.width as i32;
+        let bar = Taskbar { width, start_open: false, buttons: &buttons, time: "", date: "" };
+        let top = s.y + s.size.height as i32 - taskbar::HEIGHT;
+        for (i, b) in buttons.iter().enumerate() {
+            let Some(r) = bar.button_rect(i) else { continue };
+            let state = match (b.minimised, b.focused) {
+                (true, _) => " minimised",
+                (false, true) => " focused",
+                _ => "",
+            };
+            let (x, y) = (s.x + r.x + r.width / 2, top + r.y + r.height / 2);
+            say!("taskbar \"{}\" at {x},{y}{state}", b.title);
+        }
+    }
+
+    /// Writes where each app's icon is to the log, for the desktop boot's runner: the app, its
+    /// title and icon (so the runner can draw the desktop too), and the middle of the icon, in
+    /// the space.
+    fn say_icons(&self) {
+        let Some(main) = self.main_screen() else { return };
+        let height = self.usable_height();
+        for (i, a) in self.apps.iter().enumerate() {
+            let c = shortcuts::cell(i, height);
+            let (x, y) = (main.x + c.x + c.width / 2, main.y + c.y + c.height / 2);
+            say!("icon {} \"{}\" {} at {x},{y}", a.app, a.title, a.icon);
+        }
     }
 
     /// A choice from a window's menu, which the display server leaves to the desktop.
@@ -1154,6 +1210,7 @@ impl Desktop {
                 self.close_wall_menu();
                 self.arrange();
                 self.make_windows();
+                self.say_icons();
                 // Sizes may have changed: everything is drawn again as it is configured.
             }
             Event::Timer(CLOCK) => self.tick(),
