@@ -980,9 +980,8 @@ impl Run<'_> {
             pbr_desktop::wallpaper::draw(&mut want, pw, ph, pw, f);
             let mut skip = None;
             if s.number == main.number {
-                let mut canvas = pbr_draw::Canvas::new(&mut want, pw, ph, pw)
-                    .ok_or("no canvas")?
-                    .with_scale(f);
+                let mut canvas =
+                    pbr_draw::Canvas::new(&mut want, pw, ph, pw).ok_or("no canvas")?.with_scale(f);
                 let list: Vec<pbr_desktop::shortcuts::Shortcut<'_>> = icons
                     .iter()
                     .map(|(icon, label)| pbr_desktop::shortcuts::Shortcut { icon: *icon, label })
