@@ -1232,3 +1232,28 @@ could do with what it holds. What was checked is in the Changes of notes 0019, 0
 
 Results: `cargo xtask check` passed; under KVM here the x86-64 UEFI self-test and desktop
 boots passed. The other configurations are left to GitHub's CI.
+
+### After the review: Chris's decisions
+
+Chris asked what I'd do about the four questions and agreed to the recommendations. Each is
+its own commit with a self-test:
+
+1. **Chosen files come from the session's tree.** For `grant` (the picker) and for `choose`
+   from a trusted caller, the capability passed is only checked: its server must answer as a
+   filesystem does, with the rights asked. The kept capability is then opened by path in the
+   sandbox manager's own tree, with a chosen file's share, and must be the same kind (folder
+   or not). The desktop holds no files, so its `choose` still derives from what it passes.
+   The picker test grants through a share of 2 records, which only works now (a grant's
+   share of 4096 can't be set inside it). Note 0025, section 1, changed.
+2. **`prepare` refuses `desktop` and `picker`** from every caller. The kinds test tries both.
+3. **4 checks per caller, 16 in all.** The never-answers test now has one caller hold four
+   silent checks from four threads. A fifth is refused at once, and another caller's
+   `choose` is answered meanwhile. Note 0024, section 9.
+4. **`pbr.sysinfo` per session.** The badge is the session's with bit 41. `volumes` filters
+   to the system volume for a standard user. `pbr.users.debug.sysinfo` takes a user's name;
+   the test sees chris shown every volume and alice one. The users service waiting during a
+   `check` is an open question in note 0026.
+
+Results: `cargo xtask check` passed; under KVM here the x86-64 UEFI self-test and desktop
+boots passed (the picker, sandbox and sysinfo self-tests are in the first). The other
+configurations are left to GitHub's CI.

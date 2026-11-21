@@ -47,14 +47,16 @@ Changes (0019, 0021, 0022, 0024, 0025, 0026, dated 21 November).
   (and the app's watched badge) in the sandbox manager's table; an app started but not
   recorded (a failed `watch` or copy for the caller) is stopped instead of left running out of
   reach of `stop` and `revoke`; a covered `grant` is refused if the app ended meanwhile.
-- **For Chris to decide**: (1) chosen files are derived from the chooser's capability (the
-  picker's, Files'), so taking back the picker's or Files' trusted grant silently takes back
-  every file chosen through it, and records opened through a chosen folder count against the
-  chooser's share (note 0025's Changes); (2) the desktop and trusted apps can launch `desktop`
-  and `picker`, which the sandbox manager keeps running itself (harmless, but could be
-  refused); (3) the 16 chosen-capability checks at once are shared, not per caller; (4)
-  `pbr.sysinfo`'s `volumes` shows every volume to a standard user's apps, and the users
-  service answers nothing while a `check` runs.
+- **Decided by Chris, and done** (one commit each, each with a self-test): (1) what the
+  picker grants, or a trusted caller such as Files chooses, is opened by path in the sandbox
+  manager's session tree. It is no longer derived from the chooser's capability, so taking
+  back the picker's or Files' grant leaves apps' files alone, and their records count only
+  against their own share. The desktop's `choose` is unchanged (note 0025, section 1). (2)
+  Nobody may launch `desktop` or `picker` (`NotAllowed`). (3) Chosen-capability checks are
+  limited to 4 per caller and 16 in all, as launches are (note 0024, section 9). (4)
+  `pbr.sysinfo` has a badge per session: an administrator's apps see every volume, a
+  standard user's only the system volume (note 0026, section 3). The users service waiting
+  during a `check` is an open question in note 0026, for M7.
 - Nothing wrong found in the kernel's 1.3 calls, the power service, the supervisor's table and
   `memory`, the input service, the display server's clients, `lib/fsserve`'s limits,
   `lib/manifest`, the users service's badges, or the picker, viewer and desktop apps.
