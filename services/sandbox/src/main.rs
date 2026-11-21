@@ -202,9 +202,11 @@ const TERMINAL_CHECK_MS: u64 = 5_000;
 const DISPLAY_MS: u64 = 10_000;
 
 /// How many launches can be prepared at once by one caller and in all, how many chosen
-/// capabilities can be being checked at once, and how many apps can run.
+/// capabilities can be being checked at once for one caller and in all, and how many apps can
+/// run.
 const MAX_LAUNCHES_EACH: usize = 4;
 const MAX_LAUNCHES: usize = 16;
+const MAX_CHECKING_EACH: usize = 4;
 const MAX_CHECKING: usize = 16;
 const MAX_APPS: usize = 32;
 /// The most a program can be given as arguments (note 0009).
@@ -299,6 +301,8 @@ struct Running {
 /// running app.
 struct Checking {
     job: u32,
+    /// Who asked (their badge), for [`MAX_CHECKING_EACH`].
+    caller: u64,
     path: String,
     to: CheckFor,
     thread: Option<JoinHandle>,
@@ -795,7 +799,7 @@ impl Sandbox {
             if pbr_filetree::normalize("/", &path).as_deref() != Ok(path.as_str()) || path == "/" {
                 return Err(SandboxError::BadPath);
             }
-            if self.checking.len() >= MAX_CHECKING {
+            if !self.room_to_check(caller) {
                 return Err(SandboxError::TooMany);
             }
             Ok(())
@@ -805,14 +809,24 @@ impl Sandbox {
         }
         // (The desktop holds no files: what it passes is the only thing to derive from.)
         let derive = badge::kind(caller) != badge::TRUSTED;
-        self.check(path, CheckFor::Choose { caller, launch: id, reply }, move || {
+        self.check(caller, path, CheckFor::Choose { caller, launch: id, reply }, move || {
             check_chosen(node, None, derive)
         });
     }
 
-    /// Runs `work` on a helper thread; when it signals, [`Sandbox::finish_checks`] answers.
+    /// Whether `caller` may have one more capability checked: a few for each caller, and not
+    /// many in all, as for launches, so that one caller passing capabilities whose servers
+    /// never answer can't keep the others (the picker's grants among them) waiting.
+    fn room_to_check(&self, caller: u64) -> bool {
+        let theirs = self.checking.iter().filter(|c| c.caller == caller).count();
+        theirs < MAX_CHECKING_EACH && self.checking.len() < MAX_CHECKING
+    }
+
+    /// Runs `work` on a helper thread for `caller`; when it signals, [`Sandbox::finish_checks`]
+    /// answers.
     fn check(
         &mut self,
+        caller: u64,
         path: String,
         to: CheckFor,
         work: impl FnOnce() -> Option<(bool, u32, Option<Handle>)> + Send + 'static,
@@ -832,7 +846,7 @@ impl Sandbox {
             let _ = signals.signal(CHECKED);
         });
         match thread {
-            Ok(t) => self.checking.push(Checking { job, path, to, thread: Some(t) }),
+            Ok(t) => self.checking.push(Checking { job, caller, path, to, thread: Some(t) }),
             Err(e) => {
                 granite::println!("sandbox ({}): a helper thread: {e}", self.user);
                 to.fail(SandboxError::NoMemory);
@@ -891,6 +905,7 @@ impl Sandbox {
     /// be asked), and answered by [`Sandbox::finish_checks`].
     fn grant(
         &mut self,
+        caller: u64,
         id: u32,
         path: String,
         node: Endpoint,
@@ -906,7 +921,7 @@ impl Sandbox {
             if rights & !rw != 0 || rights & FsRights::READ.0 == 0 {
                 return Err(SandboxError::BadCapability);
             }
-            if self.checking.len() >= MAX_CHECKING {
+            if !self.room_to_check(caller) {
                 return Err(SandboxError::TooMany);
             }
             let app = self.app(id)?;
@@ -953,12 +968,12 @@ impl Sandbox {
             }
             Ok(Some((held, rest))) => {
                 let to = CheckFor::Grant { app: id, covered: true, reply };
-                self.check(path, to, move || open_through(held, &rest, rights));
+                self.check(caller, path, to, move || open_through(held, &rest, rights));
             }
             Ok(None) => {
                 // (Only the picker may grant, and it reaches the session's whole tree.)
                 let to = CheckFor::Grant { app: id, covered: false, reply };
-                self.check(path, to, move || check_chosen(node, Some(rights), false));
+                self.check(caller, path, to, move || check_chosen(node, Some(rights), false));
             }
         }
     }
@@ -1673,7 +1688,7 @@ impl sandbox::Server for Sandbox {
         if !may(reply.badge(), op::GRANT) {
             return answered(reply.err(SandboxError::NotAllowed));
         }
-        Sandbox::grant(self, app, path, node, rights.0, reply);
+        Sandbox::grant(self, reply.badge(), app, path, node, rights.0, reply);
     }
 
     fn apps(&mut self, reply: sandbox::apps::Reply) {

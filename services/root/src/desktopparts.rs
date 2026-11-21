@@ -194,42 +194,75 @@ fn limits(u: &Users) -> Result<(), String> {
 
 /// A chosen capability whose server never answers holds up only that `choose`: the sandbox
 /// manager asks it on a helper thread, with a 2-second limit, and answers `list` meanwhile.
+/// One caller can have four checked at once: a fifth is refused at once, and another caller's
+/// `choose` isn't held up.
 fn never_answers(u: &Users) -> Result<(), String> {
     let a = sandbox_as(u, SandboxKind::Trusted)?;
     let b = sandbox_as(u, SandboxKind::Trusted)?;
     // An endpoint this program never receives on: calls to it wait for ever.
     let silent = Endpoint::create().map_err(|e| format!("{e}"))?;
-    let chosen = silent.mint(1, CLIENT).map_err(|e| format!("{e}"))?;
     let id = a.prepare("wintest", "").map_err(|e| format!("preparing: {e}"))?;
     let started = time::now();
-    // (A thread's closure returns nothing: the result comes back through a shared slot. `Arc`
+    // (A thread's closure returns nothing: the results come back through a shared list. `Arc`
     // is a shared, counted pointer, and `Lock` lets one thread at a time at what it holds.)
-    let slot = Arc::new(Lock::new(None));
-    let theirs = slot.clone();
-    let choosing = granite::thread::spawn(move || {
-        let r = a.choose(id, "/Home/silent", chosen);
-        let _ = a.cancel(id);
-        *theirs.lock() = Some((r, time::now() - started));
-    })
-    .map_err(|e| format!("a thread: {e}"))?;
+    let slot = Arc::new(Lock::new(Vec::new()));
+    let mut choosing = Vec::new();
+    for _ in 0..4 {
+        // A copy of `a`'s capability keeps its badge: the same caller, from another thread.
+        let copy = a.endpoint().0.duplicate(CLIENT).map_err(|e| format!("copying: {e}"))?;
+        let mut mine = sandbox::Client::new(Endpoint(copy));
+        mine.set_timeout_ms(30_000);
+        let chosen = silent.mint(1, CLIENT).map_err(|e| format!("{e}"))?;
+        let theirs = slot.clone();
+        choosing.push(
+            granite::thread::spawn(move || {
+                let r = mine.choose(id, "/Home/silent", chosen);
+                theirs.lock().push((r, time::now() - started));
+            })
+            .map_err(|e| format!("a thread: {e}"))?,
+        );
+    }
     time::sleep_ms(300);
+    let fifth = a.choose(id, "/Home/silent", silent.mint(1, CLIENT).map_err(|e| format!("{e}"))?);
     let before = time::now();
-    b.list().map_err(|e| format!("list while a choose waits: {e}"))?;
+    let listed = b.list().map(|_| ());
     let took = (time::now() - before) / 1_000_000;
-    choosing.join().map_err(|e| format!("joining: {e}"))?;
-    let (r, waited) = slot.lock().take().ok_or("the choosing thread said nothing")?;
+    // (An endpoint nobody serves any more: calls on it fail at once.)
+    let gone = Endpoint::create().map_err(|e| format!("an endpoint: {e}"))?;
+    let dead = gone.mint(1, CLIENT).map_err(|e| format!("minting: {e}"))?;
+    drop(gone);
+    let other = b.prepare("wintest", "").map(|bid| (bid, b.choose(bid, "/Home/x", dead)));
+    for t in choosing {
+        t.join().map_err(|e| format!("joining: {e}"))?;
+    }
+    let _ = a.cancel(id);
+    if let Ok((bid, _)) = &other {
+        let _ = b.cancel(*bid);
+    }
     drop(silent);
+    listed.map_err(|e| format!("list while a choose waits: {e}"))?;
     if took > 1_000 {
         return Err(format!("list took {took} ms while a choose was waiting"));
     }
-    match r {
-        Err(CallError::Service(SandboxError::BadCapability))
-            if (1_900_000_000..10_000_000_000).contains(&waited) =>
-        {
-            Ok(())
-        }
-        other => Err(format!("choosing a silent capability: {other:?} after {waited} ns")),
+    refused("a fifth capability checked for one caller", fifth, SandboxError::TooMany)?;
+    match other {
+        Ok((_, Err(CallError::Service(SandboxError::BadCapability)))) => {}
+        other => return Err(format!("another caller's choose meanwhile: {other:?}")),
     }
+    let results = core::mem::take(&mut *slot.lock());
+    if results.len() != 4 {
+        return Err(format!("{} of the 4 choosing threads said something", results.len()));
+    }
+    for (r, waited) in results {
+        match r {
+            Err(CallError::Service(SandboxError::BadCapability))
+                if (1_900_000_000..10_000_000_000).contains(&waited) => {}
+            other => {
+                return Err(format!("choosing a silent capability: {other:?} after {waited} ns"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A setting set is read back.

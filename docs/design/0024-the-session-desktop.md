@@ -228,7 +228,8 @@ capability's server what it is (`choose`, `grant`). That now happens on a helper
 requests meanwhile. (Reply capabilities can be kept and answered later, note 0008.)
 
 **Limits**: at most 4 prepared launches per caller and 16 in all (`TooMany`); `cancel` gives one
-back; a caller's launches go when its capability does (a watched badge). At most 32 running
+back; a caller's launches go when its capability does (a watched badge). The same for chosen
+capabilities being checked (`choose` and `grant`): 4 per caller, 16 in all. At most 32 running
 apps, as before.
 
 **Starting the desktop**: like the shell in M5, an ordinary launch from its manifest, made by
@@ -298,6 +299,10 @@ The sandbox manager itself gets the session's display capability at its own role
 - 21 November 2026 (M6 stage 10b, part 1, after the review): with Chris's agreement, `prepare`
   refuses `desktop` and `picker` with `NotAllowed` from every caller. Only the sandbox manager
   starts them, for the session. The self-test tries both through each kind of capability.
+  The chosen capabilities being checked at once are limited per caller too, as launches are
+  (the Limits paragraph of section 9), so one caller whose capabilities never answer can't
+  make others' `choose` and `grant` wait. The self-test has one caller hold four checks, sees
+  a fifth refused at once, and sees another caller answered meanwhile.
 - 21 November 2026 (M6 stage 10b, the capability review): checked the sandbox manager's badges, launches and limits, the
   users service, the power service and the supervisor's lookup table. Fixed: (1) an app's
   `pbr.picker` capability, and the picker's receiving end, were *moved* into the new process,
