@@ -4,13 +4,11 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 18 November 2026 (session 23). **M6 stage 10a built**: the CI and Stress failures of
-17 November fixed (a new window's focus on slow machines, a runner race in Files), the rest of
-note 0026 section 7's table in the desktop boot, Paint and Snake renamed Rock Art and
-Boomslang, sessions of 96 MiB on 2 GiB machines. **Stage 10b is next**: the capability
-review and the release (below).
+Updated 21 November 2026 (session 24). **M6 stage 10b, part 1 done: the capability review**
+(below): three small fixes in the sandbox manager, and four questions for Chris. **Next**: the
+release (stage 10b, part 2), in a session of its own.
 
-## M6 (the desktop, 2.0 alpha): stages 0 to 9 and 10a built
+## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 
 ### Stage 10a, session 23
 Chris split stage 10: 10a (this) the failures and section 7; 10b the review and the release.
@@ -41,8 +39,31 @@ Chris split stage 10: 10a (this) the failures and section 7; 10b the review and 
   BIOS, self-test and desktop) with 2 GiB, and the UEFI desktop boot after the last change.
   ARM64 left to GitHub's CI; Stress (5 runs) started on `f7ad74f`'s successor.
 
+### Stage 10b, part 1, session 24: the capability review
+Everything in the list below was read against its note; what was checked is in each note's
+Changes (0019, 0021, 0022, 0024, 0025, 0026, dated 21 November).
+- **Fixed** (sandbox manager, one commit each): an app's `pbr.picker` capability and the
+  picker's receiving end are given as copies, not moved, so a failed spawn can't leave them
+  (and the app's watched badge) in the sandbox manager's table; an app started but not
+  recorded (a failed `watch` or copy for the caller) is stopped instead of left running out of
+  reach of `stop` and `revoke`; a covered `grant` is refused if the app ended meanwhile.
+- **For Chris to decide**: (1) chosen files are derived from the chooser's capability (the
+  picker's, Files'), so taking back the picker's or Files' trusted grant silently takes back
+  every file chosen through it, and records opened through a chosen folder count against the
+  chooser's share (note 0025's Changes); (2) the desktop and trusted apps can launch `desktop`
+  and `picker`, which the sandbox manager keeps running itself (harmless, but could be
+  refused); (3) the 16 chosen-capability checks at once are shared, not per caller; (4)
+  `pbr.sysinfo`'s `volumes` shows every volume to a standard user's apps, and the users
+  service answers nothing while a `check` runs.
+- Nothing wrong found in the kernel's 1.3 calls, the power service, the supervisor's table and
+  `memory`, the input service, the display server's clients, `lib/fsserve`'s limits,
+  `lib/manifest`, the users service's badges, or the picker, viewer and desktop apps.
+- Tests run here: `cargo xtask check`; under KVM, the x86-64 UEFI self-test and desktop boots
+  passed (the picker, Open with… and every launch go through the changed code). The rest is
+  left to GitHub's CI.
+
 ### Stage 10b: what it has to do
-- **The capability review** (Opus, in a fresh session): everything M6 added that hands out,
+- **The capability review** (done in session 24, above): everything M6 added that hands out,
   derives, checks or revokes capabilities. From `git diff 9345496 HEAD`: the kernel's changes
   (`obj/endpoint.rs`, `syscall.rs`, `power.rs`); `services/sandbox` (window capabilities and
   `launched`, rights and limits, `grant @10`, `openers @12` and Open with…'s

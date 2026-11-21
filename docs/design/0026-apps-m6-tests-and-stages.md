@@ -245,6 +245,15 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, the capability review): checked `pbr.file.limit` (`lib/fsserve`), `pbr.sysinfo`, the
+  supervisor's `@4 memory` and `check`. Limits nest correctly: every record counts against its
+  nearest limit and every one above, a limit can't be set above its nearest, a limit's slot
+  goes only when nothing under it is left, and `open`, `create` and `reduce` all inherit the
+  limit of the capability they are called through. `memory` is the users service's only;
+  `check` is an administrator's, and only the server started to check may report (`checked`).
+  Seen, for Chris: `pbr.sysinfo`'s `volumes` gives every volume's label, size and free space
+  to any app with `sysinfo`, a standard user's included, who otherwise can't see `/Volumes`;
+  and the users service waits for a `check` to finish, answering nothing else meanwhile.
 - 18 November 2026 (M6 stage 10a): **the session's budget is 96 MiB and the machines have 2
   GiB** (Chris's choice). 96 MiB holds the desktop, the picker and every M6 app at once. The
   users service's budget goes from 224 to 320 MiB (three sessions, for two and room to start

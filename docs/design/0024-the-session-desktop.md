@@ -295,6 +295,21 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, the capability review): checked the sandbox manager's badges, launches and limits, the
+  users service, the power service and the supervisor's lookup table. Fixed: (1) an app's
+  `pbr.picker` capability, and the picker's receiving end, were *moved* into the new process,
+  so if spawning failed (short of memory, which happens) they stayed in the sandbox manager's
+  table and the app's watched badge never went; they are now given as copies that can't be
+  copied again, as `pbr.sandbox`'s badges already were. (2) After spawning, a failed `watch`,
+  or a failed copy of the process for the caller, left the app running with no record, out of
+  reach of `stop` and `revoke`; it is now stopped. Its signal bit is chosen before anything starts.
+  Found and left for Chris: the desktop (and trusted apps) can launch the hidden system apps
+  the sandbox manager keeps running itself, `desktop` and `picker`; a second picker gets a
+  trusted `pbr.sandbox` and finds no endpoint, a second desktop the `Desktop` flag. Neither
+  gives the caller more than it had, but refusing them would be simpler. And the 16 chosen
+  capabilities that can be checked at once are shared by every caller, not limited per
+  caller, so a trusted app or the desktop passing capabilities whose server never answers can
+  make the picker's grants answer `TooMany` for a few seconds.
 - 17 November 2026, built (M6 stage 9b): **the Screens dialog** (section 6). A right click on
   any wallpaper opens a one-row menu, Screens…; the window lists the screens and arranges each
   (main, scale 1x or 2x, rotation, the screen it mirrors, order left to right, side by side

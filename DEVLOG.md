@@ -1200,3 +1200,35 @@ M6 hands out and releases `2.0.0-alpha.1`.
 Results: under KVM here, all four x86-64 boots passed with 2 GiB. GitHub's CI passed on all
 four configurations, every boot, on `5555c63` and on the stage's last commit. Stress (5 runs)
 was started; its result is for the next session to check first.
+
+## Session 24: 21 November 2026, M6 stage 10b part 1 (the capability review)
+
+Chris asked for the review on its own, done by Opus without subagents; the release is a
+session of its own. Everything STATUS listed (from `git diff 9345496 HEAD`) was read against
+its note, looking for rights handed out beyond the note, capabilities that could be derived
+into more, checks missing on error paths, restarts and gone notices, and what a hostile app
+could do with what it holds. What was checked is in the Changes of notes 0019, 0021, 0022,
+0024, 0025 and 0026.
+
+- **Fixed** (sandbox manager, a commit each): (1) an app's `pbr.picker` capability and the
+  picker's receiving end were moved into the new process; a spawn that failed first (short of
+  memory, as happened in stage 9b) left them in the sandbox manager's table, the app's watched
+  badge with them. They are now copies without `DUPLICATE`, as `pbr.sandbox`'s badges already
+  were. (2) A failed `watch`, or a failed copy of the process for the caller, after spawning
+  left the app running unrecorded, out of reach of `stop` and `revoke`; it is now stopped.
+  (3) A `grant` covered by what the app holds is refused if the app ended while it was being
+  opened. None has a test of its own: each is on a path (a failed spawn or copy, an app ending
+  inside a two-second window) that the boots can't bring about on purpose.
+- **Questions for Chris** (in the notes' Changes): chosen files derive from the chooser's
+  capability, so taking back the picker's or Files' trusted grant silently takes every file
+  chosen through it, and a chosen folder's records count against the chooser's share; the
+  desktop can launch `desktop` and `picker`; the chosen-capability checks are limited in all,
+  not per caller; `pbr.sysinfo` shows every volume to a standard user's apps, and the users
+  service is held up while a volume is checked.
+- Nothing wrong found in the kernel's receiver watches and `machine_power`, the power service,
+  the supervisor's lookup table and `memory`, the input service's seat, the display server's
+  clients, flags, serials and clipboard, `lib/fsserve`'s nested limits, `lib/manifest`, the
+  users service's badges, the picker, the permissions viewer and the desktop.
+
+Results: `cargo xtask check` passed; under KVM here the x86-64 UEFI self-test and desktop
+boots passed. The other configurations are left to GitHub's CI.

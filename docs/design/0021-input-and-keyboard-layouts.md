@@ -235,6 +235,13 @@ is tested: the display server learns which screen a tablet belongs to from its s
 - Keyboard lights (Caps Lock, Num Lock).
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, the capability review): **who may take the seat** is the root program's lookup table:
+  the console and the display server get the consumer badge, the users service a badge that
+  can only list layouts and `set_layout`, and the input service checks the badge on every
+  operation (`take` and `devices` consumers only, `set_layout` the users service only).
+  `take` revokes the previous consumer's ring and doorbell before the new ring is written,
+  and the new consumer's copies can't be copied again, so nothing it passes on outlives the
+  next `take`. Nothing to change.
 - 12 November 2026, building it (M6 stage 4). The design held; what building settled or
   changed:
   - **Layout files have their own reader** (section 4), because `#` and `"` are things keys

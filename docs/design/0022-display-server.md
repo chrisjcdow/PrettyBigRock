@@ -462,6 +462,16 @@ descriptors (the front end turns them into capabilities).
 - Accessibility: a screen reader needs a way to read windows' contents that the sandbox allows.
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, the capability review): checked the client side of sections 1, 4, 5 and 9. Badges are
+  told apart by kind; session and client capabilities are derived and watched, a client's
+  rings and buffers go with its gone notice (also after its session has ended first), and its
+  flags and title come only from the sandbox manager (unknown flag bits are dropped).
+  `System`, `Background` and `Panel` windows, `check_serial`, `create_over` and the desktop's
+  operations are refused to clients without the flag, and the system ones reach only windows
+  of the caller's own session. Serials count only presses delivered to that client (a guessed
+  number from another client's press doesn't pass); copying and pasting need the focus and a
+  press of the last second; copying reads the app's memory with `memory_read`, never by
+  mapping it. Nothing to change.
 - 18 November 2026 (M6 stage 10): **a launched app's first window takes the focus if the user
   has pressed nothing since the launch** (within 30 seconds), not only within 2 seconds of it.
   On slow machines (GitHub's runners, ARM64 emulated) apps often took longer than 2 seconds to

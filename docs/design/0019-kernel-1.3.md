@@ -143,6 +143,14 @@ Also: object type 12 (Machine) and its right `POWER` (bit 8); the root program's
   only by the power going.
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, the capability review): checked `endpoint_watch_receiver` and `machine_power` against
+  sections 1 and 2. The watch needs `SEND` and `SIGNAL`, is recorded under the derivation
+  tree's lock, belongs to the capability's tree node, and is removed in `caps::removed`, which
+  every way a capability leaves a table goes through (close, revoke, a move by `give` or in a
+  message, a process ending); its charge goes with the record, and it fires once, outside the
+  endpoint's lock. `machine_power` checks the type and `POWER` before anything else, and only
+  the root program (role 13) and the power service hold the machine capability. The fix to
+  `give`'s lock order (the table's lock let go before `removed`) is sound. Nothing to change.
 - 10 November 2026, built (M6 stage 1). What building settled:
   - the kernel tells whether the other cores have stopped by counting them as they take the
     stop interrupt, and waits for that count or 100 ms, whichever comes first;

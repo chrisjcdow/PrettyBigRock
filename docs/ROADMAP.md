@@ -166,7 +166,8 @@ About, with `lib/calc`, `lib/snake` and `lib/bmp`; 9b: Notepad, Files with Open 
 Terminal on the shell it now shares with the text shell, and the desktop's Screens dialog).
 Stage 10, "done when", is in two parts: 10a (built) finished section 7's check in the
 desktop boot, renamed Paint and Snake (Rock Art and Boomslang) and gave sessions 96 MiB on 2
-GiB machines; 10b, next, is the capability review and the release `2.0.0-alpha.1`. The
+GiB machines; 10b is the capability review (done: three small fixes, questions for Chris
+in the notes' Changes) and, next, the release `2.0.0-alpha.1`. The
 stages are in note 0026, section 9.
 
 ## M7: Real hardware I, Roxy

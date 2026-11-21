@@ -183,6 +183,22 @@ The rules are in note 0022, section 5; what they mean in the apps:
 - Previews of pictures in the picker.
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, the capability review): checked the picker, `grant`, Open with… and the permissions
+  viewer. `grant` is the picker badge's alone, only for an app whose manifest's `picker` was
+  granted, with `Read` and at most `Write`, never more than the capability passed has; the
+  kept capability is limited and the app's is derived from it, so `revoke` takes it and what
+  was opened through it. The picker checks the serial as a request arrives, keeps one request
+  per app, and a gone notice drops that app's waiting and open pickers. Capabilities attached
+  to a request that takes none are closed by `granite` (`Incoming`'s `Drop`), so an app can't
+  fill the picker's table that way. Fixed: a `grant` already covered by what the app holds was
+  answered even if the app ended while it was being opened; now it is refused. **For Chris**:
+  a chosen file's capability is derived from the chooser's (the picker's, or Files' for Open
+  with…). So taking back the picker's (or Files') `Trusted` grant in the viewer also takes
+  back, without saying so, every file chosen through it by every app; and what an app opens
+  through a chosen folder counts against the chooser's share of records too (note 0026,
+  section 4), so a few apps given folders could use up the picker's 16384 on a volume until
+  it is started again. The sandbox manager could instead derive the kept capability from its
+  own session tree, but that changes section 1's "keeps it as the parent".
 - 17 November 2026, built (M6 stage 9b): section 2's clipboard in Notepad and Terminal,
   section 3's Open with…, and section 5's Notepad and Terminal tests. What building settled:
   - **`pbr.sandbox` gains `@12 openers()`**: the apps with windows that aren't hidden, each
