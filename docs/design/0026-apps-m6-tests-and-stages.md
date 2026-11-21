@@ -73,7 +73,9 @@ The memory comes from the root program (a new `pbr.supervisor` operation for the
 only, `@4 fn memory() -> (total, available)`, from the root program's own budget), the screens
 from the display server (`pbr.display.sessions.screens`, note 0022), the volumes from the
 storage service. Uptime is the monotonic clock, which every program can read. Nothing in it says
-anything about other apps or other users.
+anything about other apps or other users: each session's `pbr.sysinfo` has a badge of its own,
+and lists every volume for an administrator's apps (as `/Volumes` does) but only the system
+volume for a standard user's, since another volume's label can say whose it is.
 
 ### 4. Records per grant (notes 0014 and 0018's open question)
 
@@ -239,12 +241,22 @@ while stage 2 is reviewed.
 
 - Checking a volume while it stays mounted (read-only checks in the volume's own server), so
   that `check` doesn't restart the sessions that hold it (stage 8, Changes).
+- The users service answers nothing else while a `check` runs (an administrator's, and rare).
+  Answering it later, as the sandbox manager answers `choose`, would keep logins and other
+  sessions' calls going meanwhile (M7; stage 10b's review).
 - A text editor for programmers (the "Software development" use), beyond Notepad.
 - Pictures in other formats (PNG reading, for the picker's previews and Paint).
 - Sound for Snake (M13).
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, part 1, after the review): Chris agreed that `pbr.sysinfo`
+  shouldn't show a standard user's apps the volumes they can't otherwise see. Each session's
+  `pbr.sysinfo` now has a badge of its own (the session's, with bit 41), and `volumes` lists
+  every volume for an administrator and only the system volume for a standard user. Section 3
+  says so. `pbr.users.debug.sysinfo` takes the user's name, and the self-test sees chris
+  (an administrator) shown every volume and alice only the system volume. The users service
+  waiting during a `check` is left as an open question for M7.
 - 21 November 2026 (M6 stage 10b, the capability review): checked `pbr.file.limit` (`lib/fsserve`), `pbr.sysinfo`, the
   supervisor's `@4 memory` and `check`. Limits nest correctly: every record counts against its
   nearest limit and every one above, a limit can't be set above its nearest, a limit's slot
@@ -361,7 +373,8 @@ while stage 2 is reviewed.
     system volume): checking the system volume from Terminal restarts the desktop. The
     self-test checks a volume in memory that no session holds. A check run in the volume's
     own server, without stopping it, would avoid that; it is an open question below.
-  - **`pbr.sysinfo`** serves one badge to everyone (it says nothing about the caller). Its
+  - **`pbr.sysinfo`** serves one badge to everyone (it says nothing about the caller; since
+    stage 10b, one badge per session: see Changes). Its
     `VolumeInfo` is its own: label, filesystem name, size, free space (asked of the volume's
     server, 0 if it doesn't answer in time), read-only, in memory, and whether it is the system
     volume. The memory is the root program's budget and what of it is unused. The version is

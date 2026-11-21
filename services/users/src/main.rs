@@ -22,8 +22,9 @@
 //! each capability it hands out, so it knows who is calling; note 0008):
 //! - [`SESSION_BASE`] + a session's number: `pbr.users`, for that session;
 //! - [`DEBUG`]: `pbr.users.debug`, only in self-test runs, for the root program;
-//! - [`SYSINFO`]: `pbr.sysinfo`, read-only facts about the computer (note 0026, section 3), which
-//!   each session's sandbox manager passes on to the system apps that ask for `sysinfo`.
+//! - [`SYSINFO`] added to a session's badge: `pbr.sysinfo`, read-only facts about the computer
+//!   (note 0026, section 3), which each session's sandbox manager passes on to the system apps
+//!   that ask for `sysinfo`.
 //!
 //! Sessions are tied to this service (note 0013): if it ends, they end. A session whose sandbox
 //! manager ends is started again (note 0018, section 3).
@@ -91,9 +92,11 @@ granite::main!(main);
 
 /// The badge of the root program's `pbr.users.debug` (self-test runs only).
 const DEBUG: u64 = 1;
-/// The badge of `pbr.sysinfo`: the same for everyone who holds it, since it says nothing about
-/// who is asking or anyone else.
-const SYSINFO: u64 = 2;
+/// Added to a session's badge on its `pbr.sysinfo`. It says nothing about who is asking, but
+/// what it lists depends on whose session it is: an administrator's apps see every volume, as
+/// `/Volumes` does; a standard user's only the system volume, since another volume's label can
+/// say whose it is (note 0026, section 3).
+const SYSINFO: u64 = 1 << 41;
 /// Sessions' badges: this plus the session's number.
 const SESSION_BASE: u64 = 0x100;
 /// Added to a session's badge on the `pbr.users` capability for its desktop, which may only ask
@@ -569,7 +572,8 @@ impl Service {
         let users_cap = self.endpoint.mint(badge, CLIENT).map_err(|e| format!("minting: {e}"))?;
         let desktop_users =
             self.endpoint.mint(badge | LIMITED, CLIENT).map_err(|e| format!("minting: {e}"))?;
-        let sysinfo = self.endpoint.mint(SYSINFO, CLIENT).map_err(|e| format!("minting: {e}"))?;
+        let sysinfo =
+            self.endpoint.mint(badge | SYSINFO, CLIENT).map_err(|e| format!("minting: {e}"))?;
         let mut caps = vec![
             (role::OWN, ep.0.raw(), rights::ALL, false),
             (SANDBOX_USERS, users_cap.0.raw(), rights::ALL, false),
@@ -1014,8 +1018,15 @@ fn serve(s: &mut Service) {
                 let badge = msg.badge;
                 let unknown = if badge == DEBUG && s.selftest {
                     debug_if::dispatch(s, msg, &buffer, reply)
-                } else if badge == SYSINFO {
-                    sysinfo_if::dispatch(&mut Facts(s), msg, &buffer, reply)
+                } else if badge & SYSINFO != 0 {
+                    // (Only while the session is there: what it may see is the user's.)
+                    match s.session(badge & !SYSINFO) {
+                        Some(i) => {
+                            let all = s.sessions[i].user.kind == Kind::Admin;
+                            sysinfo_if::dispatch(&mut Facts { s, all }, msg, &buffer, reply)
+                        }
+                        None => Some((msg, reply)),
+                    }
                 } else if let Some(i) = s.session(badge & !LIMITED) {
                     let limited = badge & LIMITED != 0;
                     users_if::dispatch(&mut Calls { s, session: i, limited }, msg, &buffer, reply)
@@ -1467,9 +1478,12 @@ fn volume_info(v: &storage::VolumeInfo) -> users_if::VolumeInfo {
 // ------------------------------------------------------------------------------------------
 // `pbr.sysinfo`: facts about the computer, for About and Terminal (note 0026, section 3).
 
-/// `pbr.sysinfo`, answering one call. (A *tuple struct*: a struct whose one field has no name,
-/// reached as `.0`.)
-struct Facts<'a>(&'a mut Service);
+/// `pbr.sysinfo`, answering one call for a session: `all`, an administrator's, which sees
+/// every volume.
+struct Facts<'a> {
+    s: &'a mut Service,
+    all: bool,
+}
 
 impl sysinfo_if::Server for Facts<'_> {
     fn version(&mut self, reply: sysinfo_if::version::Reply) {
@@ -1478,14 +1492,14 @@ impl sysinfo_if::Server for Facts<'_> {
 
     fn memory(&mut self, reply: sysinfo_if::memory::Reply) {
         // The root program knows: every service's budget is taken from its own.
-        answered(match self.0.parent.memory() {
+        answered(match self.s.parent.memory() {
             Ok(m) => reply.ok(m.total, m.available),
             Err(_) => reply.err(SysinfoError::NotReady),
         })
     }
 
     fn screens(&mut self, reply: sysinfo_if::screens::Reply) {
-        let Some(d) = &self.0.display else {
+        let Some(d) = &self.s.display else {
             // Text mode: no display server, so no screens to describe.
             return answered(reply.ok(&[]));
         };
@@ -1507,12 +1521,13 @@ impl sysinfo_if::Server for Facts<'_> {
     }
 
     fn volumes(&mut self, reply: sysinfo_if::volumes::Reply) {
-        let s = &mut *self.0;
+        let s = &mut *self.s;
         let Ok(list) = s.storage.list() else {
             return answered(reply.err(SysinfoError::NotReady));
         };
         let mut out = Vec::new();
-        for v in &list {
+        let (all, system) = (self.all, s.system.volume);
+        for v in list.iter().filter(|v| all || v.id == system) {
             // How full it is, from its filesystem server, if it is being served. (A server
             // that doesn't answer in time leaves it at 0 rather than holding everyone up.)
             let mut free = 0;
@@ -1601,8 +1616,12 @@ impl debug_if::Server for Service {
         answered(reply.ok(self.system.volume, self.system.in_memory));
     }
 
-    fn sysinfo(&mut self, reply: debug_if::sysinfo::Reply) {
-        answered(match self.endpoint.mint(SYSINFO, CLIENT) {
+    fn sysinfo(&mut self, name: String, reply: debug_if::sysinfo::Reply) {
+        let Some(s) = self.sessions.iter().find(|s| s.user.name == name) else {
+            return answered(reply.err(DebugError::NoSuchUser));
+        };
+        let badge = SESSION_BASE + u64::from(s.number);
+        answered(match self.endpoint.mint(badge | SYSINFO, CLIENT) {
             Ok(c) => reply.ok(OutCap::Cap(c.0)),
             Err(_) => reply.err(DebugError::Failed),
         })

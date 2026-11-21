@@ -14,7 +14,7 @@
 //! - **records per grant**: `pbr.file`'s `limit`, nested, against a real filesystem server;
 //! - **`check`**: a RockFS volume checked and repaired, served again afterwards; FAT32 refused;
 //!   a standard user refused;
-//! - **`pbr.sysinfo`**.
+//! - **`pbr.sysinfo`**, and that a standard user's apps see only the system volume.
 //!
 //! The self-test boot has no display server, so the root program stands in for the picker
 //! here (with a `pbr.sandbox` capability badged as the picker's), and `wintest wait` for an app.
@@ -47,7 +47,7 @@ pub fn run(
 ) -> Result<String, String> {
     grants(u, chris, disk)?;
     limits(disk)?;
-    facts(u)?;
+    facts(u, storage)?;
     check(chris, alice, storage)?;
     Ok(String::from(
         "grants through the picker, records per grant, checking volumes, and system information",
@@ -348,11 +348,14 @@ fn check(chris: &Session, alice: &Session, storage: &Storage) -> Result<(), Stri
 }
 
 /// `pbr.sysinfo` (note 0026, section 3).
-fn facts(u: &Users) -> Result<(), String> {
-    let mut s = sysinfo::Client::new(Endpoint(
-        u.debug.sysinfo().map_err(|e| format!("a pbr.sysinfo capability: {e}"))?,
-    ));
-    s.set_timeout_ms(30_000);
+fn facts(u: &Users, storage: &Storage) -> Result<(), String> {
+    let of = |name: &str| -> Result<sysinfo::Client, String> {
+        let h = u.debug.sysinfo(name).map_err(|e| format!("{name}'s pbr.sysinfo: {e}"))?;
+        let mut s = sysinfo::Client::new(Endpoint(h));
+        s.set_timeout_ms(30_000);
+        Ok(s)
+    };
+    let s = of("chris")?;
     let v = s.version().map_err(|e| format!("version: {e}"))?;
     if v.name != "PrettyBigRock" || v.version != "2.0.0-alpha.1" {
         return Err(format!("the version is {} {}", v.name, v.version));
@@ -373,6 +376,16 @@ fn facts(u: &Users) -> Result<(), String> {
     }
     if vols.iter().filter(|v| v.system).count() != 1 {
         return Err("more than one volume is the system volume".into());
+    }
+    // chris is an administrator: every volume, as `/Volumes` in that session's tree has. alice
+    // isn't: only the system volume, since another volume's label can say whose it is.
+    let all = storage.admin.list().map_err(|e| format!("listing volumes: {e}"))?;
+    if vols.len() != all.len() || all.len() < 2 {
+        return Err(format!("chris sees {} of the {} volumes", vols.len(), all.len()));
+    }
+    let hers = of("alice")?.volumes().map_err(|e| format!("alice's volumes: {e}"))?;
+    if hers.len() != 1 || !hers[0].system {
+        return Err(format!("alice sees the volumes {hers:?}"));
     }
     Ok(())
 }
