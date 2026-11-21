@@ -1192,18 +1192,22 @@ impl Sandbox {
         // `picker`, a capability whose badge is the app's number, watched, so that the picker
         // hears when the app has gone (note 0025, section 1).
         if let Some(ep) = &self.picker {
-            // (Both are moved to the app, not copied: a copy would need the right to be copied,
-            // which an app's capability for the picker mustn't have.)
+            // Both are given as copies without the right to be copied again, and this program's
+            // own go with `keep`, as for `pbr.sandbox` above. (Moving them instead would leave
+            // them in this program's table if starting the app failed: the app's badge would
+            // then never be seen to have gone.)
+            let copyable = rights::TRANSFER | rights::DUPLICATE;
             if is_picker {
                 let serve =
-                    ep.0.duplicate(rights::RECEIVE | rights::TRANSFER)
-                        .map_err(|_| SandboxError::Failed)?;
-                caps.push((APP_PICKER, serve.into_raw(), rights::RECEIVE, true));
+                    ep.0.duplicate(rights::RECEIVE | copyable).map_err(|_| SandboxError::Failed)?;
+                caps.push((APP_PICKER, serve.raw(), rights::RECEIVE, false));
+                keep.push(serve);
             } else if extras.picker {
                 let theirs = ep
-                    .mint_watched(u64::from(app_id), rights::SEND | rights::TRANSFER)
+                    .mint_watched(u64::from(app_id), rights::SEND | copyable)
                     .map_err(|_| SandboxError::Failed)?;
-                caps.push((APP_PICKER, theirs.0.into_raw(), rights::SEND | rights::TRANSFER, true));
+                caps.push((APP_PICKER, theirs.0.raw(), rights::SEND | rights::TRANSFER, false));
+                keep.push(theirs.0);
                 services.0 |= AppServices::PICKER.0;
             }
         }
