@@ -83,9 +83,14 @@ emblem and the system frame, so it can't be imitated (note 0022, section 6):
 1. The picker opens the chosen file or folder in its own tree with the rights to give: `Read`,
    plus `Write` if asked (`open` with `write`, or `save`). For `save` of a new name, it creates
    the file first.
-2. It calls `pbr.sandbox.grant(app, path, node, rights)`. The sandbox manager reduces the
-   capability to those rights, keeps it as the parent, records a grant with reason `Chosen`, and
-   answers with a capability derived from it for the app (note 0024, section 9).
+2. It calls `pbr.sandbox.grant(app, path, node, rights)`. The sandbox manager checks that the
+   capability is a file or folder with those rights, then opens the same path in its own
+   session tree with those rights and a chosen file's share of records, keeps that as the
+   parent, records a grant with reason `Chosen`, and answers with a capability derived from it
+   for the app (note 0024, section 9). (The picker reaches the whole session tree, so opening
+   by path gives nothing it couldn't; and the app's capability doesn't then depend on the
+   picker's. The same holds for `choose` from a trusted caller such as Files; the desktop holds
+   no files, so for its `choose` the kept capability is still derived from the one it passes.)
 3. The picker answers the app with that capability and the path, which is the session path, the
    same the user saw. `sandstone::picker` mounts it in the app's tree there (`Files::mount`),
    so the app opens it by its path like any other file.
@@ -183,6 +188,17 @@ The rules are in note 0022, section 5; what they mean in the apps:
 - Previews of pictures in the picker.
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, part 1, after the review): Chris agreed that a chosen file's
+  capability should come from the session's tree, not the chooser's. Section 1, step 2 now
+  says so. For `grant` (the picker) and for `choose` from a trusted caller, the capability
+  passed is still checked (its server must answer as a filesystem does, with the rights
+  asked), but the kept capability is opened by path in the sandbox manager's session tree and
+  limited to a chosen file's share. It must be what the passed capability said it was (a folder
+  or not), or the grant is refused. Taking back the picker's or Files' grant no longer takes
+  back what apps were given through them, and an app's records count only against its own
+  share. The desktop's `choose` is unchanged. A file renamed between being chosen and being
+  granted is refused, which is acceptable. The self-test grants through a share too small for
+  a grant's own, which only works now.
 - 21 November 2026 (M6 stage 10b, the capability review): checked the picker, `grant`, Open with… and the permissions
   viewer. `grant` is the picker badge's alone, only for an app whose manifest's `picker` was
   granted, with `Read` and at most `Write`, never more than the capability passed has; the

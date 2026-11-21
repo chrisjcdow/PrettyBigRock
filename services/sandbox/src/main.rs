@@ -321,8 +321,9 @@ enum CheckFor {
 }
 
 /// What a helper thread found: whether it is a folder, its rights, and the capability made
-/// from it (the one to keep, for a new grant; the app's own, when it was covered).
-type Checked = (u32, Option<(bool, u32, Handle)>);
+/// from it (the one to keep, for a new grant; the app's own, when it was covered), or `None`
+/// for one the main thread is to open in the session's tree ([`Sandbox::open_in_session`]).
+type Checked = (u32, Option<(bool, u32, Option<Handle>)>);
 
 /// The app this program keeps running, and when it is due to be started again.
 struct Kept {
@@ -555,11 +556,22 @@ fn fs_rights(r: pbr_manifest::Rights) -> u32 {
     }
 }
 
-/// Runs on a helper thread: asks a chosen capability's server what it is and for a capability
-/// of this program's own, with `want` rights (or all it has, for `None`) and its share of
-/// records, both within [`CHOSEN_TIMEOUT_MS`]. A server that doesn't answer as a filesystem
-/// does, or a capability without the rights wanted, gives `None`.
-fn check_chosen(node: Endpoint, want: Option<u32>) -> Option<(bool, u32, Handle)> {
+/// Runs on a helper thread: asks a chosen capability's server what it is, and, if `derive`,
+/// for a capability of this program's own with `want` rights (or all it has, for `None`) and
+/// its share of records, both within [`CHOSEN_TIMEOUT_MS`]. A server that doesn't answer as a
+/// filesystem does, or a capability without the rights wanted, gives `None`.
+///
+/// Without `derive` the capability is only checked: the caller (a trusted app, or the picker)
+/// reaches the session's whole tree, so what it chose is opened there by path instead
+/// ([`Sandbox::open_in_session`]). The app's capability then depends on the session's, not the
+/// caller's: taking back what the picker or Files holds doesn't take back what was chosen
+/// through them, and what an app opens counts only against its own share (note 0025,
+/// section 1).
+fn check_chosen(
+    node: Endpoint,
+    want: Option<u32>,
+    derive: bool,
+) -> Option<(bool, u32, Option<Handle>)> {
     let end = now_ms() + CHOSEN_TIMEOUT_MS;
     let mut node = file::Client::new(node);
     node.set_timeout_ms(CHOSEN_TIMEOUT_MS);
@@ -570,19 +582,22 @@ fn check_chosen(node: Endpoint, want: Option<u32>) -> Option<(bool, u32, Handle)
     if has & rights != rights {
         return None;
     }
+    if !derive {
+        return Some((folder, rights, None));
+    }
     // Step 3 for a chosen file: a capability of its own, derived from the one the caller
     // passed, so revoking it later takes back only this app's, with the app's share of the
     // filesystem server's records (note 0026, section 4).
     node.set_timeout_ms(end.saturating_sub(now_ms()).max(1));
     let own = node.limit(file::FileRights(rights), RECORDS).ok()?;
-    Some((folder, rights, own.into_endpoint().0))
+    Some((folder, rights, Some(own.into_endpoint().0)))
 }
 
 /// Runs on a helper thread, for a `grant` that something the app holds already covers: opens
 /// `rest` (empty for the same file or folder) through `held` with `rights`, within
 /// [`CHOSEN_TIMEOUT_MS`]. What it gives is derived from the app's own grant, so it goes when
 /// that does, and it counts against that grant's share of records.
-fn open_through(held: Endpoint, rest: &str, rights: u32) -> Option<(bool, u32, Handle)> {
+fn open_through(held: Endpoint, rest: &str, rights: u32) -> Option<(bool, u32, Option<Handle>)> {
     let mut node = file::Client::new(held);
     node.set_timeout_ms(CHOSEN_TIMEOUT_MS);
     let (node, folder) = if rest.is_empty() {
@@ -592,7 +607,7 @@ fn open_through(held: Endpoint, rest: &str, rights: u32) -> Option<(bool, u32, H
         let opened = node.open(rest, file::FileRights(rights)).ok()?;
         (opened.node, opened.info.kind == NodeKind::Folder)
     };
-    Some((folder, rights, node.into_endpoint().0))
+    Some((folder, rights, Some(node.into_endpoint().0)))
 }
 
 impl CheckFor {
@@ -783,8 +798,10 @@ impl Sandbox {
         if let Err(e) = early {
             return answered(reply.err(e));
         }
+        // (The desktop holds no files: what it passes is the only thing to derive from.)
+        let derive = badge::kind(caller) != badge::TRUSTED;
         self.check(path, CheckFor::Choose { caller, launch: id, reply }, move || {
-            check_chosen(node, None)
+            check_chosen(node, None, derive)
         });
     }
 
@@ -793,7 +810,7 @@ impl Sandbox {
         &mut self,
         path: String,
         to: CheckFor,
-        work: impl FnOnce() -> Option<(bool, u32, Handle)> + Send + 'static,
+        work: impl FnOnce() -> Option<(bool, u32, Option<Handle>)> + Send + 'static,
     ) {
         let job = self.next_job;
         self.next_job += 1;
@@ -828,6 +845,10 @@ impl Sandbox {
             if let Some(t) = c.thread.take() {
                 let _ = t.join();
             }
+            let result = result.and_then(|(folder, rights, own)| match own {
+                Some(own) => Some((folder, rights, own)),
+                None => self.open_in_session(&c.path, folder, rights),
+            });
             match c.to {
                 CheckFor::Choose { caller, launch, reply } => {
                     let answer = match result {
@@ -930,10 +951,28 @@ impl Sandbox {
                 self.check(path, to, move || open_through(held, &rest, rights));
             }
             Ok(None) => {
+                // (Only the picker may grant, and it reaches the session's whole tree.)
                 let to = CheckFor::Grant { app: id, covered: false, reply };
-                self.check(path, to, move || check_chosen(node, Some(rights)));
+                self.check(path, to, move || check_chosen(node, Some(rights), false));
             }
         }
+    }
+
+    /// A capability of this program's own for `path` in the session's tree, with `rights` and
+    /// a chosen file's share of records, for what a trusted app or the picker chose; `None` if
+    /// it can't be opened so, or isn't what the caller's capability said it was (a folder, or
+    /// not). It is opened on this thread, as the rules file is: the session's servers are the
+    /// system's own, not ones a caller chose.
+    fn open_in_session(
+        &self,
+        path: &str,
+        folder: bool,
+        rights: u32,
+    ) -> Option<(bool, u32, Handle)> {
+        let own =
+            self.files.open(path, FsRights(rights)).ok()?.limit(FsRights(rights), RECORDS).ok()?;
+        let is_folder = own.info().ok()?.kind == NodeKind::Folder;
+        (is_folder == folder).then(|| (folder, rights, own.into_handle()))
     }
 
     /// The rest of `grant`, once the chosen capability is known to be a file or folder and

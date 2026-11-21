@@ -7,7 +7,8 @@
 //! self-test's sessions:
 //! - **`grant`**, as the file picker uses it: what is granted through a picker capability is
 //!   recorded as `Chosen` at the path given with the rights given; the app's capability can do
-//!   exactly that; `revoke` takes it and everything opened through it; something the app gets
+//!   exactly that, opened in the session's tree rather than derived from the picker's
+//!   capability; `revoke` takes it and everything opened through it; something the app gets
 //!   anyway isn't granted twice; an app that didn't ask for the picker, or that isn't there,
 //!   can't be given anything; and nobody else may `grant`;
 //! - **records per grant**: `pbr.file`'s `limit`, nested, against a real filesystem server;
@@ -218,6 +219,23 @@ fn grants(u: &Users, chris: &Session, disk: &Disk) -> Result<(), String> {
         if !gone(&f) || !gone(&made) {
             return Err("the folder, or a file opened through it, still works after revoke".into());
         }
+        // What is granted is opened in the session's tree, not derived from what the picker
+        // passed: a capability with a share of 2 records (too small for a grant's own) still
+        // gives the app the file, which works once the picker's capability has gone.
+        let small = disk
+            .open("Users/chris/Picked/letter.txt", R)?
+            .limit(R, 2)
+            .map_err(|e| format!("limit: {e}"))?;
+        let given = client(
+            picker
+                .grant(a, letter, small.into_endpoint(), sandbox::FileRights::READ)
+                .map_err(|e| format!("granting through a small share: {e}"))?,
+        );
+        let text = given.read(0, 100).map_err(|e| format!("reading what was granted: {e}"))?;
+        if text != b"Dear Hema" {
+            return Err(format!("what was granted through a small share reads {text:?}"));
+        }
+        trusted.revoke(a, letter).map_err(|e| format!("revoking the letter again: {e}"))?;
         Ok(())
     })();
     let _ = chris.sandbox.stop(app.app);
