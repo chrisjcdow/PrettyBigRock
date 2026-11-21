@@ -843,7 +843,9 @@ impl Sandbox {
                 }
                 CheckFor::Grant { app, covered, reply } => {
                     let answer = match result {
-                        Some((_, _, given)) if covered => Ok(given),
+                        // (Only to an app still running: once it has ended, what was opened
+                        // through its grant isn't anyone's to pass on.)
+                        Some((_, _, given)) if covered => self.app(app).map(|_| given),
                         Some((folder, rights, own)) => {
                             self.add_granted(app, &c.path, folder, rights, own)
                         }
