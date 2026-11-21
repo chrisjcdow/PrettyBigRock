@@ -673,6 +673,11 @@ impl Sandbox {
         if theirs >= MAX_LAUNCHES_EACH || self.launches.len() >= MAX_LAUNCHES {
             return Err(SandboxError::TooMany);
         }
+        // The desktop and the picker are this program's to start, kept running for the
+        // session: nobody else may start another (a second desktop, or a picker no app asks).
+        if caller != ITSELF && (name == DESKTOP || name == PICKER) {
+            return Err(SandboxError::NotAllowed);
+        }
         // 1. The manifest.
         let app = self.manifest(name)?;
         // 2. What it gets. Every app in the start-up archive is a system app.

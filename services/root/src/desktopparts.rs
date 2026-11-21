@@ -134,6 +134,14 @@ fn each_kind(u: &Users) -> Result<(), String> {
             ("grants", not_allowed(c.grants(9999, 0)), !views),
             ("revoke", not_allowed(c.revoke(9999, "/Home")), !views),
         ];
+        // Nobody may launch the desktop or the picker: the sandbox manager starts its own.
+        for kept in ["desktop", "picker"] {
+            if !not_allowed(c.prepare(kept, "")) {
+                return Err(format!(
+                    "launching {kept} through a {kind:?} capability wasn't refused"
+                ));
+            }
+        }
         for (op, refused, should) in expect {
             if refused != should {
                 return Err(format!(

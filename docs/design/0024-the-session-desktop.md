@@ -295,6 +295,9 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 21 November 2026 (M6 stage 10b, part 1, after the review): with Chris's agreement, `prepare`
+  refuses `desktop` and `picker` with `NotAllowed` from every caller. Only the sandbox manager
+  starts them, for the session. The self-test tries both through each kind of capability.
 - 21 November 2026 (M6 stage 10b, the capability review): checked the sandbox manager's badges, launches and limits, the
   users service, the power service and the supervisor's lookup table. Fixed: (1) an app's
   `pbr.picker` capability, and the picker's receiving end, were *moved* into the new process,
