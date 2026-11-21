@@ -1083,9 +1083,11 @@ impl Sandbox {
             .iter()
             .position(|l| l.id == id && l.caller == caller)
             .ok_or(SandboxError::NotFound)?;
-        if self.apps.len() >= MAX_APPS {
-            return Err(SandboxError::TooMany);
-        }
+        // Its bit in `signals`, chosen before anything is started: with fewer than
+        // `MAX_APPS` running, one is free.
+        let bit = (0..MAX_APPS as u32)
+            .find(|b| !self.apps.iter().any(|a| a.bit == *b))
+            .ok_or(SandboxError::TooMany)?;
         let mut launch = self.launches.remove(at);
         let program = self
             .archive
@@ -1262,21 +1264,27 @@ impl Sandbox {
         // would never be seen to have gone.)
         drop(keep);
 
-        // 6. The record, and a watch for when it ends.
-        let bit = (0..MAX_APPS as u32)
-            .find(|b| !self.apps.iter().any(|a| a.bit == *b))
-            .ok_or(SandboxError::TooMany)?;
-        if let Err(e) = spawned.process.watch(&self.signals, 1 << bit) {
-            granite::println!("sandbox ({}): can't watch {}: {e}", self.user, launch.name);
+        // 6. The record, and a watch for when it ends. Past this point an app that can't be
+        // recorded is stopped: one running without a record could be neither stopped nor
+        // have anything taken back, and its grants' capabilities, closed with the launch,
+        // would leave its copies working.
+        let unrecorded = |why: &str| {
+            granite::println!("sandbox ({}): {} {why}; it is stopped.", self.user, launch.name);
+            if let Some(w) = &windows {
+                let _ = w.revoke();
+            }
             let _ = spawned.process.stop(0);
-            return Err(SandboxError::Failed);
+            SandboxError::Failed
+        };
+        if spawned.process.watch(&self.signals, 1 << bit).is_err() {
+            return Err(unrecorded("can't be watched"));
         }
         // What the caller gets: the process, which it can watch and ask about, not stop.
         let theirs = spawned
             .process
             .0
             .duplicate(rights::INSPECT | rights::WATCH | rights::TRANSFER | rights::DUPLICATE)
-            .map_err(|_| SandboxError::Failed)?;
+            .map_err(|_| unrecorded("can't be passed to its caller"))?;
         self.next_app += 1;
         granite::println!(
             "sandbox ({}): started {} as app {app_id}{}, holding {} entries{}.",
