@@ -337,7 +337,9 @@ reach.
 
 ## 8. System services
 
-Each of these gets its own design note before it's built.
+Each of these gets its own design note before it's built. What M6 (the 2.0 alpha) built is
+said under each: the display server and compositor, the input service, the session's desktop,
+the file picker, the clipboard and the permissions viewer.
 
 - **Root program**: starts everything; holds the initial capabilities.
 - **Device manager**:
@@ -373,15 +375,34 @@ Each of these gets its own design note before it's built.
     GPU can draw into them later without changing the interface;
   - the protocol is designed so that a Wayland-compatible front end (the protocol that most
     Linux desktop toolkits now speak) can be added, which would make porting GUI apps much
-    easier (open question Q8).
+    easier. Q8 is settled: the display server speaks only our own protocol, `pbr.window`, and
+    a Wayland front end comes later (M12) as a separate service that translates
+    ([note 0022](design/0022-display-server.md), section 12).
+
+  **Built in M6** (notes [0020](design/0020-screens-and-virtio-gpu.md) and
+  [0022](design/0022-display-server.md)): one display server for the whole machine, with a
+  window capability per app; title bars and frames drawn by the display server, so an app can't
+  pretend to be another; screens placed side by side or mirrored, at 1× or 2× and any of four
+  rotations, each window drawn at its screen's scale; screens unplugged and plugged in while it
+  runs; virtio-gpu with two screens in QEMU, and the firmware's framebuffer. Still to come: GPU
+  drawing, fractional scales (with outline fonts), and refresh rates other than 60 Hz.
 - **Graphics acceleration**: GPU drivers come later, but the interface for them is planned
   with the display server. The first likely targets are GPUs with open documentation (Intel
   and AMD) and virtio-gpu in VMs.
 - **Server and headless use**: starting services without a desktop, restarting them when they
   fail, logging, and remote administration.
-- **Input**: keyboard layouts, mouse, touch, and later tablets and pens.
+- **Input**: keyboard layouts, mouse, touch, and later tablets and pens. **Built in M6**
+  ([note 0021](design/0021-input-and-keyboard-layouts.md)): the input service owns the
+  keyboards and pointers and gives them to the display server or, in text mode, the console;
+  US, UK and US international layouts, chosen per user; absolute pointers tied to a screen, as
+  a touch screen is.
 - **Audio**: mixing and low-latency playback and recording.
-- **Sandbox manager, file picker, clipboard**: see section 7.
+- **Sandbox manager, file picker, clipboard**: see section 7. **Built in M6**
+  (notes [0024](design/0024-the-session-desktop.md) and
+  [0025](design/0025-picker-clipboard-permissions.md)): each session has a desktop app
+  (wallpaper, icons, taskbar, start menu) that launches apps through the sandbox manager; the
+  file picker runs outside the app and grants just the file chosen; the clipboard is in the
+  display server; the permissions viewer shows what each app holds, and takes it back.
 - **App installer**: installs apps with their manifests; a package format of our own.
 - **Logging and tracing**: one place to see what every part of the system is doing,
   including messages flowing between programs. This is essential for debugging a microkernel.
@@ -393,7 +414,10 @@ Each of these gets its own design note before it's built.
 - **Shaping later.** Shaping is what joins letters correctly in scripts like Arabic and
   Devanagari; we build it afterwards.
 
-The bitmap font from 1.x stays for the early text console.
+The bitmap font from 1.x stays for the early text console. In M6 it also draws the desktop and
+every app (`lib/font`, [note 0023](design/0023-draw-window-and-sandstone.md)), with more
+characters (the accented Latin letters the layouts type, `£` and `€`, quotes, dashes and
+arrows), at 1× and 2×; outline fonts come with fractional scales.
 
 ---
 
@@ -619,3 +643,5 @@ Q8 was settled on 9 November 2026 (below).
   capability tables; endpoints with badges instead of channels, plus replies; message sizes;
   and D16 changed from a linking exception to MPL-2.0 and MIT.
 - 9 November 2026: Q8 settled by note 0022 (our own protocol; a Wayland front end later).
+- 22 November 2026: section 8 says what M6 built (the 2.0 alpha), with Q8's answer where the
+  question was asked.
