@@ -4,9 +4,12 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 21 November 2026 (session 24). **M6 stage 10b, part 1 done: the capability review**
-(below): three small fixes in the sandbox manager, and four questions for Chris. **Next**: the
-release (stage 10b, part 2), in a session of its own.
+Updated 22 November 2026 (session 25). **M6 stage 10b, part 2: the release, ready for
+Chris to try.** Notes 0020 to 0026 marked built; DESIGN.md section 8, README and ROADMAP
+brought up to date; a **draft** release `2.0.0-alpha.1` on GitHub (pre-release, not yet
+tagged) with the zip and both images. **Next**: Stress's result (run 45002070772, on
+`5f64280`); Chris tries the draft on Harriet (checklist below); then merge `m6` into `main`,
+tag `v2.0.0-alpha.1` there and publish the draft, and mark M6 done in ROADMAP.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 
@@ -38,6 +41,35 @@ Chris split stage 10: 10a (this) the failures and section 7; 10b the review and 
 - Tests run here: host tests of every changed crate; under KVM, all four x86-64 boots (UEFI and
   BIOS, self-test and desktop) with 2 GiB, and the UEFI desktop boot after the last change.
   ARM64 left to GitHub's CI; Stress (5 runs) started on `f7ad74f`'s successor.
+
+### Stage 10b, part 2, session 25: the release
+- **Docs**: notes 0020 to 0026 say "Built 22 November 2026"; DESIGN.md section 8 says what M6
+  built under each service, and gives Q8's answer where it was asked; README describes the
+  desktop, the apps and the launcher, with a desktop screenshot; ROADMAP's Releases paragraph.
+- **Chris's choices** (note 0026's Changes): the version goes on the release's files
+  (`prettybigrock-2.0.0-alpha.1.zip`, `.img`, `-selftest.img`), not the build tool's; a
+  draft first, published after Stress and Harriet.
+- **Found by booting the release images** (`cargo xtask qemu-test --release`, never run by
+  CI): (1) the ordinary image held the test programs, and its desktop listed Test window and
+  Gallery: the build tool now packs it a start-up archive without `pbr-test-` programs and
+  `tests/programs` manifests (`build/<arch>/<profile>/startup-plain.arc`); (2) the text-mode
+  desktop boot typed `poweroff` before the input service had the keyboard (the shell got
+  `ff`): the runner waits for `input: using QEMU Virtio Keyboard`.
+- **The launcher**: `two-screens` (virtio-gpu with two outputs, a tablet tied to each; UEFI
+  only), a tablet with one screen, and a blank `data.img` (256 MiB) attached. Booted here with
+  each set-up (x86-64 UEFI one and two screens, BIOS, ARM64 one and two screens) to the
+  desktop with 8 apps; `setup 1 chris` in Terminal then a restart logged chris in from the new
+  system volume. In a headless QEMU the second virtio-gpu output stays unplugged until a viewer
+  asks for it (as in the boot tests).
+- **For Chris on Harriet** (the draft's zip): double-click the launcher; `two-screens` (does
+  QEMU's View menu bring up the second screen?); `arm`; `bios`; `selftest`; in Terminal
+  `volumes`, `setup N chris`, Restart, and a file kept across a restart. Seen before: "About
+  PrettyBigRock" is cut to "About PrettyBi" under its icon.
+- Tests run here: `cargo xtask check`; under KVM, all x86-64 boots on the release images
+  (self-test and desktop, UEFI and BIOS), and the desktop boots again after the runner fix;
+  the launcher's five set-ups and `setup` as above. Stress (5 runs × 6 jobs) started on
+  `5f64280`: no system code changed after it, only the runner, the build tool's plain archive
+  (not booted by Stress), the launcher and docs.
 
 ### Stage 10b, part 1, session 24: the capability review
 Everything in the list below was read against its note; what was checked is in each note's

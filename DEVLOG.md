@@ -1257,3 +1257,36 @@ its own commit with a self-test:
 Results: `cargo xtask check` passed; under KVM here the x86-64 UEFI self-test and desktop
 boots passed (the picker, sandbox and sysinfo self-tests are in the first). The other
 configurations are left to GitHub's CI.
+
+## Session 25: 22 November 2026, M6 stage 10b part 2 (the release)
+
+Chris asked for stage 10b's remaining items 1 to 4: the docs, the release, Stress, and trying
+it on Harriet. Stress (runs=5) was started first, on `5f64280`, since it takes about four
+hours.
+
+- **Docs.** Notes 0020 to 0026 marked built. DESIGN.md section 8 says, under the display server,
+  input, the picker and clipboard, and fonts, what M6 built and what is still to come, and the
+  Wayland bullet gives Q8's answer. README's PrettyBigRock 2 section describes the desktop, the
+  apps, the sandboxing the user sees, the desktop boot test and the launcher, with a desktop
+  screenshot; its licence table gains the MPL-2.0 libraries M6 added. ROADMAP's Releases
+  paragraph says the version is set.
+- **Two choices for Chris**, both answered with the recommendation: the version goes on the
+  release's files rather than the build tool's image names (note 0026, section 5, said the
+  latter; Changes record it), and the release is a draft until Stress passes and Chris has
+  tried it.
+- **Booting the release images** (`cargo xtask qemu-test --release`, which CI doesn't do)
+  found two things. The ordinary image carried every test program, so its desktop listed Test
+  window and Gallery: the build tool now packs a second, plain start-up archive for it. And
+  the text-mode desktop boot lost the first keys of `poweroff` (release builds reach the
+  shell's prompt before the input service has the keyboard): the runner now waits for it.
+  Both x86-64 desktop boots then passed on the release images.
+- **The launcher** gained `two-screens`, a tablet, and a blank `data.img`. Each of its
+  set-ups was booted here headless to the desktop, and `setup 1 chris` in Terminal followed
+  by a restart logged chris in from the new system volume.
+- **The draft release** `2.0.0-alpha.1` (pre-release) has `prettybigrock-2.0.0-alpha.1.zip`
+  (the launcher, LICENSE and both images under `build/release`, 21 MB) and the two images on
+  their own.
+
+Results: `cargo xtask check` passed; under KVM here, every x86-64 boot on the release images
+passed after the runner fix. ARM64 left to GitHub's CI and Stress. Left open: Stress's result,
+Chris's go-ahead after Harriet, then merging into `main`, tagging and publishing.
