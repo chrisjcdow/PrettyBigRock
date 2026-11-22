@@ -125,6 +125,8 @@ struct Desktop {
     name: String,
     /// Minutes east of UTC.
     timezone: i32,
+    /// The Welcome window hasn't been answered: it is opened at start.
+    welcome: bool,
     /// The apps the start menu and the icons list.
     apps: Vec<Available>,
     /// The screens, as the display server last said.
@@ -225,6 +227,7 @@ fn main(mut start: granite::Start) -> i32 {
         files,
         name: String::new(),
         timezone: 0,
+        welcome: false,
         apps: Vec::new(),
         screens: Vec::new(),
         backgrounds: Vec::new(),
@@ -247,6 +250,10 @@ fn main(mut start: granite::Start) -> i32 {
     d.say_icons();
     d.tick();
     say!("ready, {} apps, {} screens.", d.apps.len(), d.screens.len());
+    // The Welcome window, until the user has answered it (note 0024, section 6a).
+    if d.welcome && d.apps.iter().any(|a| a.app == "welcome") {
+        d.launch("welcome");
+    }
     let mut code = 0;
     loop {
         // With wallpapers waiting, only look for events; when there are none, draw one
@@ -276,17 +283,20 @@ fn main(mut start: granite::Start) -> i32 {
 }
 
 impl Desktop {
-    /// Who the user is, and their time zone.
+    /// Who the user is, their time zone, and whether the Welcome window is still to be
+    /// answered.
     fn who(&mut self) {
         let Some(u) = &self.users else { return };
         match u.whoami() {
             Ok(user) => self.name = user.display,
             Err(e) => say!("whoami: {e}"),
         }
-        if let Ok(list) = u.settings()
-            && let Some(tz) = list.iter().find(|s| s.key == "timezone")
-        {
-            self.timezone = pbr_manifest::settings::timezone_minutes(&tz.value).unwrap_or(0);
+        if let Ok(list) = u.settings() {
+            if let Some(tz) = list.iter().find(|s| s.key == "timezone") {
+                self.timezone = pbr_manifest::settings::timezone_minutes(&tz.value).unwrap_or(0);
+            }
+            use pbr_manifest::settings::{WELCOME, WELCOME_DONE};
+            self.welcome = !list.iter().any(|s| s.key == WELCOME && s.value == WELCOME_DONE);
         }
     }
 
