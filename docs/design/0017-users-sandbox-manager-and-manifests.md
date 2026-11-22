@@ -101,6 +101,9 @@ user alice standard "Alice"
   /// The storage service's volume list, and formatting an empty disk (administrators only).
   @5 fn volumes() -> (volumes: list<VolumeInfo, 32>) error UsersError;
   @6 fn format(volume: u32, label: string<64>) -> () error UsersError;
+  /// Adds an administrator who is logged in at start from then on (administrators only;
+  /// note 0024, section 6a): their line goes first in `users.txt`.
+  @13 fn add_first(user: User) -> () error UsersError;
   ```
   (`VolumeInfo` and, in `pbr.sandbox`, `FileRights` are copied from `pbr.storage` and
   `pbr.file` until interfaces can import each other; note 0008.)
@@ -266,6 +269,11 @@ For an app launched by the sandbox manager, M5's tests (note 0018) check that:
   a limit per caller would settle it.
 
 ## Changes
+- 22 November 2026 (M6 stage 10b, the Welcome window, note 0024 section 6a): **`add_first`**
+  (`@13`): adds an administrator as `add` does, with their line first in `users.txt`, so they
+  are the one logged in at start (the first administrator, above). It is how someone using the
+  alpha's ready-made disk as `owner` gets a user of their own. Everyone else, `owner` included,
+  stays as they were.
 - 14 November 2026 (M6 stage 8, notes 0025 and 0026): **`grant`** (`@10`), for the file
   picker: what the user chose is recorded as `Chosen` with exactly the rights asked for, and the
   app's capability is derived from the one the sandbox manager keeps, so `revoke` and the

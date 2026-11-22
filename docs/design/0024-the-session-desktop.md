@@ -64,6 +64,7 @@ turning the machine off and restarting (Q11); and starting in text mode, or fall
 | `system` | Its windows may be `System` windows (note 0022, section 6) | System apps only, and never by a rule |
 | `desktop` | It is the session's desktop (below) | System apps only, and never by a rule |
 | `sandbox view` | A `pbr.sandbox` capability that may look at apps and take grants back (section 9): the permissions viewer | System apps only, and never by a rule |
+| `users welcome` | A `pbr.users` capability for the Welcome window (section 6a), at role 1001 | System apps only, and never by a rule |
 | `hidden` | Not listed in the start menu or on the desktop | (a hint, not a grant) |
 | `icon NAME` | Which of the system's icons to show for it | (a hint, not a grant) |
 | `opens EXT…` | The kinds of file it opens (`txt md`), for Files' "Open with…" (note 0025) | (a hint, not a grant) |
@@ -100,6 +101,7 @@ for a trusted app, `System` for `system`, `Desktop` for `desktop`. The title is 
   |-----|---------|
   | `layout NAME` | The keyboard layout (note 0021); `us` if absent |
   | `timezone ±HH:MM` | The offset from UTC for showing times; `+00:00` if absent |
+  | `welcome done` | The Welcome window (section 6a) has been answered; absent until then |
 
   Unknown keys are kept but ignored (a later version may add some); a line that can't be read
   makes the file be treated as empty, with the line in the log. It is read when a session
@@ -144,6 +146,42 @@ for a trusted app, `System` for `system`, `Desktop` for `desktop`. The title is 
     screen each tablet is tied to go there too.
 - **Launching**: the desktop calls `prepare` and `start` on `pbr.sandbox`, and the sandbox
   manager tells the display server the launch came from the user (note 0022, section 4).
+- **At start** it launches the Welcome window (section 6a) unless the user's settings say
+  `welcome done`.
+
+### 6a. The Welcome window
+
+Added before the alpha (Changes, 22 November 2026): someone trying PrettyBigRock saved a file,
+restarted, and it was gone, because without a system volume files are kept in memory.
+`run-prettybigrock.bat` now attaches a disk that is already a system volume (note 0026,
+section 5), and the first time the desktop starts, a window says where files are kept and asks
+whose they are.
+
+- **`apps/welcome`**, a system app, with `windows`, `system`, `users welcome` and `icon about`.
+  It is in the start menu (title "Welcome") so it can be opened again. It holds no files.
+- **What it shows** depends on the system volume, which it learns from `volumes` (a volume in
+  memory is there only when the system volume is one):
+  - **On a disk** (the usual case): "Welcome to PrettyBigRock. Your files are saved on the disk
+    "LABEL", so they'll still be here after a restart. You're using it as DISPLAY. Would you
+    like a user of your own?", a name box, **Make my user** and **Carry on as DISPLAY**. Make my
+    user calls `add_first` (note 0017, section 3) with an administrator named from the box (the
+    name lowercased; the display name as typed), sets `welcome done`, and offers **Restart
+    now**; from the next start that user is logged in. The old user and their folder stay.
+    Carry on sets `welcome done` and closes.
+  - **In memory**: "PrettyBigRock isn't set up on a disk yet, so your files are kept in memory
+    and will be gone after a restart. Set it up on a disk now?", the disks `setup` can use
+    (empty or RockFS, not the one in memory) with their sizes, a name box, **Set up** and **Not
+    now**. Set up calls `setup` and offers **Restart now**. With no such disk it says so, and
+    that the launcher attaches one (`data.img`). Settings on a volume in memory are gone at the
+    next start, so this page comes back every start until a disk is set up: the reminder.
+  - **A standard user** (who can't add users or set up disks) sees nothing: it sets `welcome
+    done` and ends.
+- **Its capability** (`users welcome`): `pbr.users` with a badge bit the users service adds,
+  as for the desktop's, that may only ask `whoami`, `settings`, `set`, `volumes`, `setup`,
+  `add_first` and `restart`. `volumes`, `setup` and `add_first` still need an administrator.
+  Everything else answers `NotAllowed`. Its `set` may only set `welcome`, so it can't change
+  the keyboard layout or the time zone.
+- **The text-mode shell** has no Welcome; `setup` is there as before.
 
 ### 7. Turning off and restarting (Q11)
 
@@ -241,7 +279,7 @@ session has lost the display.
 | Role | What | When |
 |------|------|------|
 | 1000 | `pbr.sandbox`, badged with what the app may do (section 9) | Trusted apps, the desktop, the picker, the permissions viewer |
-| 1001 | `pbr.users`, badged (the desktop's can do less, section 6) | Trusted apps, the desktop |
+| 1001 | `pbr.users`, badged (the desktop's and the Welcome window's can do less, sections 6 and 6a) | Trusted apps, the desktop, `users welcome` |
 | 1002 | `pbr.terminal` | `terminal`, in text mode |
 | 1003 | `pbr.window` | `windows` |
 | 1004 | `pbr.picker` | `picker` |
@@ -296,6 +334,10 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 22 November 2026 (M6 stage 10b, before the release), with Chris: **the Welcome window**
+  (section 6a), the `users welcome` manifest key (section 3), the `welcome` setting (section 5),
+  and the desktop launching it at start (section 6). Chris tried the alpha's draft, saved a
+  file, restarted, and it had gone: nothing said files were kept in memory.
 - 21 November 2026 (M6 stage 10b, part 1, after the review): with Chris's agreement, `prepare`
   refuses `desktop` and `picker` with `NotAllowed` from every caller. Only the sandbox manager
   starts them, for the session. The self-test tries both through each kind of capability.

@@ -31,6 +31,7 @@ Q16.
 | **About** | `windows`, `sysinfo` | 1.3's About: the logo, "Named for Table Mountain, a pretty big rock.", the version, and Display, Memory, Uptime and Disk | |
 | **The desktop** | note 0024, section 6 | 1.3's desktop: wallpaper, icons, taskbar and clock, start menu, Restart and Shut down | |
 | **Picker**, **Permissions** | note 0025 | New | `lib/browse` |
+| **Welcome** | note 0024, section 6a | New: where files are kept, and a user of your own (Changes, 22 November 2026) | `apps/welcome`'s library: which page, and the name |
 
 **The potato stays**: Terminal's `potato` answers as in 1.3 and isn't listed in `help`.
 
@@ -250,6 +251,22 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 22 November 2026 (M6 stage 10b, before the release), with Chris: **files are kept from the
+  first start.** The build tool makes `prettybigrock-data.img`, a 256 MiB disk with one RockFS
+  partition labelled `Files`, already a system volume with one administrator, `owner`
+  (`System/users.txt`, their rules and home), written with `lib/rockfs` itself. It goes in the
+  release's zip, and `run-prettybigrock.bat` copies it to `data.img` when there is none (so
+  deleting `data.img` starts afresh; a new boot image keeps the files). The system never formats
+  a disk it wasn't asked to: on a real computer in M7 a blank disk may be one someone cares
+  about. **The Welcome window** (note 0024, section 6a) says where files are kept and offers a
+  user of one's own. **Testing it**: the desktop boot's system volume has no `welcome done`
+  for chris, so the first boot sees Welcome open, checks its page names the volume, and chooses
+  Carry on; the second boot checks it doesn't open again, and at its end opens it from the start
+  menu, makes the user `dana` and restarts; a **fourth boot** (`desktop-dana`) checks dana is
+  logged in, and does the Shut down steps the second boot did. The self-test checks the
+  Welcome capability refuses everything outside its list. The page for a system volume in
+  memory is tested on the host (which page, the disks offered, the name) and by hand with the
+  launcher, since no boot test runs without a system volume.
 - 22 November 2026 (M6 stage 10b, the release): **the version is on the release's files, not
   the build tool's** (Chris's choice). The build tool keeps writing `prettybigrock.img`, which
   CI, the boot tests and `run-prettybigrock.bat` use; the release attaches
