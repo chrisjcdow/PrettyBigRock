@@ -7,8 +7,8 @@ as `claude/status.md`; the repository's copy is now the one that counts.
 Updated 22 November 2026 (session 25). **M6 stage 10b, part 2: the release, ready for
 Chris to try.** Notes 0020 to 0026 marked built; DESIGN.md section 8, README and ROADMAP
 brought up to date; a **draft** release `2.0.0-alpha.1` on GitHub (pre-release, not yet
-tagged) with the zip and both images. **Next**: Stress's result (run 45002070772, on
-`5f64280`); Chris tries the draft on Harriet (checklist below); then merge `m6` into `main`,
+tagged) with the zip and both images. Stress passed (run 45002070772, on `5f64280`: all
+six jobs, 120 boots of each kind). **Next**: Chris tries the draft on Harriet (checklist below); then merge `m6` into `main`,
 tag `v2.0.0-alpha.1` there and publish the draft, and mark M6 done in ROADMAP.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
@@ -67,7 +67,7 @@ Chris split stage 10: 10a (this) the failures and section 7; 10b the review and 
   PrettyBigRock" is cut to "About PrettyBi" under its icon.
 - Tests run here: `cargo xtask check`; under KVM, all x86-64 boots on the release images
   (self-test and desktop, UEFI and BIOS), and the desktop boots again after the runner fix;
-  the launcher's five set-ups and `setup` as above. Stress (5 runs × 6 jobs) started on
+  the launcher's five set-ups and `setup` as above. Stress (5 runs × 6 jobs) **passed** on
   `5f64280`: no system code changed after it, only the runner, the build tool's plain archive
   (not booted by Stress), the launcher and docs.
 
