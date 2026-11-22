@@ -4,12 +4,15 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 22 November 2026 (session 25). **M6 stage 10b, part 2: the release, ready for
-Chris to try.** Notes 0020 to 0026 marked built; DESIGN.md section 8, README and ROADMAP
-brought up to date; a **draft** release `2.0.0-alpha.1` on GitHub (pre-release, not yet
-tagged) with the zip and both images. Stress passed (run 45002070772, on `5f64280`: all
-six jobs, 120 boots of each kind). **Next**: Chris tries the draft on Harriet (checklist below); then merge `m6` into `main`,
-tag `v2.0.0-alpha.1` there and publish the draft, and mark M6 done in ROADMAP.
+Updated 22 November 2026 (session 25). **M6 stage 10b, part 3: the Welcome window, before the
+release.** Chris tried the draft on Harriet, saved a file, restarted, and it had gone (no
+system volume: files in memory). With Chris: the launcher now attaches a ready-made system
+disk, and a **Welcome** window says where files are kept and offers a user of one's own (note
+0024, section 6a). Built, booted here on x86-64 UEFI under KVM (self-test and all four desktop
+boots), pushed. **Next**: CI on `8c20469`; Stress again (system code changed after the last
+one); rebuild the release's files (the zip gains `prettybigrock-data.img`) and replace the
+draft's; Chris tries it on Harriet; then merge `m6` into `main`, tag `v2.0.0-alpha.1`, publish,
+and mark M6 done in ROADMAP.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 
@@ -41,6 +44,25 @@ Chris split stage 10: 10a (this) the failures and section 7; 10b the review and 
 - Tests run here: host tests of every changed crate; under KVM, all four x86-64 boots (UEFI and
   BIOS, self-test and desktop) with 2 GiB, and the UEFI desktop boot after the last change.
   ARM64 left to GitHub's CI; Stress (5 runs) started on `f7ad74f`'s successor.
+
+### Stage 10b, part 3, session 25: the Welcome window
+- **Why**: on Harriet, files saved as `owner` were gone after a restart; nothing said they
+  were kept in memory. Chris chose: files kept from the first start, and a window asking
+  whether to make a user or carry on as Owner.
+- **Built** (notes 0017, 0024 section 6a, 0026 and 0004, Changes of 22 November):
+  `prettybigrock-data.img` (256 MiB, RockFS `Files`, a system volume for `owner`, written by
+  the build tool with `lib/rockfs`; `tools/rockfs.py` finds it clean); the launcher copies it
+  to `data.img` when there is none. `apps/welcome`: on a disk, Make my user (`add_first`, new
+  in `pbr.users`) or Carry on; in memory, Set up a disk. A third `pbr.users` badge,
+  `users welcome`, which may ask only `whoami`, `settings`, `set` of `welcome`, `volumes`,
+  `setup`, `add_first` and `restart` (the self-test checks the rest is refused, and a
+  standard user's administrator operations). The desktop opens Welcome until `welcome done`;
+  users made by `add_first` or `setup` start with it. The ESP grew to 96 MiB (debug archives).
+- **Tests**: host tests for the window (pages, names, disks offered, refusals, pictures) and
+  the data disk; the desktop boot answers Welcome in its first boot, makes `dana` through it
+  at the end of the second, and a fourth boot (`desktop-dana`) checks dana is logged in and
+  does the Shut down steps. The in-memory page's Set up was driven here by hand on the
+  release image: set up, Restart now, chris logged in from the new disk, no Welcome again.
 
 ### Stage 10b, part 2, session 25: the release
 - **Docs**: notes 0020 to 0026 say "Built 22 November 2026"; DESIGN.md section 8 says what M6

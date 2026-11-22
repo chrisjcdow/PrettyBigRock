@@ -1290,3 +1290,34 @@ hours.
 Results: `cargo xtask check` passed; under KVM here, every x86-64 boot on the release images
 passed after the runner fix. ARM64 left to GitHub's CI and Stress. Left open: Stress's result,
 Chris's go-ahead after Harriet, then merging into `main`, tagging and publishing.
+
+## Session 25, continued: 22 November 2026, the Welcome window
+
+Chris tried the draft on Harriet: he saved a text file as `owner`, restarted, and it was gone,
+because without a system volume files are kept in memory and nothing said so. He asked for a
+graphical prompt, then for files to be kept from the start, with a choice of a user of one's
+own or carrying on as Owner. Claude kept one thing from the first proposal: the system never
+formats a disk unasked (a blank disk on a real computer in M7 may matter to someone), so the
+disk comes ready-made instead.
+
+- **Notes first**: 0024 section 6a (the Welcome window and its capability), 0017 (`add_first`),
+  0026 (the ready-made disk, and how it is tested), and later 0004 (the ESP grew to 96 MiB
+  when the debug archives no longer fitted).
+- **The users service** serves a third kind of `pbr.users` capability, for apps whose manifest
+  says `users welcome` (system apps only). It may ask `whoami`, `settings`, `set` of `welcome`
+  only, `volumes`, `setup`, `add_first` and `restart`; administrators' operations still need an
+  administrator. `add_first` adds an administrator who is logged in from the next start. A
+  user made by `add_first` or `setup` starts with `welcome done`, so isn't welcomed again.
+- **`apps/welcome`**: on a disk, Make my user or Carry on as Owner; in memory, the disks
+  `setup` could use and Set up; then Restart now. **The desktop** opens it until answered.
+- **`prettybigrock-data.img`**, written by the build tool with `lib/rockfs`; the launcher copies
+  it to `data.img`.
+- **Tests**: host tests for the window and the disk; the self-test tries everything the
+  Welcome capability must refuse; the desktop boot answers Welcome, makes `dana` through it
+  and restarts, and a new fourth boot checks dana is logged in.
+
+Results: `cargo xtask check` and the changed crates' host tests passed; under KVM, x86-64
+UEFI's self-test and all four desktop boots passed; the release image with the ready-made disk
+opens Welcome on "Files", and with a blank disk the in-memory page's Set up and Restart now
+logged the new user in from it. Left open: CI and Stress, rebuilding the draft's files, and
+Chris trying it again.
