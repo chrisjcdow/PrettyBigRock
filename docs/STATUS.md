@@ -9,9 +9,9 @@ release.** Chris tried the draft on Harriet, saved a file, restarted, and it had
 system volume: files in memory). With Chris: the launcher now attaches a ready-made system
 disk, and a **Welcome** window says where files are kept and offers a user of one's own (note
 0024, section 6a). Built, booted here on x86-64 UEFI under KVM (self-test and all four desktop
-boots), pushed. **Next**: CI on `8c20469`; Stress again (system code changed after the last
-one); rebuild the release's files (the zip gains `prettybigrock-data.img`) and replace the
-draft's; Chris tries it on Harriet; then merge `m6` into `main`, tag `v2.0.0-alpha.1`, publish,
+boots), pushed. CI passed on `8c20469`; Stress (5 runs × 6 jobs) **passed** on `936e1f6`; the
+release's files were rebuilt (the zip gains `prettybigrock-data.img`) and the draft's replaced.
+**Next**: Chris tries it on Harriet; then merge `m6` into `main`, tag `v2.0.0-alpha.1`, publish,
 and mark M6 done in ROADMAP.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
