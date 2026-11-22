@@ -16,7 +16,7 @@
 //! rules. Anything unexpected refuses the whole manifest, and the app can't be launched.
 //!
 //! M6 adds the desktop's keys (note 0024, section 3): `windows`, `data`, `picker`, `sysinfo`,
-//! `system`, `desktop` and `sandbox view` ask for something; `hidden`, `icon NAME` and
+//! `system`, `desktop`, `sandbox view` and `users welcome` ask for something; `hidden`, `icon NAME` and
 //! `opens EXT...` are hints for the desktop and Files, which grant nothing.
 
 use crate::lines::{self, Limits, ReadError};
@@ -75,6 +75,9 @@ pub struct App {
     /// `sandbox view`: a `pbr.sandbox` capability that may look at apps and take grants back
     /// (the permissions viewer).
     pub sandbox_view: bool,
+    /// `users welcome`: a `pbr.users` capability for the Welcome window (note 0024, section
+    /// 6a).
+    pub users_welcome: bool,
     /// `hidden`: not listed in the start menu or on the desktop.
     pub hidden: bool,
     /// `icon NAME`: which of the system's icons to show for it.
@@ -123,7 +126,7 @@ impl App {
         // The keys that are just a word: each at most once.
         let (mut windows, mut data, mut picker, mut sysinfo) = (None, None, None, None);
         let (mut system, mut desktop, mut hidden, mut sandbox_view) = (None, None, None, None);
-        let (mut icon, mut opens) = (None, None);
+        let (mut icon, mut opens, mut users_welcome) = (None, None, None);
         let mut places: Vec<(Place, Rights)> = Vec::new();
         for line in lines::read(text, LIMITS)? {
             match line.key {
@@ -183,6 +186,14 @@ impl App {
                         return Err(Error::BadValue);
                     }
                     once(&mut sandbox_view, ())?;
+                }
+                // Likewise `users welcome`, the only `users` there is.
+                "users" => {
+                    let w = line.plain_words()?;
+                    if w.as_slice() != ["welcome"] {
+                        return Err(Error::BadValue);
+                    }
+                    once(&mut users_welcome, ())?;
                 }
                 "icon" => {
                     let w = line.plain_words()?;
@@ -244,6 +255,7 @@ impl App {
                 system: system.is_some(),
                 desktop: desktop.is_some(),
                 sandbox_view: sandbox_view.is_some(),
+                users_welcome: users_welcome.is_some(),
                 hidden: hidden.is_some(),
                 icon,
                 opens: opens.unwrap_or_default(),
@@ -334,6 +346,10 @@ mod tests {
         assert_eq!(with("sandbox all"), Err(Error::BadValue));
         assert_eq!(with("sandbox view view"), Err(Error::BadValue));
         assert_eq!(with("sandbox view\nsandbox view"), Err(Error::Repeated));
+        assert_eq!(with("users"), Err(Error::BadValue));
+        assert_eq!(with("users all"), Err(Error::BadValue));
+        assert_eq!(with("users welcome welcome"), Err(Error::BadValue));
+        assert_eq!(with("users welcome\nusers welcome"), Err(Error::Repeated));
         assert_eq!(with("Windows"), Err(Error::UnknownKey));
         assert_eq!(with("icon"), Err(Error::BadValue));
         assert_eq!(with("icon Notepad"), Err(Error::BadValue));

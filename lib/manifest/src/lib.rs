@@ -173,13 +173,15 @@ pub struct Decision {
     pub desktop: bool,
     /// A `pbr.sandbox` capability for the permissions viewer.
     pub sandbox_view: bool,
+    /// A `pbr.users` capability for the Welcome window.
+    pub users_welcome: bool,
 }
 
 /// Why an app may not be launched at all, whatever the rules say.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refused {
     /// It isn't a system app, and asks for something only system apps may have (`system`,
-    /// `desktop`, `sandbox view`): an app installed later that asks to be the desktop is either
+    /// `desktop`, `sandbox view`, `users welcome`): an app installed later that asks to be the desktop is either
     /// broken or up to something.
     SystemOnly,
 }
@@ -198,8 +200,8 @@ pub enum Refused {
 ///   session has the display); `picker` only with `windows`.
 /// - `data`, the app's own folder, read and write, is granted like a place: if a rule allows
 ///   it (with the rights it allows), or the app is a system app and no rule denies it.
-/// - `sysinfo` only to system apps; `system`, `desktop` and `sandbox view` only to system
-///   apps, and an app that isn't one but asks for them is refused altogether
+/// - `sysinfo` only to system apps; `system`, `desktop`, `sandbox view` and `users welcome`
+///   only to system apps, and an app that isn't one but asks for them is refused altogether
 ///   ([`Refused::SystemOnly`]). No rule can give them: rules can't name them.
 ///
 /// Nothing is granted that the manifest didn't ask for: rules only ever take away, or let an
@@ -210,7 +212,7 @@ pub fn decide(
     rules: &rules::Rules,
     system: bool,
 ) -> Result<Decision, Refused> {
-    if !system && (app.system || app.desktop || app.sandbox_view) {
+    if !system && (app.system || app.desktop || app.sandbox_view || app.users_welcome) {
         return Err(Refused::SystemOnly);
     }
     let mut places = Vec::new();
@@ -245,6 +247,7 @@ pub fn decide(
         system: app.system,
         desktop: app.desktop,
         sandbox_view: app.sandbox_view,
+        users_welcome: app.users_welcome,
     })
 }
 
@@ -424,9 +427,9 @@ mod tests {
         assert!(d.data.is_none() && !d.sysinfo);
         let d = decide("p", &p, &rules("allow p data read write\n"), false);
         assert_eq!(d.data, Some((Rights::ReadWrite, Reason::Rule)));
-        // `system`, `desktop` and `sandbox view` refuse an app that isn't a system app, whatever
-        // the rules say (no rule can name them; `trust` doesn't give them).
-        for key in ["system", "desktop", "sandbox view"] {
+        // `system`, `desktop`, `sandbox view` and `users welcome` refuse an app that isn't a
+        // system app, whatever the rules say (no rule can name them; `trust` doesn't give them).
+        for key in ["system", "desktop", "sandbox view", "users welcome"] {
             let a = app(&alloc::format!("title \"X\"\nbudget 1M\nwindows\ntrusted\n{key}\n"));
             let r = rules("trust x\nallow x data read write\n");
             assert_eq!(super::decide("x", &a, &r, false), Err(Refused::SystemOnly), "{key}");
@@ -436,7 +439,11 @@ mod tests {
         assert!(rules::Rules::parse(b"allow x desktop").is_err());
         let v = app("title \"V\"\nbudget 1M\nwindows\nsystem\nsandbox view\n");
         let d = decide("v", &v, &rules(""), true);
-        assert!(d.system && d.sandbox_view && !d.desktop);
+        assert!(d.system && d.sandbox_view && !d.desktop && !d.users_welcome);
+        let w = app("title \"W\"\nbudget 1M\nwindows\nsystem\nusers welcome\n");
+        let d = decide("w", &w, &rules(""), true);
+        assert!(d.users_welcome && !d.trusted && !d.sandbox_view);
+        assert!(rules::Rules::parse(b"allow x users").is_err());
     }
 
     #[test]

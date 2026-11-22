@@ -14,6 +14,7 @@
 //! |-----|---------|
 //! | `layout NAME` | The keyboard layout (note 0021); `us` if absent |
 //! | `timezone ±HH:MM` | The offset from UTC for showing times; `+00:00` if absent |
+//! | `welcome done` | The Welcome window has been answered (note 0024, section 6a) |
 //!
 //! One `key value` per line, in the style of every settings file here (`lines`). **Unknown
 //! keys are kept and ignored**: a later version may add some, and an older one that rewrites
@@ -42,6 +43,10 @@ pub const MAX_VALUE: usize = 128;
 pub const LAYOUT: &str = "layout";
 /// The key of the time zone.
 pub const TIMEZONE: &str = "timezone";
+/// The key the Welcome window sets once it has been answered, and its only value.
+pub const WELCOME: &str = "welcome";
+/// See [`WELCOME`].
+pub const WELCOME_DONE: &str = "done";
 /// The layout when the file names none.
 pub const DEFAULT_LAYOUT: &str = "us";
 
@@ -136,6 +141,7 @@ fn good_value(key: &str, value: &str) -> bool {
     match key {
         LAYOUT => good_layout_name(value),
         TIMEZONE => timezone_minutes(value).is_some(),
+        WELCOME => value == WELCOME_DONE,
         // No `#` (it would be read back as the start of a comment) and nothing but printable
         // ASCII, with no space at either end (which reading back would trim).
         _ => {
@@ -329,6 +335,18 @@ mod tests {
         }
         for bad in ["", "US", "us intl", "us/../x", "us.kbd", "é", &"x".repeat(33)] {
             assert!(!good_layout_name(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn welcome_is_only_done() {
+        assert_eq!(parse("welcome done\n").unwrap().get(WELCOME), Some(WELCOME_DONE));
+        for bad in ["yes", "Done", "done done", "no"] {
+            assert_eq!(
+                parse(&format!("welcome {bad}\n")),
+                Err(SettingsError::BadValue(1)),
+                "{bad}"
+            );
         }
     }
 
