@@ -116,19 +116,20 @@ cargo xtask doctor               # how the toolchain was found
 ```
 
 On Windows, install [QEMU](https://qemu.weilnetz.de/w64/) and either build an image or
-download `prettybigrock.img` from the **Releases** page into a `build\release` folder beside
-`run-prettybigrock.bat`. Double-click the batch file, or add any of `bios`, `arm`,
+download the zip from the **Releases** page and unpack it (it has `run-prettybigrock.bat`, and
+the images in `build\release` beside it). Double-click the batch file, or add any of `bios`, `arm`,
 `two-screens`, `selftest` and a number of cores after its name, for example
 `run-prettybigrock.bat two-screens 8`. With `two-screens`, QEMU's View menu shows the second
 screen.
 
 Either way the desktop appears once everything has started. `cargo xtask run` attaches the
 boot tests' disks too, one of them a system volume with two users, so the desktop starts as
-`chris`, an administrator, with real files. `run-prettybigrock.bat` attaches a blank data
-disk, `data.img`, made beside it the first time; until it is set up, the desktop starts as
-`owner`, whose files are kept in memory until QEMU stops. To keep them, open Terminal, find the
-blank disk with `volumes`, and type `setup VOLUME NAME` (for example `setup 1 chris`): from the
-next start, that disk holds your files, with you as its first user.
+`chris`, an administrator, with real files. `run-prettybigrock.bat` attaches `data.img`, a
+copy of `prettybigrock-data.img` made beside it the first time: a disk already set up for the
+user `owner`, so your files are kept from the start. The **Welcome** window says so, and offers
+a user of your own (it restarts as you). Delete `data.img` to start afresh. Without a set-up
+disk (the image on its own), files are kept in memory until QEMU stops, and the Welcome window
+offers to set a blank disk up instead, as Terminal's `setup VOLUME NAME` does.
 
 The image is also a real boot disk: written to a USB stick, it should start a PC or an ARM64
 machine with UEFI (with Secure Boot turned off), or an older PC with a BIOS. Real hardware is

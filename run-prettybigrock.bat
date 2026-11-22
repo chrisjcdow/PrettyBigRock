@@ -11,9 +11,10 @@ rem For example:
 rem     run-prettybigrock.bat two-screens 8
 rem It uses build\release (or build\debug), made by "cargo xtask build", or a downloaded
 rem prettybigrock.img put in build\release.
-rem Your files can be kept on data.img, next to this file, which is made blank the first time.
-rem Until it is set up, they are kept in memory: in Terminal, "volumes" lists it and
-rem "setup VOLUME NAME" makes it the system disk, with you as its first user, from the next start.
+rem Your files are kept on data.img, next to this file: the first time, it is a copy of
+rem prettybigrock-data.img (a disk set up for the user "owner"), which the Welcome window offers
+rem to give a user of your own. Delete data.img to start afresh. If neither is there, data.img
+rem is made blank, your files are kept in memory, and the Welcome window offers to set it up.
 rem The pointer is a tablet (a virtio one), so the mouse doesn't need capturing. On ARM64 the
 rem keyboard is a virtio one too (PrettyBigRock has no USB yet).
 rem PrettyBigRock 1.x has its own launcher in the classic folder.
@@ -75,6 +76,9 @@ if not exist "%IMG%" (
   exit /b 1
 )
 set "DATA=%~dp0data.img"
+set "READY=%~dp0build\release\prettybigrock-data.img"
+if not exist "%READY%" set "READY=%~dp0build\debug\prettybigrock-data.img"
+if not exist "%DATA%" if exist "%READY%" copy /b "%READY%" "%DATA%" >nul
 if not exist "%DATA%" "%QDIR%\qemu-img.exe" create -f raw "%DATA%" 256M >nul
 set "DATASET=-drive "if=none,id=data,file=%DATA%,format=raw" -device virtio-blk-pci,drive=data"
 if "%MODE%"=="arm" goto arm
