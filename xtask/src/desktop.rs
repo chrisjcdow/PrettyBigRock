@@ -1196,6 +1196,10 @@ impl Run<'_> {
     /// The text-mode boot: the console instead of the display server, and the shell on it.
     fn text_mode(&mut self) -> Result<(), String> {
         self.line("Desktop test: text mode")?;
+        // The shell's prompt can come before the input service has the keyboard the runner
+        // types on (seen with release builds, whose shell starts sooner): keys sent before then
+        // go nowhere.
+        self.line("input: using QEMU Virtio Keyboard")?;
         self.shell("poweroff")?;
         self.line("users: chris asked to turn the computer off")?;
         self.stopped("guest-shutdown")
