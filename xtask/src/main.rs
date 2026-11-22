@@ -24,6 +24,7 @@ use std::process::{Command, ExitCode};
 use std::time::Duration;
 
 mod classicdisk;
+mod datadisk;
 mod desktop;
 mod elf;
 mod image;
@@ -104,6 +105,7 @@ const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-calculator", "calculator", "apps/calculator"),
     ("pbr-snake-app", "snake", "apps/snake"),
     ("pbr-about", "about", "apps/about"),
+    ("pbr-welcome", "welcome", "apps/welcome"),
     ("pbr-paint", "paint", "apps/paint"),
     ("pbr-notepad", "notepad", "apps/notepad"),
     ("pbr-files-app", "files", "apps/files"),
@@ -132,6 +134,7 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
     ("apps/calculator.app", "apps/calculator/calculator.app"),
     ("apps/snake.app", "apps/snake/snake.app"),
     ("apps/about.app", "apps/about/about.app"),
+    ("apps/welcome.app", "apps/welcome/welcome.app"),
     ("apps/paint.app", "apps/paint/paint.app"),
     ("apps/notepad.app", "apps/notepad/notepad.app"),
     ("apps/files.app", "apps/files/files.app"),
@@ -178,6 +181,7 @@ const PROGRAM_CRATES: &[&str] = &[
     "pbr-snake",
     "pbr-snake-app",
     "pbr-about",
+    "pbr-welcome",
     "pbr-paint",
     "pbr-notepad",
     "pbr-files-app",
@@ -232,6 +236,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-snake",
     "pbr-snake-app",
     "pbr-about",
+    "pbr-welcome",
     "pbr-paint",
     "pbr-notepad",
     "pbr-files-app",
@@ -735,6 +740,9 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         })?;
         paths.push(write_out(root, &format!("build/{profile}/{name}"), &img)?);
     }
+    // And the disk the release's launcher attaches, already set up for `owner`.
+    let data = root.join(format!("build/{profile}/prettybigrock-data.img"));
+    datadisk::write(&data)?;
     Ok(Images {
         normal: paths.remove(0),
         selftest: paths.remove(0),

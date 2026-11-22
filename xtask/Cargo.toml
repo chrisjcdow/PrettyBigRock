@@ -19,6 +19,9 @@ pbr-bmp = { path = "../lib/bmp" }
 pbr-crc = { path = "../lib/crc" }
 pbr-desktop = { path = "../lib/desktop" }
 pbr-draw = { path = "../lib/draw" }
+pbr-fs = { path = "../lib/fs" }
+pbr-manifest = { path = "../lib/manifest" }
+pbr-rockfs = { path = "../lib/rockfs" }
 
 [dev-dependencies]
 pbr-partition = { path = "../lib/partition" }

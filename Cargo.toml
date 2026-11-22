@@ -18,6 +18,7 @@ members = [
     "apps/shell",
     "apps/snake",
     "apps/terminal",
+    "apps/welcome",
     "boot/bios",
     "boot/common",
     "boot/uefi",

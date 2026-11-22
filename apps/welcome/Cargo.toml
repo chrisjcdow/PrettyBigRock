@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-welcome"
+description = "The Welcome window: where your files are kept, and a user of your own (note 0024, section 6a)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The window is a library, tested on the host with sandstone's harness against a pretend
+# users service; the program is the event loop around it.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "welcome"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-manifest = { path = "../../lib/manifest" }
+pbr-sandstone = { path = "../../lib/sandstone" }
+
+[target.'cfg(target_os = "prettybigrock")'.dependencies]
+pbr-granite = { path = "../../lib/granite" }
+pbr-window = { path = "../../lib/window" }
+
+[dev-dependencies]
+pbr-sandstone = { path = "../../lib/sandstone", features = ["testing"] }
+
+[lints]
+workspace = true

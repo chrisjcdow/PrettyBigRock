@@ -703,6 +703,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-welcome"
+version = "0.0.0"
+dependencies = [
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-manifest",
+ "pbr-sandstone",
+ "pbr-window",
+]
+
+[[package]]
 name = "pbr-window"
 version = "0.0.0"
 dependencies = [
@@ -732,7 +743,10 @@ dependencies = [
  "pbr-devices",
  "pbr-draw",
  "pbr-elf",
+ "pbr-fs",
  "pbr-interface-compiler",
+ "pbr-manifest",
  "pbr-partition",
+ "pbr-rockfs",
  "pbr-testpng",
 ]
