@@ -15,12 +15,15 @@
 //! thread starts the next step. Each step it starts is announced with a `Desktop test: ...`
 //! line, which is what the runner waits for.
 //!
-//! The boot is run twice on the same disks (note 0024, section 11). The first time, after the
-//! windows, it saves a note in an app's own folder, and the display server is crashed past its
+//! The boot is run three times on the same disks (note 0024, section 11; note 0026, Changes).
+//! The first time, the Welcome window opens and the runner answers it; after the windows, this
+//! thread saves a note in an app's own folder, and the display server is crashed past its
 //! restart policy so that the console takes its place and the shell appears (falling back); the
 //! runner restarts the machine from the shell. The second time, the note is found, and the
-//! runner shuts the machine down from the start menu. With `text` too, the console is started
-//! instead of the display server, and the runner turns the machine off from the shell.
+//! runner makes the user `dana` through the Welcome window, which restarts the machine. The
+//! third time `dana` is logged in, and the runner shuts the machine down from the start menu.
+//! With `text` too, the console is started instead of the display server, and the runner turns
+//! the machine off from the shell.
 
 use crate::sandboxtest::DEBUG;
 use crate::supervisor::{Kind, Supervisor};
@@ -28,11 +31,13 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use granite::endpoint::Endpoint;
+use granite::interface::CallError;
 use granite::notification::Notification;
 use granite::process::{Process, State};
 use granite::time;
 use pbr_interfaces::pbr_sandbox::{self as sandbox, AppServices, FileRights, GrantReason};
-use pbr_interfaces::pbr_users_debug as users_debug;
+use pbr_interfaces::pbr_users::{self as users};
+use pbr_interfaces::pbr_users_debug::{self as users_debug, DebugError};
 
 /// How long a step driven by the runner may take: the runner types, clicks and takes
 /// screenshots on an emulated machine that may be slow.
@@ -73,6 +78,10 @@ fn text_mode() -> Result<String, String> {
 struct Session {
     debug: users_debug::Client,
     sandbox: sandbox::Client,
+    /// The session's own `pbr.users`.
+    users: users::Client,
+    /// Whose it is: `chris`, or `dana` once the second boot has made her.
+    name: &'static str,
 }
 
 impl Session {
@@ -83,10 +92,19 @@ impl Session {
         debug.set_timeout_ms(30_000);
         let end = time::after_ms(secs * 1000);
         loop {
-            if let Ok(caps) = debug.session("chris") {
+            // `dana` exists only after the second boot made her, and is then the one logged
+            // in. (Asking for chris's session then would start one: it is asked for only when
+            // there is no dana.)
+            let name = match debug.session("dana") {
+                Err(CallError::Service(DebugError::NoSuchUser)) => "chris",
+                _ => "dana",
+            };
+            if let Ok(caps) = debug.session(name) {
                 let mut sandbox = sandbox::Client::new(Endpoint(caps.sandbox));
                 sandbox.set_timeout_ms(30_000);
-                let s = Session { debug, sandbox };
+                let mut users = users::Client::new(Endpoint(caps.users));
+                users.set_timeout_ms(30_000);
+                let s = Session { debug, sandbox, users, name };
                 if s.app("desktop").is_some() {
                     return Ok(s);
                 }
@@ -112,6 +130,31 @@ impl Session {
         let started = self.sandbox.start(launch).map_err(|e| format!("starting {app}: {e}"))?;
         Ok((started.app, started.process))
     }
+}
+
+/// Whether the session's user has answered the Welcome window.
+fn welcomed(s: &Session) -> Result<bool, String> {
+    let list = s.users.settings().map_err(|e| format!("{}'s settings: {e}", s.name))?;
+    Ok(list.iter().any(|x| x.key == "welcome" && x.value == "done"))
+}
+
+/// Waits for the desktop to open the Welcome window, then for it to end.
+fn wait_for_welcome(s: &Session) -> Result<(), String> {
+    let opened = time::after_ms(60_000);
+    while s.app("welcome").is_none() {
+        if time::now() > opened {
+            return Err("the desktop didn't open the Welcome window".into());
+        }
+        time::sleep_ms(200);
+    }
+    let end = time::after_ms(STEP_SECS * 1000);
+    while s.app("welcome").is_some() {
+        if time::now() > end {
+            return Err(format!("the Welcome window was still open after {STEP_SECS} seconds"));
+        }
+        time::sleep_ms(200);
+    }
+    Ok(())
 }
 
 /// Waits for `p` to end, by itself, with `status` (`None`: however it ends). Takes the
@@ -295,6 +338,24 @@ fn all(sup: &Supervisor) -> Result<String, String> {
     let s = Session::find(sup, 300)?;
     check_desktop(&s)?;
     done.push("the desktop started by the sandbox manager, holding only what it should");
+
+    // The third boot: dana, made through the Welcome window, is logged in.
+    if s.name == "dana" {
+        granite::println!("Desktop test: as dana");
+        done.push("dana, made through the Welcome window, logged in at start");
+        return Ok(done.join(", "));
+    }
+
+    // Until it is answered, the desktop opens the Welcome window at start (note 0024, section
+    // 6a), and the runner answers it before anything else opens.
+    if !welcomed(&s)? {
+        wait_for_welcome(&s)?;
+        if !welcomed(&s)? {
+            return Err("the Welcome window ended without being answered".into());
+        }
+        granite::println!("Desktop test: Welcome answered");
+        done.push("the Welcome window opened at start, and answered");
+    }
 
     // Which boot this is: a note saved by the first is found by the second.
     let (_, p) = s.launch("wintest", "name=Saved load")?;

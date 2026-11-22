@@ -430,21 +430,24 @@ struct Run<'a> {
     limit: Duration,
 }
 
-/// Which of the desktop boot's three boots (note 0024, section 11).
+/// Which of the desktop boot's four boots (note 0024, section 11; note 0026, Changes).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Boot {
-    /// On fresh disks: the desktop, its windows and menu, ending in falling back to the shell,
-    /// which restarts the machine.
+    /// On fresh disks: the Welcome window, answered; the desktop, its windows and menu, ending
+    /// in falling back to the shell, which restarts the machine.
     First,
-    /// The same disks again: what was saved is there; the start menu shuts the machine down.
+    /// The same disks again: what was saved is there; the Welcome window makes the user
+    /// `dana`, and restarts the machine.
     Second,
+    /// The same disks again: dana is logged in; the start menu shuts the machine down.
+    Dana,
     /// From the `text desktoptest` image: the shell, which turns the machine off.
     Text,
 }
 
-/// Boots `cfg` three times (note 0024, section 11): from `image` (made with `desktoptest` on
-/// its command line) on fresh disks, then on the same disks again, then from `text_image`
-/// (`text desktoptest`). Returns what the machines wrote to their serial ports.
+/// Boots `cfg` four times (note 0024, section 11): from `image` (made with `desktoptest` on
+/// its command line) on fresh disks, then on the same disks twice again, then from
+/// `text_image` (`text desktoptest`). Returns what the machines wrote to their serial ports.
 pub fn test(
     cfg: &Config,
     image: &Path,
@@ -456,6 +459,7 @@ pub fn test(
     for (boot, img, name) in [
         (Boot::First, image, "desktop"),
         (Boot::Second, image, "desktop-again"),
+        (Boot::Dana, image, "desktop-dana"),
         (Boot::Text, text_image, "desktop-text"),
     ] {
         eprintln!("  ({name})");
@@ -472,7 +476,7 @@ pub fn test(
 }
 
 impl<'a> Run<'a> {
-    /// Starts QEMU for one boot, on fresh disks unless it is the second.
+    /// Starts QEMU for one boot, on fresh disks unless it follows another on the same ones.
     fn start(
         cfg: &'a Config,
         image: &'a Path,
@@ -484,7 +488,8 @@ impl<'a> Run<'a> {
         let tag = qemu::tag(cfg);
         let log = work.join(format!("{name}-{tag}.txt"));
         let _ = fs::remove_file(&log);
-        let mut cmd = qemu::command_on(cfg, image, work, true, boot != Boot::Second)?;
+        let fresh = matches!(boot, Boot::First | Boot::Text);
+        let mut cmd = qemu::command_on(cfg, image, work, true, fresh)?;
         cmd.args(["-display", "none", "-monitor", "none"]);
         let two = cfg.screens == Screens::TwoVirtioGpu;
         let vnc_path = work.join(format!("vnc-desktop-{tag}.sock"));
@@ -752,6 +757,7 @@ impl Run<'_> {
         match boot {
             Boot::First => self.first(),
             Boot::Second => self.second(),
+            Boot::Dana => self.dana(),
             Boot::Text => self.text_mode(),
         }
     }
@@ -760,6 +766,17 @@ impl Run<'_> {
     /// `screens.txt` says, on two screens): QEMU drops input sent to a device whose driver
     /// isn't listening yet.
     fn desktop_ready(&mut self, times: usize) -> Result<(), String> {
+        self.desktop_up(times)?;
+        if self.cfg.screens == Screens::TwoVirtioGpu {
+            self.lines("desktop: arranged 2 screens from screens.txt", times)?;
+            self.view("the second screen at 2x", |v| v.screens.iter().any(|s| s.scale == 200))?;
+        }
+        Ok(())
+    }
+
+    /// Waits for the input devices and the desktop, without the screens arranged (a user with
+    /// no `screens.txt`, such as dana).
+    fn desktop_up(&mut self, times: usize) -> Result<(), String> {
         self.line("input: using QEMU Virtio Keyboard")?;
         self.line("input: using QEMU Virtio Mouse")?;
         // (Only now: QEMU makes its control socket a moment after it starts.)
@@ -769,12 +786,7 @@ impl Run<'_> {
             Screens::FirmwareWithTablet => self.lines("display: 1 tablets.", times)?,
             Screens::Firmware => {}
         }
-        self.lines("desktop: ready", times)?;
-        if self.cfg.screens == Screens::TwoVirtioGpu {
-            self.lines("desktop: arranged 2 screens from screens.txt", times)?;
-            self.view("the second screen at 2x", |v| v.screens.iter().any(|s| s.scale == 200))?;
-        }
-        Ok(())
+        self.lines("desktop: ready", times)
     }
 
     /// Keeps a screenshot of every screen beside the log, as `NAME-<what>-<screen>.ppm`: what
@@ -856,12 +868,35 @@ impl Run<'_> {
     }
 
     /// The second boot, on the same disks: the note saved in the first is found, the screens are
-    /// where `screens.txt` says, and the start menu's Shut down turns the machine off.
+    /// where `screens.txt` says, the Welcome window doesn't open again, and through it the user
+    /// `dana` is made, which restarts the machine.
     fn second(&mut self) -> Result<(), String> {
         self.desktop_ready(1)?;
         self.line("Desktop test: after restarting")?;
         self.line("Desktop test passed")?;
+        // Answered in the first boot, the Welcome window doesn't open again.
+        if self.count("welcome: open.") != 0 {
+            return Err("the Welcome window opened again after it was answered".into());
+        }
         self.after_restarting()?;
+        self.welcome_make_user()
+    }
+
+    /// The third boot on the same disks: dana, made in the second, is logged in (not chris),
+    /// isn't welcomed again, and the start menu's Shut down turns the machine off.
+    fn dana(&mut self) -> Result<(), String> {
+        // Dana has no `screens.txt`: the screens are as the display server first puts them.
+        self.desktop_up(1)?;
+        self.line("users: dana (administrator) is logged in")?;
+        self.line("Desktop test: as dana")?;
+        self.line("Desktop test passed")?;
+        if self.count("users: chris (") != 0 {
+            return Err("chris was logged in as well as dana".into());
+        }
+        std::thread::sleep(Duration::from_secs(2));
+        if self.count("welcome: open.") != 0 {
+            return Err("the Welcome window opened for dana, who was made through it".into());
+        }
         // Shut down asks first (note 0024, Changes); Escape says no, and nothing happens.
         self.choose_from_start_menu("Shut down", 1)?;
         self.line("desktop: asking: Shut down?")?;
@@ -908,8 +943,51 @@ impl Run<'_> {
         let v = self.view("the question", |v| v.window("Shut down").is_some())?;
         let q = v.window("Shut down").cloned().ok_or("no question")?;
         self.click_ending(q.x + bx, q.y + by)?;
-        self.line("users: chris asked to turn the computer off")?;
+        self.line("users: dana asked to turn the computer off")?;
         self.stopped("guest-shutdown")
+    }
+
+    /// The Welcome window as the first boot finds it (note 0024, section 6a): opened by the
+    /// desktop at start, saying the files are on the system volume (the test disk's `Home`) and
+    /// who is using it; Carry on answers it, and it closes.
+    fn welcome_carry_on(&mut self) -> Result<(), String> {
+        self.line("welcome: page disk")?;
+        self.line("welcome: open.")?;
+        let g = self.program_view("welcome", "its words", |g| g.widget("words").is_some())?;
+        let words = g.widget("words").map(|w| w.label.clone()).unwrap_or_default();
+        if !words.contains("the disk \"Home\"") || !words.contains("as Chris.") {
+            return Err(format!("the Welcome window says {words:?}"));
+        }
+        self.view("Welcome drawn and focused", |v| {
+            v.window("Welcome").is_some_and(|w| w.is("drawn") && w.is("focused"))
+        })?;
+        self.click_program_widget("welcome", "Welcome", "carry")?;
+        self.line("welcome: answered")?;
+        self.line("welcome: closing")?;
+        self.line("Desktop test: Welcome answered")?;
+        self.view("Welcome gone", |v| v.window("Welcome").is_none()).map(|_| ())
+    }
+
+    /// Opens the Welcome window from the start menu, types "Dana" (the name box has the
+    /// keyboard), presses Make my user, and then Restart now: the users service adds dana,
+    /// first, and the machine restarts.
+    fn welcome_make_user(&mut self) -> Result<(), String> {
+        self.launch_app("Welcome", "welcome")?;
+        self.line("welcome: page disk")?;
+        self.program_view("welcome", "the name box focused", |g| {
+            g.focused().is_some_and(|w| w.key.as_deref() == Some("name"))
+        })?;
+        self.type_typed("Dana")?;
+        self.program_view("welcome", "Dana typed", |g| {
+            g.widget("name").is_some_and(|w| w.value == "Dana")
+        })?;
+        self.click_program_widget("welcome", "Welcome", "make")?;
+        self.line("users: added dana, who is logged in from the next start.")?;
+        self.line("welcome: answered")?;
+        self.line("welcome: page done")?;
+        self.click_program_widget("welcome", "Welcome", "restart")?;
+        self.line("users: chris asked to restart")?;
+        self.stopped("guest-reset")
     }
 
     /// What the second boot checks of note 0026 section 7's table before shutting down, with
@@ -1871,9 +1949,12 @@ impl Run<'_> {
         let two = self.cfg.screens == Screens::TwoVirtioGpu;
         let tablet = self.cfg.screens != Screens::Firmware;
 
-        // ---- Step 1: two windows, which the runner drives. ----
+        // ---- Step 0: the Welcome window, which opens at start until it is answered. ----
         self.desktop_ready(1)?;
         self.keep_screens("desktop")?;
+        self.welcome_carry_on()?;
+
+        // ---- Step 1: two windows, which the runner drives. ----
         self.line("Desktop test: drive the windows")?;
         // (Beta, opened last, is on top, and has the focus: nothing was pressed since it was
         // launched. The host tests check that rule; the runner clicks before it relies on it.)
