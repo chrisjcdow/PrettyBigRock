@@ -11,8 +11,9 @@ This repository holds two generations:
 - **PrettyBigRock 2** (everything else): a new design, meant to grow into an operating system
   you'd actually use, on real computers. It's a 64-bit microkernel written in Rust, for x86-64
   and ARM64 (including the Raspberry Pi 5), where every app and every driver runs in its own
-  sandbox. It's early days: it has files, users and a text shell, but no desktop yet. The
-  design is in [docs/DESIGN.md](docs/DESIGN.md), the plan is in
+  sandbox. Its first alpha, **2.0.0-alpha.1**, does what 1.3 does, with a desktop, files,
+  users and the 1.x apps rewritten, every app sandboxed; it runs in QEMU, and real computers
+  come next. The design is in [docs/DESIGN.md](docs/DESIGN.md), the plan is in
   [docs/ROADMAP.md](docs/ROADMAP.md), and the detailed design notes are in
   [docs/design/](docs/design/).
 
@@ -30,9 +31,9 @@ records who did what in each session. Chris directs; Claude writes the code and 
 
 ## PrettyBigRock 2: building and running it
 
-![PrettyBigRock 2 starting all four cores and passing its self-test](docs/screenshot-pbr2.png)
+![The PrettyBigRock 2 desktop, Table Mountain at dusk again](docs/screenshot-pbr2-desktop.png)
 
-So far (milestone M5) PrettyBigRock 2 starts on x86-64 PCs with UEFI or a BIOS, and on
+PrettyBigRock 2 (milestone M6, the 2.0 alpha) starts on x86-64 PCs with UEFI or a BIOS, and on
 ARM64 machines with UEFI, all from the same disk image. The kernel then:
 - takes over memory management;
 - handles interrupts and exceptions;
@@ -63,9 +64,21 @@ memory) and starts a **session** for each user, with their home folder and, for
 administrators, every volume. Each session's **sandbox manager** launches apps from their
 **manifests**: an app gets only the folders its manifest asks for, cut down by the user's
 rules, plus any file the user chose for it, and the sandbox manager can take any of it back
-while the app runs. The first app is the **text shell**, on the **console** (the screen and
-keyboard as a terminal): `ls`, `cd`, `cat`, `write`, `mkdir`, `mv`, `rm`, `run`, `grants`,
-`revoke`, `volumes`, `shutdown` and more (`help` lists them).
+while the app runs. The **shell** has `ls`, `cd`, `cat`, `write`, `mkdir`, `mv`, `rm`, `run`, `grants`,
+`revoke`, `volumes`, `shutdown` and more (`help` lists them); it runs in the desktop's
+Terminal, or on the **console** (the screen and keyboard as a terminal) in text mode.
+
+Then the **desktop**. The **input service** owns the keyboards and pointers (US, UK and US
+international layouts, chosen per user). The **display server** puts every screen together
+into one desktop, side by side or mirrored, at 1× or 2×, with screens plugged in and out while
+it runs; it draws each window's title bar and frame itself, so no app can pass itself off as
+another, and holds the clipboard. Each session's **desktop app** draws Table Mountain at dusk
+again, with icons, a taskbar and a start menu, and launches the apps: **Files**, **Notepad**,
+**Terminal**, **Calculator**, **Rock Art** (Paint), **Boomslang** (Snake) and **About**. An
+app starts with nothing but its own folder and what its manifest asks for; to open anything
+else it asks the **file picker**, which runs outside the app, and gets just the file the user
+chose. The **permissions viewer** shows what each app holds, and takes it back. Apps are
+written with **sandstone**, PrettyBigRock's widget toolkit.
 
 Services are **supervised**: when the device manager, the storage service, a filesystem
 server, the console or a session ends, it is started again, with what depends on it.
@@ -82,7 +95,11 @@ and calls under load; the devices, with a disk driver crashed on purpose dozens 
 storage, files, RockFS (on a disk 1.3 itself made, checked afterwards by 1.3's own code) and
 FAT32 (checked with `fsck.fat`); an app that must find exactly what it was granted; the
 storage service, a filesystem server and the device manager crashed and coming back; and
-the shell, with commands typed into it and the disk checked afterwards.
+the shell, with commands typed into it and the disk checked afterwards. A second boot, the
+**desktop test**, is driven from outside like a person would: it types, clicks and drags
+through every app, the picker, the clipboard and the permissions viewer, compares the screens
+with pictures drawn on the host, and restarts the machine to see that what was saved is still
+there.
 
 Building needs [rustup](https://rustup.rs); the right Rust version installs itself the first
 time. Booting it needs QEMU, with its UEFI firmware (on Debian or Ubuntu: `qemu-system-x86
@@ -90,21 +107,28 @@ qemu-system-arm ovmf qemu-efi-aarch64`).
 
 ```
 cargo xtask build --release      # build/release/prettybigrock.img: kernels, loaders, disk image
-cargo xtask run                  # start it in QEMU (add --bios, --arch aarch64, --el2, --selftest, --cores 8)
-cargo xtask qemu-test            # boot all four ways, with 4 cores, and run the self-test each time
+cargo xtask run                  # start it in QEMU (add --bios, --arch aarch64, --el2, --selftest,
+                                 #   --two-screens, --cores 8)
+cargo xtask qemu-test            # boot all four ways, with 4 cores: the self-test, then the desktop test
 cargo xtask ci                   # formatting, lints, tests, builds and boot tests: what GitHub runs
 cargo xtask interfaces           # print the code generated from interfaces/
 cargo xtask doctor               # how the toolchain was found
 ```
 
-On Windows, after building (or copying in a built image), double-click `run-prettybigrock.bat`,
-or add any of `bios`, `arm`, `selftest` and a number of cores after its name, for example
-`run-prettybigrock.bat bios selftest 8`.
+On Windows, install [QEMU](https://qemu.weilnetz.de/w64/) and either build an image or
+download `prettybigrock.img` from the **Releases** page into a `build\release` folder beside
+`run-prettybigrock.bat`. Double-click the batch file, or add any of `bios`, `arm`,
+`two-screens`, `selftest` and a number of cores after its name, for example
+`run-prettybigrock.bat two-screens 8`. With `two-screens`, QEMU's View menu shows the second
+screen.
 
-Either way the text shell appears on the screen once everything has started. `cargo xtask run`
-attaches the boot tests' disks too, one of them a system volume with two users, so the shell
-starts as `chris`, an administrator, with real files; `run-prettybigrock.bat` attaches no data
-disk, so the shell starts as `owner`, and its files are kept in memory until QEMU stops.
+Either way the desktop appears once everything has started. `cargo xtask run` attaches the
+boot tests' disks too, one of them a system volume with two users, so the desktop starts as
+`chris`, an administrator, with real files. `run-prettybigrock.bat` attaches a blank data
+disk, `data.img`, made beside it the first time; until it is set up, the desktop starts as
+`owner`, whose files are kept in memory until QEMU stops. To keep them, open Terminal, find the
+blank disk with `volumes`, and type `setup VOLUME NAME` (for example `setup 1 chris`): from the
+next start, that disk holds your files, with you as its first user.
 
 The image is also a real boot disk: written to a USB stick, it should start a PC or an ARM64
 machine with UEFI (with Secure Boot turned off), or an older PC with a BIOS. Real hardware is
@@ -204,7 +228,7 @@ inside them use more permissive licences (DESIGN.md section 9.1, decision D16):
 
 | Licence | What |
 |---|---|
-| [MPL-2.0](LICENSES/MPL-2.0.txt) | `lib/granite` (the native library), `lib/elf`, `lib/archive`, `lib/filetree`, `lib/files`, `lib/font`, `targets/` |
+| [MPL-2.0](LICENSES/MPL-2.0.txt) | `lib/granite` (the native library), `lib/window`, `lib/sandstone` (the widget toolkit), `lib/draw`, `lib/font`, `lib/browse`, `lib/bmp`, `lib/elf`, `lib/archive`, `lib/filetree`, `lib/files`, `targets/` |
 | [MIT](LICENSES/MIT.txt) | `interfaces/` (interface files), `lib/interfaces` and all code generated from interfaces |
 | [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt) | everything else: the kernel, loaders, services, tools and PrettyBigRock 1.x |
 
