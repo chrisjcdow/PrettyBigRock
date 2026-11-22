@@ -597,9 +597,34 @@ fn build_program(
     Ok(bytes)
 }
 
-/// Builds every program for `arch` and packs the start-up archive (note 0009, section 1).
-fn build_archive(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Result<Vec<u8>> {
+/// The two start-up archives [`build_archive`] makes for an architecture.
+struct Archives {
+    /// Everything, test programs included: for the boot tests' images.
+    tests: Vec<u8>,
+    /// Without the test programs and their manifests: for the ordinary image, which is what
+    /// a release holds, so that its desktop doesn't list the test windows (`Test window`,
+    /// `Gallery`).
+    plain: Vec<u8>,
+}
+
+impl Archives {
+    /// The archive for an image with this command line: the ordinary image (an empty one)
+    /// gets the plain archive, the boot tests' images the one with the tests.
+    fn for_cmdline(&self, cmdline: &[u8]) -> &[u8] {
+        if cmdline.is_empty() { &self.plain } else { &self.tests }
+    }
+}
+
+/// Whether an archive entry is only there for the boot tests: a `pbr-test-` program, or a
+/// manifest from `tests/programs`.
+fn only_for_tests(package_or_path: &str) -> bool {
+    package_or_path.starts_with("pbr-test-") || package_or_path.starts_with("tests/")
+}
+
+/// Builds every program for `arch` and packs the start-up archives (note 0009, section 1).
+fn build_archive(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Result<Archives> {
     let profile = if release { "release" } else { "debug" };
+    // Each file, with whether it is only for the tests.
     let mut files = Vec::new();
     for (package, bin, name) in PROGRAMS {
         let full = build_program(root, tc, arch, package, bin, release)?;
@@ -608,16 +633,24 @@ fn build_archive(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Res
         // Stripping must leave a valid program.
         pbr_elf::Program::parse(&stripped, arch.elf_machine)
             .map_err(|e| format!("{bin} after stripping: {e}"))?;
-        files.push((*name, stripped));
+        files.push((*name, stripped, only_for_tests(package)));
     }
     for (name, path) in ARCHIVE_FILES {
         let bytes = fs::read(root.join(path)).map_err(|e| format!("{path}: {e}"))?;
-        files.push((*name, bytes));
+        files.push((*name, bytes, only_for_tests(path)));
     }
-    let refs: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
-    let archive = pbr_archive::build(&refs).map_err(|e| format!("the start-up archive: {e}"))?;
-    write_out(root, &format!("build/{}/{profile}/startup.arc", arch.name), &archive)?;
-    Ok(archive)
+    let archive = |with_tests: bool| -> Result<Vec<u8>> {
+        let refs: Vec<(&str, &[u8])> = files
+            .iter()
+            .filter(|(_, _, test)| with_tests || !test)
+            .map(|(n, d, _)| (*n, d.as_slice()))
+            .collect();
+        pbr_archive::build(&refs).map_err(|e| format!("the start-up archive: {e}"))
+    };
+    let (tests, plain) = (archive(true)?, archive(false)?);
+    write_out(root, &format!("build/{}/{profile}/startup.arc", arch.name), &tests)?;
+    write_out(root, &format!("build/{}/{profile}/startup-plain.arc", arch.name), &plain)?;
+    Ok(Archives { tests, plain })
 }
 
 fn build_kernel(root: &Path, tc: &Toolchain, arch: &Arch, release: bool) -> Result<Vec<u8>> {
@@ -674,9 +707,9 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         kernels.push(k);
         loaders.push(l);
     }
-    // Four images: the ordinary one, and three whose command lines ask for the boot tests: the
-    // self-test, the desktop test (note 0026, section 6), and the desktop test in text mode
-    // (note 0024, section 11).
+    // Four images: the ordinary one, without the test programs, and three whose command lines
+    // ask for the boot tests: the self-test, the desktop test (note 0026, section 6), and the
+    // desktop test in text mode (note 0024, section 11).
     let mut paths = Vec::new();
     for (name, cmdline) in [
         ("prettybigrock.img", &b""[..]),
@@ -684,12 +717,14 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         ("prettybigrock-desktoptest.img", &b"desktoptest"[..]),
         ("prettybigrock-texttest.img", &b"text desktoptest"[..]),
     ] {
-        let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], &archives[0], cmdline)?;
+        let (mbr, bios) =
+            bios_loader(root, tc, release, &kernels[0], archives[0].for_cmdline(cmdline), cmdline)?;
         let mut files: Vec<(String, &[u8])> = Vec::new();
         for (i, arch) in ARCHES.iter().enumerate() {
             files.push((format!("EFI/BOOT/{}", arch.uefi_file), &loaders[i]));
             files.push((format!("PBR/{}/kernel.elf", arch.name), &kernels[i]));
-            files.push((format!("PBR/{}/startup.arc", arch.name), &archives[i]));
+            files
+                .push((format!("PBR/{}/startup.arc", arch.name), archives[i].for_cmdline(cmdline)));
         }
         files.push(("PBR/cmdline.txt".to_string(), cmdline));
         let refs: Vec<(&str, &[u8])> = files.iter().map(|(p, d)| (p.as_str(), *d)).collect();
