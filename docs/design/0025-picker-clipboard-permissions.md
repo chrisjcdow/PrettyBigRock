@@ -1,6 +1,6 @@
 # 0025: The file picker, the clipboard and the permissions viewer
 
-Status: Accepted · 9 November 2026 · Related: DESIGN.md principle 5, sections 7.1 and 7.3; notes
+Status: Accepted · 9 November 2026 · Built 22 November 2026 · Related: DESIGN.md principle 5, sections 7.1 and 7.3; notes
 0014, 0017, 0022, 0023, 0024, 0026; milestone M6
 
 ## The problem

@@ -1,6 +1,6 @@
 # 0022: The display server and compositor
 
-Status: Accepted · 9 November 2026 · Related: DESIGN.md principles 1 and 5, sections 7.1, 7.3 and 8
+Status: Accepted · 9 November 2026 · Built 22 November 2026 · Related: DESIGN.md principles 1 and 5, sections 7.1, 7.3 and 8
 ("Display server and compositor"), Q8; notes 0006, 0013, 0017, 0019, 0020, 0021, 0023, 0024,
 0025; milestone M6
 

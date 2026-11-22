@@ -1,6 +1,6 @@
 # 0021: Input: the input service and keyboard layouts
 
-Status: Accepted · 9 November 2026 · Related: DESIGN.md section 8 ("Input"); notes 0011, 0018,
+Status: Accepted · 9 November 2026 · Built 22 November 2026 · Related: DESIGN.md section 8 ("Input"); notes 0011, 0018,
 0020, 0022, 0024; milestone M6
 
 ## The problem

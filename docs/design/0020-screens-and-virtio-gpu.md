@@ -1,6 +1,6 @@
 # 0020: Screens: `pbr.display` version 2, the framebuffer driver and virtio-gpu
 
-Status: Accepted · 9 November 2026 · Related: DESIGN.md sections 8 and 11; notes 0010, 0011, 0012,
+Status: Accepted · 9 November 2026 · Built 22 November 2026 · Related: DESIGN.md sections 8 and 11; notes 0010, 0011, 0012,
 0018, 0021, 0022; milestone M6
 
 ## The problem

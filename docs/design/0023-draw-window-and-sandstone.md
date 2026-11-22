@@ -1,6 +1,6 @@
 # 0023: Drawing, windows and sandstone: the libraries apps are built with
 
-Status: Accepted · 9 November 2026 · Related: DESIGN.md sections 8 ("Text and fonts") and 9, D16;
+Status: Accepted · 9 November 2026 · Built 22 November 2026 · Related: DESIGN.md sections 8 ("Text and fonts") and 9, D16;
 notes 0009, 0014, 0021, 0022, 0025, 0026; milestone M6
 
 ## The problem

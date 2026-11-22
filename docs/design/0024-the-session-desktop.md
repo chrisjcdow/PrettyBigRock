@@ -1,6 +1,6 @@
 # 0024: The session's desktop: windows for sessions, app folders, settings, the desktop app and power
 
-Status: Accepted · 9 November 2026 · Related: DESIGN.md D11, sections 7.1 and 8; notes 0017, 0018,
+Status: Accepted · 9 November 2026 · Built 22 November 2026 · Related: DESIGN.md D11, sections 7.1 and 8; notes 0017, 0018,
 0019, 0021, 0022, 0023, 0025, 0026; milestone M6
 
 ## The problem
