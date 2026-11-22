@@ -12,10 +12,10 @@ up to date.
 
 PrettyBigRock 1.x stays available throughout as the playable version.
 
-**Releases.** There are no PrettyBigRock 2 releases until the 2.0 alpha at M6, when it can do
-everything 1.3 does. The suggested version scheme (not yet adopted in the code, which still
-says 0.0.0) is `2.0.0-alpha.N`, then betas from around M7 or M8, then 2.0. The version is set
-when the alpha is prepared.
+**Releases.** There were no PrettyBigRock 2 releases until the 2.0 alpha at M6, when it could
+do everything 1.3 does: `2.0.0-alpha.1` (note 0026, section 5). Versions are `2.0.0-alpha.N`,
+then betas from around M7 or M8, then 2.0; the version is in `lib/manifest` (`VERSION`), which
+`pbr.sysinfo`, the shell and About show.
 
 ---
 

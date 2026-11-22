@@ -250,6 +250,18 @@ while stage 2 is reviewed.
 - Installing apps from outside the start-up archive (Beyond).
 
 ## Changes
+- 22 November 2026 (M6 stage 10b, the release): **the version is on the release's files, not
+  the build tool's** (Chris's choice). The build tool keeps writing `prettybigrock.img`, which
+  CI, the boot tests and `run-prettybigrock.bat` use; the release attaches
+  `prettybigrock-2.0.0-alpha.1.zip` (the launcher and both images) and the images as
+  `prettybigrock-2.0.0-alpha.1.img` and `…-selftest.img` (section 5). **The ordinary image has
+  no test programs**: the build tool makes a second start-up archive for it without the
+  `pbr-test-` programs and the manifests from `tests/programs`, so the desktop no longer lists
+  Test window and Gallery; the boot tests' images keep everything. **The launcher** gains
+  `two-screens` (a virtio-gpu with two outputs, a tablet tied to each; UEFI only), a tablet
+  with one screen, and a blank data disk, `data.img`, that `setup` makes the system volume.
+  Booting the release images found the text-mode desktop boot typing before the input service
+  had the keyboard; the runner now waits for it.
 - 21 November 2026 (M6 stage 10b, part 1, after the review): Chris agreed that `pbr.sysinfo`
   shouldn't show a standard user's apps the volumes they can't otherwise see. Each session's
   `pbr.sysinfo` now has a badge of its own (the session's, with bit 41), and `volumes` lists
