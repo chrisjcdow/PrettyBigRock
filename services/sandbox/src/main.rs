@@ -110,14 +110,16 @@ granite::main!(main);
 
 /// The start-up roles of what the users service gives this program besides its endpoint
 /// (`role::OWN`): the session's `pbr.users`; the console's terminal, if this session owns it;
-/// the session's display, in a desktop session; and the `pbr.users` capability for the
-/// desktop, which can do less. `services/users` uses the same numbers.
+/// the session's display, in a desktop session; the `pbr.users` capability for the desktop,
+/// which can do less; and the one for the Welcome window, which can do other things (note 0024,
+/// section 6a). `services/users` uses the same numbers.
 const USERS: u32 = 1001;
 const TERMINAL: u32 = 1002;
 const DISPLAY: u32 = 1003;
 const DESKTOP_USERS: u32 = 1006;
 /// `pbr.sysinfo` (note 0026, section 3), for the system apps that ask for it.
 const SYSINFO: u32 = 1007;
+const WELCOME_USERS: u32 = 1008;
 
 /// The roles an app finds what it is granted at (note 0024, section 10).
 const APP_SANDBOX: u32 = 1000;
@@ -190,9 +192,19 @@ const PICKER: &str = "picker";
 /// The permissions viewer (note 0025, section 4), which the desktop launches.
 const VIEWER: &str = "permissions";
 /// The system apps the desktop boot's runner drives, which describe their windows in test
-/// boots (note 0026, section 6): the picker, the viewer and the apps of stage 9.
-const DESCRIBED: &[&str] =
-    &[PICKER, VIEWER, "calculator", "snake", "paint", "about", "notepad", "files", "terminal"];
+/// boots (note 0026, section 6): the picker, the viewer, the apps of stage 9 and Welcome.
+const DESCRIBED: &[&str] = &[
+    PICKER,
+    VIEWER,
+    "calculator",
+    "snake",
+    "paint",
+    "about",
+    "notepad",
+    "files",
+    "terminal",
+    "welcome",
+];
 /// The "caller" of the launches this program makes itself (the shell's, the desktop's). Badge
 /// 0 is never on a capability anyone is given, so no client can use these launches.
 const ITSELF: u64 = 0;
@@ -256,6 +268,8 @@ struct Extras {
     viewer: bool,
     picker: bool,
     sysinfo: bool,
+    /// `users welcome`.
+    welcome: bool,
     /// Its own folder: whether, and why.
     data: Option<GrantReason>,
 }
@@ -347,6 +361,8 @@ struct Sandbox {
     /// The session's `pbr.users`, for trusted apps, and the one for the desktop.
     users: Option<Endpoint>,
     desktop_users: Option<Endpoint>,
+    /// The `pbr.users` for apps granted `users welcome`.
+    welcome_users: Option<Endpoint>,
     /// `pbr.sysinfo`, for apps granted `sysinfo`.
     sysinfo: Option<Endpoint>,
     /// The console's terminal, if this session owns it.
@@ -392,6 +408,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     let endpoint = Endpoint(start.take(role::OWN).ok_or("started without an endpoint to serve")?);
     let users = start.take(USERS).map(Endpoint);
     let desktop_users = start.take(DESKTOP_USERS).map(Endpoint);
+    let welcome_users = start.take(WELCOME_USERS).map(Endpoint);
     let sysinfo = start.take(SYSINFO).map(Endpoint);
     let terminal = start.take(TERMINAL).map(|h| {
         let mut c = terminal::Client::new(Endpoint(h));
@@ -442,6 +459,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         endpoint,
         users,
         desktop_users,
+        welcome_users,
         sysinfo,
         terminal,
         display,
@@ -768,6 +786,7 @@ impl Sandbox {
                 viewer: d.sandbox_view,
                 picker: d.picker,
                 sysinfo: d.sysinfo,
+                welcome: d.users_welcome,
                 data: d.data.map(|(_, why)| reason(why)),
             },
             grants,
@@ -1237,13 +1256,16 @@ impl Sandbox {
             services.0 |= AppServices::SANDBOX.0;
         }
         // `pbr.users`: all of the session's for a trusted app; the desktop's can only ask who
-        // the user is, the settings and the power operations (note 0024, section 6).
+        // the user is, the settings and the power operations (note 0024, section 6); the
+        // Welcome window's what section 6a lists. One app gets at most one of them.
         let users = if is_picker {
             None
         } else if extras.trusted {
             self.users.as_ref()
         } else if extras.desktop {
             self.desktop_users.as_ref()
+        } else if extras.welcome {
+            self.welcome_users.as_ref()
         } else {
             None
         };

@@ -25,6 +25,10 @@ enum SandboxKind { Trusted @1, Desktop @2, Viewer @3, Picker @4 }
 /// for `sysinfo` are given.
 @103 fn sysinfo(name: string<32>) -> (sysinfo: handle<any>) error DebugError;
 
+/// A `pbr.users` capability for user `name`'s running session, as the Welcome window is given
+/// (`users welcome`; docs/design/0024-the-session-desktop.md, section 6a).
+@104 fn welcome(name: string<32>) -> (users: handle<any>) error DebugError;
+
 /// What can go wrong.
 flexible enum DebugError {
     NoSuchUser @1,

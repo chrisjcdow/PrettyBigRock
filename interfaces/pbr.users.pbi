@@ -102,6 +102,13 @@ struct Setting {
 /// problems were found. FAT32: `NotSupported`.
 @12 fn check(volume: u32, repair: bool) -> (report: string<4000>, problems: u32) error UsersError;
 
+/// Adds an administrator, as `add` does, who is the one logged in at start from then on
+/// (administrators only; docs/design/0024-the-session-desktop.md, section 6a): their line goes
+/// first in `users.txt`, and everyone else stays as they were. Their session starts at the
+/// next start. It is how someone using the alpha's ready-made disk as `owner` gets a user of
+/// their own.
+@13 fn add_first(user: User) -> () error UsersError;
+
 /// What can go wrong.
 flexible enum UsersError {
     /// Only administrators may.

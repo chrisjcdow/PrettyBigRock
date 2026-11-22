@@ -103,16 +103,21 @@ const SESSION_BASE: u64 = 0x100;
 /// who the user is, read and change their settings, and turn the computer off or restart it
 /// (note 0024, section 6).
 const LIMITED: u64 = 1 << 40;
+/// Added to a session's badge on the `pbr.users` capability for the Welcome window (note 0024,
+/// section 6a), which may only ask who the user is, read their settings and set `welcome`,
+/// list the volumes, set one up, add the user logged in at start, and restart.
+const WELCOME: u64 = 1 << 42;
 
 /// What a sandbox manager is started with (see `services/sandbox`, which uses the same
 /// numbers): its session's `pbr.users` at this role; the console's terminal, for the session
-/// that owns it; the session's display capability, in a desktop session; and the limited
-/// `pbr.users` for its desktop.
+/// that owns it; the session's display capability, in a desktop session; the limited
+/// `pbr.users` for its desktop; `pbr.sysinfo`; and the `pbr.users` for the Welcome window.
 const SANDBOX_USERS: u32 = 1001;
 const SANDBOX_TERMINAL: u32 = 1002;
 const SANDBOX_DISPLAY: u32 = 1003;
 const SANDBOX_DESKTOP_USERS: u32 = 1006;
 const SANDBOX_SYSINFO: u32 = 1007;
+const SANDBOX_WELCOME_USERS: u32 = 1008;
 /// The badges of `pbr.sandbox` capabilities, as the sandbox manager reads them: the kind of
 /// holder in the top byte (1 trusted, 2 desktop, 3 permissions viewer, 4 file picker) and an
 /// app's number below, 0 for these, minted here for the self-test.
@@ -380,6 +385,24 @@ fn make_home(root: &file::Client, name: &str) -> Result<(), String> {
     write_file(root, &format!("System/rules/{name}.txt"), rules.as_bytes(), false)
 }
 
+/// Writes `name`'s settings on the volume at `root` with the Welcome window answered (note 0024,
+/// section 6a): someone who made a user, through the Welcome window or `setup`, needn't be
+/// welcomed again as that user. A failure is only logged: the window then opens once more.
+fn already_welcomed(root: &file::Client, name: &str) {
+    let mut set = Settings::default();
+    let saved = set
+        .set(settings::WELCOME, settings::WELCOME_DONE)
+        .map_err(|e| format!("{e}"))
+        .and_then(|()| folder(root, "System/settings"))
+        .and_then(|()| {
+            let path = format!("System/settings/{name}.txt");
+            write_file(root, &path, set.to_text().as_bytes(), false)
+        });
+    if let Err(e) = saved {
+        granite::println!("users: saving {name}'s first settings: {e}");
+    }
+}
+
 /// Makes the volume at `root` a system volume with one administrator, `name`: adds `System/`
 /// and `Users/NAME/`, and touches nothing else.
 fn set_up(root: &file::Client, name: &str, display: &str) -> Result<Vec<User>, String> {
@@ -574,11 +597,14 @@ impl Service {
             self.endpoint.mint(badge | LIMITED, CLIENT).map_err(|e| format!("minting: {e}"))?;
         let sysinfo =
             self.endpoint.mint(badge | SYSINFO, CLIENT).map_err(|e| format!("minting: {e}"))?;
+        let welcome_users =
+            self.endpoint.mint(badge | WELCOME, CLIENT).map_err(|e| format!("minting: {e}"))?;
         let mut caps = vec![
             (role::OWN, ep.0.raw(), rights::ALL, false),
             (SANDBOX_USERS, users_cap.0.raw(), rights::ALL, false),
             (SANDBOX_DESKTOP_USERS, desktop_users.0.raw(), rights::ALL, false),
             (SANDBOX_SYSINFO, sysinfo.0.raw(), rights::ALL, false),
+            (SANDBOX_WELCOME_USERS, welcome_users.0.raw(), rights::ALL, false),
             (role::ARCHIVE, self.archive.raw(), rights::READ | rights::MAP, false),
         ];
         if granite::log::handle() != 0 {
@@ -1027,9 +1053,16 @@ fn serve(s: &mut Service) {
                         }
                         None => Some((msg, reply)),
                     }
-                } else if let Some(i) = s.session(badge & !LIMITED) {
-                    let limited = badge & LIMITED != 0;
-                    users_if::dispatch(&mut Calls { s, session: i, limited }, msg, &buffer, reply)
+                } else if let Some(i) = s.session(badge & !(LIMITED | WELCOME)) {
+                    // (A badge with both bits is never minted; it would get the desktop's.)
+                    let access = if badge & LIMITED != 0 {
+                        Access::Desktop
+                    } else if badge & WELCOME != 0 {
+                        Access::Welcome
+                    } else {
+                        Access::Full
+                    };
+                    users_if::dispatch(&mut Calls { s, session: i, access }, msg, &buffer, reply)
                 } else {
                     Some((msg, reply))
                 };
@@ -1137,8 +1170,24 @@ fn answered(r: granite::Result<()>) {
 struct Calls<'a> {
     s: &'a mut Service,
     session: usize,
-    /// Called through the desktop's capability, which can do less (note 0024, section 6).
-    limited: bool,
+    /// Which of the session's capabilities was called.
+    access: Access,
+}
+
+/// Which of a session's `pbr.users` capabilities a call came through. The desktop's and the
+/// Welcome window's can each do less than the session's own, and not the same things. What each
+/// may do is checked at the start of every operation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+    /// The session's own, which trusted apps hold: everything (administrators' operations
+    /// still need an administrator).
+    Full,
+    /// The desktop's (note 0024, section 6): `whoami`, `settings`, `set`, `power_off` and
+    /// `restart`.
+    Desktop,
+    /// The Welcome window's (note 0024, section 6a): `whoami`, `settings`, `set` of `welcome`
+    /// only, `volumes`, `setup`, `add_first` and `restart`.
+    Welcome,
 }
 
 fn to_interface(u: &User) -> users_if::User {
@@ -1165,22 +1214,46 @@ fn storage_error(e: CallError<StorageError>) -> UsersError {
 }
 
 impl Calls<'_> {
-    /// Refuses the operations the desktop's capability can't use: everything but `whoami`,
-    /// `settings`, `set`, `power_off` and `restart`.
+    /// Refuses what only the session's own capability may do.
     fn full(&self) -> Result<(), UsersError> {
-        if self.limited { Err(UsersError::NotAllowed) } else { Ok(()) }
+        if self.access == Access::Full { Ok(()) } else { Err(UsersError::NotAllowed) }
     }
 
+    /// Refuses what only the session's own capability and the Welcome window's may do.
+    fn full_or_welcome(&self) -> Result<(), UsersError> {
+        match self.access {
+            Access::Full | Access::Welcome => Ok(()),
+            Access::Desktop => Err(UsersError::NotAllowed),
+        }
+    }
+
+    /// Refuses anyone but an administrator, through the session's own capability.
     fn admin(&self) -> Result<(), UsersError> {
         self.full()?;
+        self.is_admin()
+    }
+
+    /// Refuses anyone but an administrator, through the session's own capability or the
+    /// Welcome window's.
+    fn welcome_admin(&self) -> Result<(), UsersError> {
+        self.full_or_welcome()?;
+        self.is_admin()
+    }
+
+    fn is_admin(&self) -> Result<(), UsersError> {
         match self.s.sessions[self.session].user.kind {
             Kind::Admin => Ok(()),
             Kind::Standard => Err(UsersError::NotAllowed),
         }
     }
 
-    fn add(&mut self, user: users_if::User) -> Result<(), UsersError> {
-        self.admin()?;
+    /// `add`, or with `first`, `add_first`: the new user's line goes first in `users.txt`.
+    fn add(&mut self, user: users_if::User, first: bool) -> Result<(), UsersError> {
+        if first {
+            self.welcome_admin()?
+        } else {
+            self.admin()?
+        }
         let kind = match user.kind {
             UserKind::Admin => Kind::Admin,
             UserKind::Standard => Kind::Standard,
@@ -1202,17 +1275,26 @@ impl Calls<'_> {
         };
         make_home(&s.system.root, &user.name).map_err(fail)?;
         let mut all = s.users.clone();
-        all.push(user.clone());
+        if first {
+            all.insert(0, user.clone());
+        } else {
+            all.push(user.clone());
+        }
         let text = users_txt::format(&all).ok_or(UsersError::BadName)?;
         // The users file is written last, so a failure part-way leaves no half-made user.
         write_file(&s.system.root, "System/users.txt", text.as_bytes(), true).map_err(fail)?;
-        granite::println!("users: added {}.", user.name);
+        if first {
+            already_welcomed(&s.system.root, &user.name);
+            granite::println!("users: added {}, who is logged in from the next start.", user.name);
+        } else {
+            granite::println!("users: added {}.", user.name);
+        }
         s.users = all;
         Ok(())
     }
 
     fn setup(&mut self, volume: u32, name: &str) -> Result<(), UsersError> {
-        self.admin()?;
+        self.welcome_admin()?;
         if !is_name(name) {
             return Err(UsersError::BadName);
         }
@@ -1257,6 +1339,7 @@ impl Calls<'_> {
             granite::println!("users: setting up volume {id}: {e}");
             UsersError::Failed
         })?;
+        already_welcomed(&root, name);
         granite::println!(
             "users: volume {id} is set up; it is the system volume from the next start."
         );
@@ -1294,8 +1377,12 @@ impl Calls<'_> {
         }
         // Only the settings this version knows can be set through here. (Others in the file
         // are kept: a later version may have put them there.)
-        if key != settings::LAYOUT && key != settings::TIMEZONE {
+        if key != settings::LAYOUT && key != settings::TIMEZONE && key != settings::WELCOME {
             return Err(UsersError::BadSetting);
+        }
+        // The Welcome window may only say it has been answered.
+        if self.access == Access::Welcome && key != settings::WELCOME {
+            return Err(UsersError::NotAllowed);
         }
         let name = self.s.sessions[self.session].user.name.clone();
         let mut set = self.s.read_settings(&name);
@@ -1371,14 +1458,21 @@ impl users_if::Server for Calls<'_> {
     }
 
     fn add(&mut self, user: users_if::User, reply: users_if::add::Reply) {
-        answered(match Calls::add(self, user) {
+        answered(match Calls::add(self, user, false) {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.err(e),
+        });
+    }
+
+    fn add_first(&mut self, user: users_if::User, reply: users_if::add_first::Reply) {
+        answered(match Calls::add(self, user, true) {
             Ok(()) => reply.ok(),
             Err(e) => reply.err(e),
         });
     }
 
     fn volumes(&mut self, reply: users_if::volumes::Reply) {
-        let r = self.admin().and_then(|()| self.s.storage.list().map_err(storage_error));
+        let r = self.welcome_admin().and_then(|()| self.s.storage.list().map_err(storage_error));
         answered(match r {
             Ok(list) => {
                 let out: Vec<users_if::VolumeInfo> = list.iter().map(volume_info).collect();
@@ -1416,7 +1510,11 @@ impl users_if::Server for Calls<'_> {
 
     fn power_off(&mut self, reply: users_if::power_off::Reply) {
         let who = self.s.sessions[self.session].user.name.clone();
-        answered(match self.s.power(&who, false) {
+        let r = match self.access {
+            Access::Welcome => Err(UsersError::NotAllowed),
+            Access::Full | Access::Desktop => self.s.power(&who, false),
+        };
+        answered(match r {
             Ok(()) => reply.ok(),
             Err(e) => reply.err(e),
         });
@@ -1622,6 +1720,17 @@ impl debug_if::Server for Service {
         };
         let badge = SESSION_BASE + u64::from(s.number);
         answered(match self.endpoint.mint(badge | SYSINFO, CLIENT) {
+            Ok(c) => reply.ok(OutCap::Cap(c.0)),
+            Err(_) => reply.err(DebugError::Failed),
+        })
+    }
+
+    fn welcome(&mut self, name: String, reply: debug_if::welcome::Reply) {
+        let Some(s) = self.sessions.iter().find(|s| s.user.name == name) else {
+            return answered(reply.err(DebugError::NoSuchUser));
+        };
+        let badge = SESSION_BASE + u64::from(s.number);
+        answered(match self.endpoint.mint(badge | WELCOME, CLIENT) {
             Ok(c) => reply.ok(OutCap::Cap(c.0)),
             Err(_) => reply.err(DebugError::Failed),
         })

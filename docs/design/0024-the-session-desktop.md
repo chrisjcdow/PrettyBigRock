@@ -176,6 +176,8 @@ whose they are.
     next start, so this page comes back every start until a disk is set up: the reminder.
   - **A standard user** (who can't add users or set up disks) sees nothing: it sets `welcome
     done` and ends.
+- **A user made through it** (by `add_first`, or by `setup`, from Welcome or the shell) starts
+  with `welcome done`, written by the users service: they have just been welcomed.
 - **Its capability** (`users welcome`): `pbr.users` with a badge bit the users service adds,
   as for the desktop's, that may only ask `whoami`, `settings`, `set`, `volumes`, `setup`,
   `add_first` and `restart`. `volumes`, `setup` and `add_first` still need an administrator.

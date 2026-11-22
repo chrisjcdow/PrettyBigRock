@@ -37,10 +37,12 @@ pub fn run(sup: &Supervisor, u: &Users, chris: &Session, disk: &Disk) -> Result<
     limits(u)?;
     never_answers(u)?;
     settings(chris)?;
+    welcome(u)?;
     power(sup)?;
     Ok(String::from(
         "apps' own folders, who may call what, cancelling and the limits, a chosen capability \
-         that never answers, settings, and the power service for the users service alone",
+         that never answers, settings, the Welcome window's pbr.users, and the power service for \
+         the users service alone",
     ))
 }
 
@@ -281,6 +283,54 @@ fn settings(chris: &Session) -> Result<(), String> {
         chris.users.set("colour", "blue"),
         pbr_interfaces::pbr_users::UsersError::BadSetting,
     )
+}
+
+/// The `pbr.users` capability the Welcome window is given (note 0024, section 6a) may ask only
+/// `whoami`, `settings`, `set` of `welcome`, `volumes`, `setup`, `add_first` and `restart`;
+/// everything else is refused, and an administrator's operations still need an administrator.
+/// (`setup`, `add_first` and `restart` are only tried in ways that change nothing here: the
+/// desktop boot does them for real.)
+fn welcome(u: &Users) -> Result<(), String> {
+    use pbr_interfaces::pbr_users::{self as users, User, UserKind, UsersError};
+    let get = |name: &str| -> Result<users::Client, String> {
+        let h = u.debug.welcome(name).map_err(|e| format!("{name}'s Welcome capability: {e}"))?;
+        let mut c = users::Client::new(Endpoint(h));
+        c.set_timeout_ms(60_000);
+        Ok(c)
+    };
+    let chris = get("chris")?;
+    let no = UsersError::NotAllowed;
+    let me = chris.whoami().map_err(|e| format!("whoami through Welcome's: {e}"))?;
+    if me.name != "chris" {
+        return Err(format!("Welcome's capability says it is {me:?}"));
+    }
+    chris.settings().map_err(|e| format!("settings through Welcome's: {e}"))?;
+    let list = chris.volumes().map_err(|e| format!("volumes through Welcome's: {e}"))?;
+    let any = list.first().map(|v| v.id).ok_or("no volumes")?;
+    refused("Welcome's listing users", chris.list(), no)?;
+    let eve = User { name: "eve".into(), kind: UserKind::Admin, display: "Eve".into() };
+    refused("Welcome's adding a user", chris.add(&eve), no)?;
+    refused("Welcome's formatting", chris.format(any, "X"), no)?;
+    refused("Welcome's checking", chris.check(0, false), no)?;
+    refused("Welcome's shutting down", chris.shutdown(), no)?;
+    refused("Welcome's turning the computer off", chris.power_off(), no)?;
+    refused("Welcome's changing the time zone", chris.set("timezone", "+01:00"), no)?;
+    refused("Welcome's changing the layout", chris.set("layout", "gb"), no)?;
+    // What it may do passes the check of who is asking, and is then refused for what it asks.
+    refused("Welcome's bad answer", chris.set("welcome", "maybe"), UsersError::BadSetting)?;
+    let bad = User { name: "Not A Name".into(), kind: UserKind::Admin, display: "X".into() };
+    refused("Welcome's add_first with a bad name", chris.add_first(&bad), UsersError::BadName)?;
+    refused(
+        "Welcome's setup with a bad name",
+        chris.setup(any, "Not A Name"),
+        UsersError::BadName,
+    )?;
+    // A standard user's Welcome capability can't do an administrator's part.
+    let alice = get("alice")?;
+    refused("alice's Welcome listing volumes", alice.volumes(), no)?;
+    refused("alice's Welcome adding herself first", alice.add_first(&eve), no)?;
+    refused("alice's Welcome setting up", alice.setup(any, "eve"), no)?;
+    Ok(())
 }
 
 /// Only the users service may look up `power`, and the power service answers no other badge.
