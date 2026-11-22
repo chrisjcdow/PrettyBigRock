@@ -9,7 +9,7 @@ const SECTOR: usize = 512;
 const BIOS_START: u64 = 2048;
 const BIOS_SECTORS: u64 = 32 * 2048; // 32 MiB (8 until M5 stage 5, 16 until M6 stage 6; note 0004)
 const ESP_START: u64 = BIOS_START + BIOS_SECTORS;
-const ESP_SECTORS: u64 = 64 * 2048; // 64 MiB
+const ESP_SECTORS: u64 = 96 * 2048; // 96 MiB (64 until M6 stage 10b; note 0004)
 
 /// The image's contents.
 pub struct Contents<'a> {
