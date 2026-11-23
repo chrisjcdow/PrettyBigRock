@@ -41,8 +41,11 @@ the BIOS services, so both loaders can be tried on Roxy (Q12).
 **Interrupts** (`/proc/interrupts`, 23 November): the EHCI controllers have **no MSI**; Linux
 uses IO-APIC lines 16 and 23, level-triggered (Q13).
 
-**Still to find out** (Chris to run on Roxy): which I/O address the BIOS gives the COM2 header (its
-setup screen, or `dmesg | grep ttyS`: `0x3F8` or `0x2F8`).
+The header is Roxy's only serial port, at **`0x2F8`, interrupt 3** (standard COM2; Linux's
+`dmesg`, 23 November). Today's x86-64 kernel writes only to COM1 (`0x3F8`), and the device
+manager's built-in list starts `drivers/serial16550` on `0x2F8`, so both must change (note 0027).
+The firmware's AML reads the address from the board's I/O chip at run time rather than stating
+it, which makes it a good check for the interpreter: it should agree with Linux.
 
 **ACPI tables**: in `tests/data/acpi/roxy-h61mx/` (Chris agreed to keep them in the repository,
 23 November), for the AML interpreter's host tests.
@@ -63,8 +66,8 @@ setup screen, or `dmesg | grep ttyS`: `0x3F8` or `0x2F8`).
   with real-hardware delays, the firmware's memory map. Stage 1 finds out.
 - The serial console's port on x86-64 taken from the ACPI SPCR table when there is one, else
   a `console=` line in `cmdline.txt` (for example `console=0x2f8`), else COM1 as today. Roxy's
-  only port is a header labelled COM2, which its BIOS may put at `0x2F8`; the device manager
-  must then not also start a driver for it.
+  only port is COM2 at `0x2F8` (Roxy has no SPCR table), so the stick's `cmdline.txt` names it;
+  the device manager must then not also start a driver for the kernel's port.
 - The boot information gains **the identity of the disk the system started from** (Q6), from
   the GPT header the loaders already read; note 0003 goes to version 1.1.
 
