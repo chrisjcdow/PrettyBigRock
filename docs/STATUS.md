@@ -4,15 +4,20 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 23 November 2026 (session 25). **M6 is done: `2.0.0-alpha.1` is released** (a
+Updated 23 November 2026 (session 26). **M6 is done: `2.0.0-alpha.1` is released** (a
 pre-release on GitHub, tag `v2.0.0-alpha.1`, `m6` merged into `main`). The last part of stage
 10b gave the release a ready-made system disk and a **Welcome** window (note 0024, section 6a)
 after Chris's first try on Harriet lost a file kept in memory. CI passed; Stress (5 runs × 6
 jobs) passed on `936e1f6`; Chris tried it on Harriet under Windows, both making a user through
 Welcome and carrying on as Owner, and files were kept across restarts. **Now**: M7 (real
-hardware I, Roxy; docs/ROADMAP.md) has started on branch `m7`: `docs/m7-plan.md` (the notes M7
-needs, and questions with recommendations) is drafted from Roxy's `lspci`, to walk through with
-Chris before notes 0027 to 0031 are written.
+hardware I, Roxy; docs/ROADMAP.md) has started on branch `m7`. `docs/m7-plan.md` records Roxy's
+hardware (Foxconn H61MX, AMI firmware with UEFI and BIOS, EHCI without MSI, COM2 at `0x2F8`,
+an RTL8168) and the notes M7 needs. Chris agreed with Q1 (Ethernet moves to M8) and Q2 (our
+own AML interpreter); he hasn't read the rest, so the other questions go into the notes as
+recommended and are settled as he walks through each note. Roxy's ACPI tables are in
+`tests/data/acpi/roxy-h61mx/`. Chris takes Roxy's drives out for every PrettyBigRock boot, and
+will get a COM2 header bracket and a USB-serial adapter. **Next**: draft note 0027 (kernel 1.4),
+then 0028 to 0031.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 

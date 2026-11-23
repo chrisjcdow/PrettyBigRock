@@ -168,14 +168,21 @@ Stress passed (5 runs of each job) on the released code. Chris tried the release
 under Windows: files kept across restarts, both as Owner and as a user made through Welcome.
 
 ## M7: Real hardware I, Roxy
-- AHCI; USB 2 (EHCI) with keyboard, mouse and storage; Roxy's onboard Ethernet chip.
-- An ACPI interpreter, enough to power off and to find devices.
+- AHCI; USB 2 (EHCI) with keyboard, mouse and storage.
+- An ACPI interpreter of our own, enough to power off, to find devices and to route their
+  interrupts.
+- Kernel work for real hardware: protection against Meltdown-style attacks, shared interrupt
+  lines.
 - A bootable USB stick image.
+
+(Roxy's onboard Ethernet chip, an RTL8168, moved to M8 on 23 November 2026: QEMU can't model
+it, and without M8's network stack nothing could use or test it. Plan: `docs/m7-plan.md`.)
 
 **Done when:** PrettyBigRock boots on Roxy from a USB stick, without touching Roxy's own disks,
 and runs the desktop with a USB keyboard and mouse.
 
 ## M8: Networking
+- Network drivers: virtio-net (for QEMU) and Roxy's RTL8168.
 - Ethernet, IPv4, IPv6, UDP, TCP, DHCP and DNS, with the network as a capability.
 - Then cryptography and TLS (open question Q5).
 

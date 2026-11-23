@@ -2,7 +2,8 @@
 
 This is the plan for Chris and Claude to agree before M7's design notes are written, as
 `docs/m6-plan.md` was for M6. Once the notes are accepted they settle everything here; where they
-differ, the notes win. **Status: draft, not yet discussed.** Branch `m7` started at `20a8936`
+differ, the notes win. **Status: draft. Chris agreed with Q1 and Q2 on 23 November 2026**; the other questions are
+written into the notes as recommended, and settled when Chris walks through each note. Branch `m7` started at `20a8936`
 (same as main).
 
 M7's aim (ROADMAP.md): **PrettyBigRock boots on Roxy from a USB stick, without touching Roxy's
@@ -116,14 +117,14 @@ the class drivers once the note is accepted.
 
 ## 3. Questions, with recommendations
 
-**Q1. The Ethernet chip: M7 or M8?** The roadmap puts Roxy's Ethernet driver in M7, but
+**Q1. The Ethernet chip: M7 or M8?** *Agreed by Chris (23 November): M8.* The roadmap puts Roxy's Ethernet driver in M7, but
 without M8's network stack it can only send and receive raw frames, and QEMU can't emulate an
 RTL8168, so nothing could check it automatically. *Recommend:* move it to M8, where note 0032
 designs the network interface with two drivers at once (virtio-net, tested in QEMU, and the
 RTL8168, tested on Roxy by getting an address from your router). M7 is already the largest
 milestone so far. The roadmap's lines would move with it.
 
-**Q2. The AML interpreter: ours, or borrowed?** The choices are our own, ACPICA (C, the
+**Q2. The AML interpreter: ours, or borrowed?** *Agreed by Chris (23 November): our own.* The choices are our own, ACPICA (C, the
 reference, used by most operating systems; needs a C library, which is M9), or the Rust `aml`
 crate (MIT/Apache, rust-osdev, being rewritten). *Recommend:* our own (DESIGN.md section 14's
 rule), in its own service, built only as far as M7 needs (the namespace, methods, the common

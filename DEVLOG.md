@@ -1330,3 +1330,27 @@ user through Welcome, then, with a fresh `data.img`, carrying on as Owner; both 
 across restarts and Welcome didn't open again. With his go-ahead `m6` was merged into `main`,
 tagged `v2.0.0-alpha.1`, and the release published as a pre-release. M6 is done (ROADMAP).
 Next: M7, Roxy, beginning with its design notes.
+
+## Session 26: 23 November 2026, M7 begins
+
+**Chris** asked to start M7. He ran commands on Roxy for its hardware, copied its ACPI tables
+to Impala and agreed to keep them in the repository, said he will disconnect Roxy's drives for
+every PrettyBigRock boot (perhaps testing with a spare drive), and agreed with the plan's Q1
+and Q2 without time to read the rest.
+
+**Claude:**
+- Branch `m7` from `main`. `docs/m7-plan.md`, drafted as M6's was: what Roxy is (Foxconn
+  H61MX, AMI firmware `BC1F1P08` offering UEFI and BIOS; two EHCI controllers with built-in
+  rate-matching hubs and no MSI, so hubs, shared legacy interrupt lines and AML's `_PRT` are
+  all needed; ICH9-family AHCI as in QEMU's q35; an RTL8168 QEMU can't model; no IOMMU; COM2
+  at `0x2F8`, which today's COM1-only kernel console would miss), notes 0027 to 0031, 14
+  questions with recommendations, and a sketch of the stages.
+- Q1 and Q2 agreed: Roxy's Ethernet moves to M8 (ROADMAP changed), and the AML interpreter is
+  our own.
+- Roxy's ACPI tables in `tests/data/acpi/roxy-h61mx/`, with a README saying they are Foxconn's
+  and AMI's firmware, kept as test data and not under the project's licence (checked first: no
+  product key table, no serial numbers or addresses).
+- STATUS: the KVM hang entry still read as unsolved; stage 9b had found it was the test's
+  timing.
+
+Next: note 0027, kernel interface 1.4.
