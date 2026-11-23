@@ -42,8 +42,10 @@ the BIOS services, so both loaders can be tried on Roxy (Q12).
 uses IO-APIC lines 16 and 23, level-triggered (Q13).
 
 **Still to find out** (Chris to run on Roxy): which I/O address the BIOS gives the COM2 header (its
-setup screen, or `dmesg | grep ttyS`: `0x3F8` or `0x2F8`), and a copy of its ACPI tables
-for the interpreter's host tests (`/sys/firmware/acpi/tables`).
+setup screen, or `dmesg | grep ttyS`: `0x3F8` or `0x2F8`).
+
+**ACPI tables**: in `tests/data/acpi/roxy-h61mx/` (Chris agreed to keep them in the repository,
+23 November), for the AML interpreter's host tests.
 
 ## 2. The design notes M7 needs
 
