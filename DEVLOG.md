@@ -1321,3 +1321,12 @@ UEFI's self-test and all four desktop boots passed; the release image with the r
 opens Welcome on "Files", and with a blank disk the in-memory page's Set up and Restart now
 logged the new user in from it. Left open: CI and Stress, rebuilding the draft's files, and
 Chris trying it again.
+
+## Session 25, finished: 23 November 2026, the release
+
+CI passed on `8c20469` and Stress (5 runs × 6 jobs) on `936e1f6`. The draft's files were
+rebuilt with the ready-made disk. Chris tried it on Harriet under Windows twice: making his own
+user through Welcome, then, with a fresh `data.img`, carrying on as Owner; both kept files
+across restarts and Welcome didn't open again. With his go-ahead `m6` was merged into `main`,
+tagged `v2.0.0-alpha.1`, and the release published as a pre-release. M6 is done (ROADMAP).
+Next: M7, Roxy, beginning with its design notes.

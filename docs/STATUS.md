@@ -4,15 +4,13 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 22 November 2026 (session 25). **M6 stage 10b, part 3: the Welcome window, before the
-release.** Chris tried the draft on Harriet, saved a file, restarted, and it had gone (no
-system volume: files in memory). With Chris: the launcher now attaches a ready-made system
-disk, and a **Welcome** window says where files are kept and offers a user of one's own (note
-0024, section 6a). Built, booted here on x86-64 UEFI under KVM (self-test and all four desktop
-boots), pushed. CI passed on `8c20469`; Stress (5 runs × 6 jobs) **passed** on `936e1f6`; the
-release's files were rebuilt (the zip gains `prettybigrock-data.img`) and the draft's replaced.
-**Next**: Chris tries it on Harriet; then merge `m6` into `main`, tag `v2.0.0-alpha.1`, publish,
-and mark M6 done in ROADMAP.
+Updated 23 November 2026 (session 25). **M6 is done: `2.0.0-alpha.1` is released** (a
+pre-release on GitHub, tag `v2.0.0-alpha.1`, `m6` merged into `main`). The last part of stage
+10b gave the release a ready-made system disk and a **Welcome** window (note 0024, section 6a)
+after Chris's first try on Harriet lost a file kept in memory. CI passed; Stress (5 runs × 6
+jobs) passed on `936e1f6`; Chris tried it on Harriet under Windows, both making a user through
+Welcome and carrying on as Owner, and files were kept across restarts. **Next**: M7 (real
+hardware I, Roxy; docs/ROADMAP.md), starting with its design notes, drafted with Chris.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 

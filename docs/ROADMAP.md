@@ -152,23 +152,20 @@ session's desktop), 0025 (the file picker, clipboard and permissions viewer) and
 the tests and the stages), drafted from Chris's answers to the M6 plan and accepted by him on
 9 November 2026.
 
-**Status:** in progress on branch `m6`. Stages 0 (set-ups), 1 (kernel interface 1.3), 2
-(screens: `pbr.display` version 2, the framebuffer and virtio-gpu drivers, tablets), 3
-(`lib/draw`, the font's new characters, reference pictures), 4 (the input service, keyboard
-layouts and the layout setting), 5 (the display server, `lib/window`, and the desktop boot
-with test programs) and 6 (the session's desktop: manifest keys, apps' own folders, the
-sandbox manager's rights and limits, the power service, text mode and falling back, the
-desktop app; an ordinary boot now reaches the desktop) 7 (sandstone: the widget toolkit,
-its test harness, and the widget gallery in the desktop boot) and 8 (the file picker and
-`sandstone::picker`, the permissions viewer, `lib/browse`, `check`, records per grant,
-`pbr.sysinfo`) are built, and so is stage 9: the apps (9a: Calculator, Snake, Paint and
-About, with `lib/calc`, `lib/snake` and `lib/bmp`; 9b: Notepad, Files with Open with…,
-Terminal on the shell it now shares with the text shell, and the desktop's Screens dialog).
-Stage 10, "done when", is in two parts: 10a (built) finished section 7's check in the
-desktop boot, renamed Paint and Snake (Rock Art and Boomslang) and gave sessions 96 MiB on 2
-GiB machines; 10b is the capability review (done: three small fixes, questions for Chris
-in the notes' Changes) and, next, the release `2.0.0-alpha.1`. The
-stages are in note 0026, section 9.
+**Status: done** (23 November 2026), released as `2.0.0-alpha.1`, the first PrettyBigRock 2
+release. Built on branch `m6` in the stages of note 0026, section 9: set-ups; kernel interface
+1.3; screens (`pbr.display` version 2, the framebuffer and virtio-gpu drivers, tablets);
+`lib/draw` and the reference pictures; the input service and keyboard layouts; the display
+server, `lib/window` and the desktop boot; the session's desktop (manifest keys, apps' own
+folders, the power service, text mode and falling back, the desktop app); sandstone, the widget
+toolkit; the file picker, the permissions viewer and `pbr.sysinfo`; the apps (Calculator,
+Boomslang, Rock Art, About, Notepad, Files, Terminal, and the Screens dialog); and stage 10,
+"done when": section 7's check in the desktop boot, the capability review, and the release,
+whose launcher attaches a ready-made system disk and whose Welcome window says where files are
+kept and offers a user of one's own (note 0024, section 6a). Every app runs sandboxed with only
+what its manifest is granted; all four configurations pass the self-test and desktop boots, and
+Stress passed (5 runs of each job) on the released code. Chris tried the release on Harriet
+under Windows: files kept across restarts, both as Owner and as a user made through Welcome.
 
 ## M7: Real hardware I, Roxy
 - AHCI; USB 2 (EHCI) with keyboard, mouse and storage; Roxy's onboard Ethernet chip.
