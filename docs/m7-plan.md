@@ -61,12 +61,13 @@ it, which makes it a good check for the interpreter: it should agree with Linux.
 - **Shared legacy interrupt lines (INTx)**, since Roxy's EHCI has no MSI (Q13): a
   level-triggered line, masked when it fires and unmasked when every driver sharing it has said
   it is done. QEMU's EHCI has no MSI either, so the tests use it.
-- Write-combining for framebuffers (the PAT): without it, drawing to Roxy's real video memory is
-  many times slower than in QEMU, where the framebuffer is ordinary memory.
+- Write-combining for framebuffers (the PAT): *already built in M4* (note 0010); note 0027
+  deals instead with the kernel's console reading video memory back, which is slow.
 - Whatever booting on Roxy shows up: timer calibration against the HPET or PIT, starting cores
   with real-hardware delays, the firmware's memory map. Stage 1 finds out.
-- The serial console's port on x86-64 taken from the ACPI SPCR table when there is one, else
-  a `console=` line in `cmdline.txt` (for example `console=0x2f8`), else COM1 as today. Roxy's
+- The serial console's port on x86-64 taken from a `console=` word in `cmdline.txt` (for
+  example `console=0x2f8`), else the ACPI SPCR table, else COM1 as today (note 0027 puts the
+  command line first, and the loaders choose it). Roxy's
   only port is COM2 at `0x2F8` (Roxy has no SPCR table), so the stick's `cmdline.txt` names it;
   the device manager must then not also start a driver for the kernel's port.
 - The boot information gains **the identity of the disk the system started from** (Q6), from

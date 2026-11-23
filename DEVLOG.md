@@ -1354,3 +1354,17 @@ and Q2 without time to read the rest.
   timing.
 
 Next: note 0027, kernel interface 1.4.
+
+## Session 27: 23 November 2026, note 0027 drafted
+
+**Claude** drafted note 0027, kernel interface 1.4, after reading notes 0003, 0005, 0010, 0013,
+0019 and the x86-64 code it touches: KPTI with an entry area and an 8 KiB pair of top-level
+tables, `VERW` for MDS, all-zero not-present entries for L1TF, `mitigations=auto/on/off`;
+shared level-triggered lines with per-process acknowledgements; the loaders choosing the serial
+port (`console=` first, then SPCR, then COM1); `boot_partition` in boot information 1.1 and the
+machine description 1.1; the 8259's vectors, clock calibration, TSC agreement and console
+scrolling; and levels for every spin lock (Q11). Found on the way: write-combining for
+framebuffers was already built in M4 (the plan is corrected), the BIOS loader doesn't read the
+GPT yet, and Roxy's FADT doesn't set the 8042 flag.
+
+Next: Chris walks through note 0027; notes 0028 to 0031.

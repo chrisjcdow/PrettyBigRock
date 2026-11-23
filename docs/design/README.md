@@ -38,6 +38,7 @@ written to be read cold.
 | [0024](0024-the-session-desktop.md) | The session's desktop: windows for sessions, app folders, settings, the desktop app and power | Accepted |
 | [0025](0025-picker-clipboard-permissions.md) | The file picker, the clipboard and the permissions viewer | Accepted |
 | [0026](0026-apps-m6-tests-and-stages.md) | The 1.x apps rewritten, how M6 is tested, and the order of building | Accepted |
+| [0027](0027-kernel-1.4.md) | Kernel interface 1.4: real hardware (Meltdown, MDS and L1TF; shared interrupt lines; the serial port; the boot partition) | Draft |
 
 ## Writing a note
 
