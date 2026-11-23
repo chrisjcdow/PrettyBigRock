@@ -9,8 +9,10 @@ pre-release on GitHub, tag `v2.0.0-alpha.1`, `m6` merged into `main`). The last 
 10b gave the release a ready-made system disk and a **Welcome** window (note 0024, section 6a)
 after Chris's first try on Harriet lost a file kept in memory. CI passed; Stress (5 runs × 6
 jobs) passed on `936e1f6`; Chris tried it on Harriet under Windows, both making a user through
-Welcome and carrying on as Owner, and files were kept across restarts. **Next**: M7 (real
-hardware I, Roxy; docs/ROADMAP.md), starting with its design notes, drafted with Chris.
+Welcome and carrying on as Owner, and files were kept across restarts. **Now**: M7 (real
+hardware I, Roxy; docs/ROADMAP.md) has started on branch `m7`: `docs/m7-plan.md` (the notes M7
+needs, and questions with recommendations) is drafted from Roxy's `lspci`, to walk through with
+Chris before notes 0027 to 0031 are written.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 
@@ -242,9 +244,9 @@ Note 0025's and 0026's Changes list everything settled.
   logged by anyone; the root program, whose calls all time out in 30 s, never reports; cores
   sit in `idle_loop`/`wait_for_interrupt`, one in `sched::tick`. Hypothesis: a core stops
   getting timer interrupts, so threads asleep on it (each core wakes only its own timed
-  waits, `sched/mod.rs` `tick`) are never woken. Kernel work, for Opus; not started. Logs
-  on Impala in `build/hangs/` (`kvm-hang-1.txt`, `kvm-hang-2.txt` and its registers; the
-  kernel they ran is the one built from `57684d3`/`90b9ed7`).
+  waits, `sched/mod.rs` `tick`) are never woken. **It wasn't**: an NMI dump showed every core
+  ticking; the root program's 200 ms poll missed an app that opened and closed in between, and
+  it now logs seeing it (DEVLOG, stage 9b). Not a kernel bug.
 - **Done in 9b**: the greyed maximise button and Restart under `cargo xtask run` (Chris, 17
   November).
 - **Windows fit their screen** (after 9a, Chris's choice): resizable app windows open no bigger
