@@ -26,9 +26,17 @@ Meltdown, L1TF and MDS (Q7). It has VT-x but **no VT-d, so there is no IOMMU**: 
 driver that programs DMA can reach any memory. Note 0010 already treats DMA drivers as trusted
 on machines without one; M7 doesn't change that, but the notes should say it plainly.
 
+**Serial port** (Chris, 23 November): the board has a 10-pin header labelled **COM2** (9 pins and
+a key), and no port on the back panel. A header-to-DB9 bracket and a USB-serial adapter on
+Harriet give us the serial log (Q9).
+
+**Roxy's disks** (Chris, 23 November): Chris will **disconnect all of Roxy's drives** before
+booting PrettyBigRock, and may connect a spare drive he doesn't care about to check that
+PrettyBigRock leaves disks alone (Q5).
+
 **Still to find out** (Chris to run on Roxy): whether the firmware offers UEFI or only BIOS
-(`sudo dmidecode -t baseboard -t bios`), whether there is a serial port or a COM header
-(`dmesg | grep ttyS`), Roxy's disks (`lsblk`), whether the EHCI controllers have MSI
+(`sudo dmidecode -t baseboard -t bios`), which I/O address the BIOS gives the COM2 header (its
+setup screen, or `dmesg | grep ttyS`: `0x3F8` or `0x2F8`), whether the EHCI controllers have MSI
 (`sudo lspci -vv -s 00:1d.0 | grep -i msi`, and `/proc/interrupts`), and a copy of its ACPI
 tables (`sudo acpidump > roxy-acpi.dat`) for the interpreter's host tests.
 
@@ -46,6 +54,10 @@ tables (`sudo acpidump > roxy-acpi.dat`) for the interpreter's host tests.
   many times slower than in QEMU, where the framebuffer is ordinary memory.
 - Whatever booting on Roxy shows up: timer calibration against the HPET or PIT, starting cores
   with real-hardware delays, the firmware's memory map. Stage 1 finds out.
+- The serial console's port on x86-64 taken from the ACPI SPCR table when there is one, else
+  a `console=` line in `cmdline.txt` (for example `console=0x2f8`), else COM1 as today. Roxy's
+  only port is a header labelled COM2, which its BIOS may put at `0x2F8`; the device manager
+  must then not also start a driver for it.
 - The boot information gains **the identity of the disk the system started from** (Q6), from
   the GPT header the loaders already read; note 0003 goes to version 1.1.
 
@@ -122,13 +134,15 @@ tablet (which three test configurations use) needs report descriptors. *Recommen
 report descriptors (a host-tested library, with recorded descriptors from real devices and
 random corruption), falling back to the boot protocol when a descriptor can't be understood.
 
-**Q5. Not touching Roxy's disks.** *Recommend:* four layers. (1) In M7 the storage service
+**Q5. Not touching Roxy's disks.** **Chris will disconnect Roxy's own drives** before every PrettyBigRock boot, so Roxy's data
+isn't at risk however M7 goes; what follows is so that PrettyBigRock deserves trust on other
+people's machines. *Recommend:* four layers. (1) In M7 the storage service
 gives filesystem servers **read-only** access to every volume not on the boot disk, and never
 writes a partition table or formats anything it wasn't asked to (note 0026 already says so).
 (2) A test configuration has an AHCI disk with partitions and data on it, and the runner checks
-its checksum is unchanged after the boot. (3) The first boots on Roxy start without the AHCI
-driver at all (a line in the stick's `cmdline.txt`), and AHCI is turned on only after the
-automated test has passed. (4) Writing to other disks becomes possible later only by an
+its checksum is unchanged after the boot. (3) On Roxy, AHCI is first tried with a spare drive Chris doesn't
+care about, holding partitions and files, whose checksum is taken on another machine before and
+after; only once the automated test has passed. (4) Writing to other disks becomes possible later only by an
 administrator's explicit choice, in its own note.
 
 **Q6. The system volume when booting from a stick.** Today the system volume is the first RockFS
@@ -155,12 +169,12 @@ disk on AHCI, so both drivers are tested on both architectures. x86-64 UEFI and 
 on virtio (and PS/2 stays tested through the keyboard on UEFI). CI grows somewhat; I'd measure
 it in the first stage that adds a configuration.
 
-**Q9. Seeing what happens on Roxy.** *Recommend:* if the board has a COM header, a header
-bracket and a USB-serial adapter on Harriet (a few pounds) give us the same log as QEMU, and
-are worth it. Without one: the kernel's panic screen (registers, stack, last log lines) on the
-framebuffer, which you photograph, and a `selftest` choice in `cmdline.txt` so the stick can run
-the self-test boot on Roxy. A log written to the stick is tempting but needs working USB storage
-at exactly the moment things have gone wrong, so not first.
+**Q9. Seeing what happens on Roxy.** Settled: Roxy has a COM2 header. A 10-pin header-to-DB9
+bracket (check its pinout is the common "Intel" one, which most are) and a USB-serial adapter
+on Harriet, read with PuTTY at 115200 baud, give us the same log as QEMU. The kernel takes the
+port from SPCR or `cmdline.txt` (note 0027). Also: a `selftest` choice in `cmdline.txt`, so the
+stick can run the self-test boot on Roxy, and the kernel's panic screen on the framebuffer as a
+fallback.
 
 **Q10. A release at the end of M7?** *Recommend:* `2.0.0-alpha.2`, adding the USB stick image
 (and VirtualBox and VMware, which also need AHCI and, for VMware, EHCI). Betas begin when the
