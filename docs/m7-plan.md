@@ -34,11 +34,16 @@ Harriet give us the serial log (Q9).
 booting PrettyBigRock, and may connect a spare drive he doesn't care about to check that
 PrettyBigRock leaves disks alone (Q5).
 
-**Still to find out** (Chris to run on Roxy): whether the firmware offers UEFI or only BIOS
-(`sudo dmidecode -t baseboard -t bios`), which I/O address the BIOS gives the COM2 header (its
-setup screen, or `dmesg | grep ttyS`: `0x3F8` or `0x2F8`), whether the EHCI controllers have MSI
-(`sudo lspci -vv -s 00:1d.0 | grep -i msi`, and `/proc/interrupts`), and a copy of its ACPI
-tables (`sudo acpidump > roxy-acpi.dat`) for the interpreter's host tests.
+**Board and firmware** (`dmidecode`, 23 November): a **Foxconn H61MX**, American Megatrends
+firmware `BC1F1P08` (25 December 2013), SMBIOS 2.7, which says **UEFI is supported** as well as
+the BIOS services, so both loaders can be tried on Roxy (Q12).
+
+**Interrupts** (`/proc/interrupts`, 23 November): the EHCI controllers have **no MSI**; Linux
+uses IO-APIC lines 16 and 23, level-triggered (Q13).
+
+**Still to find out** (Chris to run on Roxy): which I/O address the BIOS gives the COM2 header (its
+setup screen, or `dmesg | grep ttyS`: `0x3F8` or `0x2F8`), and a copy of its ACPI tables
+for the interpreter's host tests (`/sys/firmware/acpi/tables`).
 
 ## 2. The design notes M7 needs
 
@@ -47,7 +52,7 @@ tables (`sudo acpidump > roxy-acpi.dat`) for the interpreter's host tests.
   (KPTI), clearing the processor's buffers on the way back to user space (MDS), and keeping
   not-present page table entries harmless (L1TF). Off where the processor says it isn't
   affected, so QEMU's cost is measurable both ways.
-- **Shared legacy interrupt lines (INTx)**, if Roxy's EHCI has no MSI (likely; Q13): a
+- **Shared legacy interrupt lines (INTx)**, since Roxy's EHCI has no MSI (Q13): a
   level-triggered line, masked when it fires and unmasked when every driver sharing it has said
   it is done. QEMU's EHCI has no MSI either, so the tests use it.
 - Write-combining for framebuffers (the PAT): without it, drawing to Roxy's real video memory is
@@ -187,11 +192,12 @@ deadlocks first appear, and a checker in test builds finds them in QEMU instead.
 **Q12. Booting the stick on Roxy's BIOS.** Some older BIOSes boot only a disk with an "active"
 partition, which a GPT's protective MBR doesn't have (note 0004's open question). *Recommend:*
 mark the protective MBR's entry active (harmless to UEFI, and what several Linux installers do),
-and build a hybrid MBR only if Roxy still refuses. If Roxy's firmware has UEFI too, the stick
-already starts that way.
+and build a hybrid MBR only if Roxy still refuses. Roxy's firmware has UEFI too, so the stick
+starts that way regardless; the BIOS route is still worth proving on Roxy, as it is DESIGN.md's
+reason for keeping the BIOS loader. Which is tried first is a choice for stage 1.
 
-**Q13. Legacy interrupt lines.** Note 0010 said every M7 device has MSI; Intel's EHCI
-controllers of that age almost certainly don't (to confirm on Roxy, section 1). *Recommend:*
+**Q13. Legacy interrupt lines.** Note 0010 said every M7 device has MSI; Roxy's EHCI
+controllers don't (section 1: IO-APIC lines 16 and 23). *Recommend:*
 shared level-triggered INTx in kernel 1.4 (note 0027), routed from AML's `_PRT` (note 0028).
 Polling EHCI instead would work without either, but costs power and latency for every keyboard
 press, and AML is needed anyway for power off and the legacy devices.
