@@ -389,6 +389,10 @@ under Changes.
   per line, perhaps a tenth of a second on Roxy, and seconds for a boot log. It will keep its
   text in ordinary memory and redraw from that instead, never reading the screen. (The display
   stack already never reads it.)
+- **Where the BIOS loader puts the payload.** Its second stage copies the payload to 1 MiB
+  and up without looking at the memory map, which is fine in QEMU but not promised on a real
+  PC (some keep a hole at 15 MiB). It now checks, before copying, that the whole destination
+  is Usable in the `E820` map it has just read, and stops with a message if not.
 - **What Roxy's ACPI tables say** (`tests/data/acpi/roxy-h61mx/`): four cores with APIC IDs 0,
   2, 4 and 6; one I/O APIC with 24 lines; the ISA timer on line 2 and the ACPI interrupt on line
   9 (level, active high); an HPET; the FADT's reset register is port `0xCF9` with value 6, which
