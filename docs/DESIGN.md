@@ -571,7 +571,8 @@ Nothing borrowed is part of PrettyBigRock 2 itself yet.
 
 **Firmware** that a processor or device needs (processor microcode now; later, perhaps, Wi-Fi
 or graphics firmware) isn't borrowed code either, since PrettyBigRock never runs it itself. It
-is allowed when it is:
+is allowed only where we have no choice: when nobody but its maker can write it (Intel's
+microcode must carry Intel's signature, or the processor refuses it). It is also:
 - **optional**: the system starts and works without it, and says what is missing;
 - **never kept in the repository**: the build tool takes it from a path it is given;
 - **loaded by our own code**, which checks its format and treats it as untrusted data;
