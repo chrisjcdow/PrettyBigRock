@@ -1380,3 +1380,12 @@ He agreed that PrettyBigRock loads Intel's microcode updates.
 the newest fitting update on every core before deciding the protections); DESIGN.md section 14
 gains a rule for firmware (optional, never in the repository, loaded and checked by our code,
 listed). Impala already has Roxy's file, `/lib/firmware/intel-ucode/06-2a-07`, revision `0x2F`.
+
+**Later the same day:** IOMMU support added to M11 in the roadmap (Chris agreed). Note 0027
+accepted from a summary. Note 0028 (ACPI) drafted: `lib/aml` behind a `Host` trait, host-tested
+on QEMU's and Roxy's tables and against `acpiexec`; `services/acpi` with broad device access but
+no DMA, ACPI mode, `\_PIC(1)`, device initialisation, the fixed power button through the SCI;
+`pbr.acpi` (`devices`, `route`, `off`, `watch_button`); the device manager's built-in list
+replaced by `match acpi`; the power service's `_S5` stopgap removed. Found while drafting:
+QEMU's q35 routes PCI lines through links that say active high, while the kernel assumes active
+low, so interface 1.4 gains `interrupt_configure` (call 89); note 0027 records the change.

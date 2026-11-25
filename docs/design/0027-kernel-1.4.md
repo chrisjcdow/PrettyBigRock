@@ -301,7 +301,9 @@ register) while no driver is running for it, from the start and whenever its dri
 clears it just before starting a driver that will use a line (a change to note 0011, made with
 note 0028).
 
-**Trigger and polarity.** The kernel keeps choosing them as today: from the MADT's overrides
+**Trigger and polarity.** (Changed by note 0028, section 8: the device manager now sets each
+line's trigger and polarity from AML with a new call, `interrupt_configure`, before anyone binds
+it; what follows is the default until it does.) The kernel keeps choosing them as today: from the MADT's overrides
 for ISA lines, active low and level for x86-64's other lines (which is what ACPI says of every
 line `_PRT` names directly), level for ARM64's. A machine whose `_PRT` routes through
 "interrupt link" devices with other settings would need a call to configure a line; Roxy's
@@ -441,7 +443,8 @@ machine description's boot partition to the storage service (note 0030 says how)
 | Command line | `selftest`, … | Also `mitigations=auto/on/off` (kernel) and `console=` (x86-64 loaders) |
 | Start-up modules | `startup` | Also `microcode` (x86-64, optional, section 1e) |
 
-No new calls, rights, object types or error codes.
+Note 0028 (section 8) adds call 89, `interrupt_configure`, and the interrupt right `CONFIGURE`
+(bit 10) to version 1.4. Otherwise no new calls, rights, object types or error codes.
 
 ### 9. Testing
 
@@ -516,12 +519,14 @@ No new calls, rights, object types or error codes.
 - **AMD's microcode**, when a machine needs it (section 1e).
 - **Hyper-threading and MDS** (section 1c), and L1TF for virtual machines (section 1d).
 - **PCID**, if the measurement (section 9) shows KPTI is costly.
-- **Configuring a line's trigger and polarity** from AML (section 2), if a machine needs it.
 - **Global pages for the kernel** when KPTI is off: today no kernel page is global, so every
   address-space switch discards the kernel's cached translations too. A later improvement.
 - **Two disks with one boot partition GUID** (section 4): note 0030.
 
 ## Changes
+- 25 November 2026: QEMU's q35 needs a line's polarity set from AML (its links say active high),
+  so note 0028, section 8, adds call 89, `interrupt_configure`, and the right `CONFIGURE` to
+  interface 1.4; section 8's table and the open question change with it.
 - 25 November 2026: accepted by Chris, who was happy with the decisions as summarised (the
   mitigations and their switch, sharing without asking, `console=` first, the boot partition's
   GUID, levels for every spin lock, and section 1e) and left the full walk-through.
