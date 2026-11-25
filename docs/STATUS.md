@@ -16,8 +16,9 @@ an RTL8168) and the notes M7 needs. Chris agreed with Q1 (Ethernet moves to M8) 
 own AML interpreter); he hasn't read the rest, so the other questions go into the notes as
 recommended and are settled as he walks through each note. Roxy's ACPI tables are in
 `tests/data/acpi/roxy-h61mx/`. Chris takes Roxy's drives out for every PrettyBigRock boot, and
-will get a COM2 header bracket and a USB-serial adapter. Note 0027 (kernel 1.4) is drafted, waiting
-for Chris's walk-through. **Next**: notes 0028 to 0031.
+will get a COM2 header bracket and a USB-serial adapter. Note 0027 (kernel 1.4) is accepted (25
+November), with microcode loading (DESIGN.md section 14's rule for firmware). **Next**: notes
+0028 to 0031.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 

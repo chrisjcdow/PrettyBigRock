@@ -1,6 +1,6 @@
 # 0027: Kernel interface 1.4: real hardware
 
-Status: Draft · 23 November 2026 · Related: DESIGN.md sections 6.1, 6.7 and 7.1; notes 0003,
+Status: Accepted · 23 November 2026, accepted 25 November 2026 · Related: DESIGN.md sections 6.1, 6.7 and 7.1; notes 0003,
 0004, 0005, 0007, 0010, 0011, 0019, 0028 to 0031; `docs/m7-plan.md` (Q6, Q7, Q9, Q11, Q13);
 milestone M7
 
@@ -522,6 +522,9 @@ No new calls, rights, object types or error codes.
 - **Two disks with one boot partition GUID** (section 4): note 0030.
 
 ## Changes
+- 25 November 2026: accepted by Chris, who was happy with the decisions as summarised (the
+  mitigations and their switch, sharing without asking, `console=` first, the boot partition's
+  GUID, levels for every spin lock, and section 1e) and left the full walk-through.
 - 25 November 2026: microcode never in the repository; release images fetch Intel's pinned
   release; the BIOS loader reads only the matching file, from a 64 MiB BIOS boot partition.
 - 25 November 2026: Chris agreed that PrettyBigRock loads Intel's microcode updates; section
