@@ -1368,3 +1368,15 @@ framebuffers was already built in M4 (the plan is corrected), the BIOS loader do
 GPT yet, and Roxy's FADT doesn't set the 8042 flag.
 
 Next: Chris walks through note 0027; notes 0028 to 0031.
+
+## Session 27, continued: 25 November 2026, microcode
+
+**Chris** ran Linux's checks on Roxy: Meltdown, L1TF and MDS affected; the firmware's microcode
+is `0x28`, which Linux updates to `0x2F` at start, and only then are buffers cleared for MDS.
+He agreed that PrettyBigRock loads Intel's microcode updates.
+
+**Claude:** note 0027 section 1e (the build tool copies `intel-ucode` files from
+`PBR_MICROCODE`, the loaders load the boot core's file as module `microcode`, the kernel applies
+the newest fitting update on every core before deciding the protections); DESIGN.md section 14
+gains a rule for firmware (optional, never in the repository, loaded and checked by our code,
+listed). Impala already has Roxy's file, `/lib/firmware/intel-ucode/06-2a-07`, revision `0x2F`.

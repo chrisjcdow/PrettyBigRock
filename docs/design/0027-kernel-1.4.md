@@ -165,8 +165,8 @@ this old instruction also empties the buffers. Without that microcode it does no
 the report says so (section 1a). **Roxy is in that state**: its firmware's microcode is
 revision `0x28`, from before the fix, and Linux on Roxy is protected only because it loads
 revision `0x2F` at start (Chris, 25 November: Linux reports `Updated early from: 0x00000028`,
-and `mds: Mitigation: Clear CPU buffers`). So on Roxy, unless PrettyBigRock loads the update
-itself, `verw` clears nothing and MDS stays open (open questions).
+and `mds: Mitigation: Clear CPU buffers`). So PrettyBigRock loads the update itself (section
+1e).
 
 Returns from the kernel to the kernel don't clear anything: only a program can be the reader.
 
@@ -188,6 +188,51 @@ writes 0 when it unmaps; the rule makes it a promise:
 
 L1TF's other half is virtual machines (a guest can aim the flaw at the host's memory); that
 waits for virtual machines.
+
+#### 1e. Microcode updates
+
+A processor's **microcode** is the firmware inside it that carries out its more complicated
+instructions. Intel fixes flaws by publishing new microcode, which the firmware or the
+operating system loads into the processor at every start (it is forgotten when the power
+goes). Roxy's firmware loads revision `0x28`; the fix for MDS (and the controls Spectre
+variant 2 needs) came in `0x2F`. Chris agreed on 25 November 2026 that PrettyBigRock loads
+Intel's updates, under the rule for firmware in DESIGN.md section 14: optional, never kept in
+the repository, and the system works without them (with MDS open on processors like Roxy's).
+
+- **On the boot disk.** The build tool, given `PBR_MICROCODE=<directory>` (Ubuntu's
+  `intel-microcode` package puts Intel's files in `/lib/firmware/intel-ucode/`), copies every
+  file in it to `PBR/x86_64/microcode/` on the EFI system partition, and into the BIOS
+  loader's payload, keeping Intel's names: family, model and stepping in hexadecimal, such as
+  `06-2a-07` for Roxy's processor. Without it, there is no folder, and nothing else changes.
+- **The loaders** read CPUID leaf 1 on the boot core, work out that name, and load only that
+  file, as a start-up module named `microcode` (note 0003's `modules`). A missing file is not
+  an error.
+- **The kernel** reads the module straight after its heap is ready (note 0005, section 1,
+  step 6), before the hardware description, and well before the protections of sections 1a to
+  1d are decided:
+  - the file is a list of updates in Intel's format, each a 48-byte header (header version 1,
+    revision, date, processor signature, checksum, loader version 1, processor flags, data
+    size, total size) followed by its data and an optional table of further signatures. The
+    kernel walks the list with every length checked against what is left, as `lib/devices`
+    does configuration space, and skips anything that doesn't parse;
+  - an update fits if its signature (or one in its extra table) equals CPUID leaf 1's `EAX`
+    and its processor flags include the bit `IA32_PLATFORM_ID` (MSR `0x17`, bits 50 to 52)
+    names, and its 32-bit words sum to zero. Of those, it takes the newest, and only if newer
+    than the running revision (MSR `0x8B`, read after writing 0 to it and running CPUID):
+    never older or the same;
+  - it copies that update's data to a 16-byte aligned buffer, writes the buffer's address to
+    `IA32_BIOS_UPDT_TRIG` (MSR `0x79`), and reads the revision again to see that it took;
+  - each other core does the same with the same buffer as the first thing it does when it
+    starts (note 0005, section 7), and the buffer is freed once every core has started;
+  - the start-up report says `Microcode: 0x28, updated to 0x2f`, `Microcode: 0x2f (no newer
+    update)`, or `Microcode: the update was refused`. A core that ends up on a different
+    revision from the boot core is logged.
+- **The processor checks Intel's signature** on the update itself and refuses anything else,
+  so a damaged or hostile file can't put foreign code into the processor; the kernel's own
+  checks only keep it from passing nonsense. Only Intel's updates are loaded in M7; AMD's
+  (another format) can follow when a machine needs them. In QEMU nothing is loaded (QEMU
+  ignores the MSR), so this is tested on the host and on Roxy (section 9).
+- **The release image** doesn't include Intel's files until note 0031 decides it should.
 
 ### 2. Shared interrupt lines
 
@@ -374,11 +419,18 @@ machine description's boot partition to the storage service (note 0030 says how)
 | Boot information | 1.0, 536 bytes | 1.1, 552 bytes, with `boot_partition` |
 | Machine description | 1.0 | 1.1, with the boot partition at offset 48 |
 | Command line | `selftest`, … | Also `mitigations=auto/on/off` (kernel) and `console=` (x86-64 loaders) |
+| Start-up modules | `startup` | Also `microcode` (x86-64, optional, section 1e) |
 
 No new calls, rights, object types or error codes.
 
 ### 9. Testing
 
+- **Microcode.** On the host: the parser on synthetic files in Intel's format (several updates,
+  extra signature tables, bad checksums, lengths running past the end, random corruption), and
+  on the files in `/lib/firmware/intel-ucode/` when the machine has them (skipped otherwise, as
+  the FAT32 tests are without `mtools`): every update in them parses, and Roxy's file
+  (`06-2a-07`) gives revision `0x2F` for its signature. On Roxy in stage 1: the report says
+  `0x28, updated to 0x2f` on every core, and MDS is cleared.
 - **Host tests.** `lib/platform`: page tables never leave a non-zero not-present entry (section
   1d), in the existing random sequences; parsing `console=`; the UEFI device path's hard drive
   node; finding the boot partition in a GPT, with corrupted headers and entries. `lib/bootinfo`:
@@ -438,18 +490,10 @@ No new calls, rights, object types or error codes.
 
 ## Open questions
 
-- **Microcode.** Roxy's firmware carries revision `0x28`, without `MD_CLEAR`; Intel's `0x2F`
-  has it (and the IBRS and IBPB controls Spectre variant 2 needs), and Linux loads it on Roxy
-  at every start. Should PrettyBigRock load Intel's microcode updates? Intel lets them be
-  redistributed in binary form, but they are not free software, and DESIGN.md has no rule yet
-  for firmware blobs. Recommended: yes, as an optional start-up module (`microcode`, Intel's
-  file for the processor, never kept in the repository; the build tool takes it from a path it
-  is given), applied by the kernel on each core as it starts (`IA32_BIOS_UPDT_TRIG`, MSR
-  `0x79`), before the mitigations are decided; without the file, the report says MDS is open.
-  For Chris to decide.
 - **Spectre variant 2** (a program training the processor's guesses of indirect jumps to
   steer the kernel's): needs retpolines, which our pinned compiler offers only on nightly, or
-  the microcode's IBRS. Not in M7.
+  the IBRS and IBPB controls, which the microcode of section 1e brings to Roxy. Not in M7.
+- **AMD's microcode**, when a machine needs it (section 1e).
 - **Hyper-threading and MDS** (section 1c), and L1TF for virtual machines (section 1d).
 - **PCID**, if the measurement (section 9) shows KPTI is costly.
 - **Configuring a line's trigger and polarity** from AML (section 2), if a machine needs it.
@@ -458,6 +502,8 @@ No new calls, rights, object types or error codes.
 - **Two disks with one boot partition GUID** (section 4): note 0030.
 
 ## Changes
+- 25 November 2026: Chris agreed that PrettyBigRock loads Intel's microcode updates; section
+  1e, with DESIGN.md section 14's rule for firmware.
 - 25 November 2026: Roxy's vulnerabilities and microcode, from Linux (Chris): Meltdown, L1TF
   and MDS affected, as the draft assumed; the firmware's microcode (`0x28`) can't clear
   buffers, Linux's update (`0x2F`) can. Sections 1c and the microcode question updated.

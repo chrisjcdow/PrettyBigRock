@@ -564,9 +564,18 @@ The rule is to write everything ourselves. Anything borrowed:
 | Rust compiler and its `core`/`alloc` libraries | Building | MIT/Apache-2.0 | Part of the language; not replaced. |
 | QEMU, OVMF, SeaBIOS | Testing in VMs | GPL/LGPL/BSD | Tools, not part of the OS. |
 | Raspberry Pi firmware | Starting the Pi 5 | Broadcom licence | Firmware the board needs; not part of the OS. |
+| Intel processor microcode | Fixing processor flaws (MDS on Roxy) | Intel's licence (redistribution in binary form) | Firmware the processor needs; not part of the OS (note 0027). |
 | v86 emulator | Browser player for 1.x | BSD-2 | 32-bit only; see open question Q3. |
 
 Nothing borrowed is part of PrettyBigRock 2 itself yet.
+
+**Firmware** that a processor or device needs (processor microcode now; later, perhaps, Wi-Fi
+or graphics firmware) isn't borrowed code either, since PrettyBigRock never runs it itself. It
+is allowed when it is:
+- **optional**: the system starts and works without it, and says what is missing;
+- **never kept in the repository**: the build tool takes it from a path it is given;
+- **loaded by our own code**, which checks its format and treats it as untrusted data;
+- **listed above**, with its licence.
 
 **Ported software** (applications and toolkits such as SDL, Qt, LLVM, a browser engine, or a
 Linux guest in a virtual machine) isn't borrowed OS code. It goes in a separate ports
@@ -645,3 +654,4 @@ Q8 was settled on 9 November 2026 (below).
 - 9 November 2026: Q8 settled by note 0022 (our own protocol; a Wayland front end later).
 - 22 November 2026: section 8 says what M6 built (the 2.0 alpha), with Q8's answer where the
   question was asked.
+- 25 November 2026: section 14's rule for firmware, and Intel's microcode (note 0027).
