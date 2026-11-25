@@ -40,6 +40,7 @@ written to be read cold.
 | [0026](0026-apps-m6-tests-and-stages.md) | The 1.x apps rewritten, how M6 is tested, and the order of building | Accepted |
 | [0027](0027-kernel-1.4.md) | Kernel interface 1.4: real hardware (Meltdown, MDS and L1TF; shared interrupt lines; the serial port; the boot partition) | Accepted |
 | [0028](0028-acpi.md) | ACPI: the AML interpreter and the ACPI service | Accepted |
+| [0029](0029-usb.md) | USB: the EHCI driver, hubs, `pbr.usb` and devices that come and go | Draft |
 
 ## Writing a note
 

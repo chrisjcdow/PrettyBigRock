@@ -1389,3 +1389,14 @@ no DMA, ACPI mode, `\_PIC(1)`, device initialisation, the fixed power button thr
 replaced by `match acpi`; the power service's `_S5` stopgap removed. Found while drafting:
 QEMU's q35 routes PCI lines through links that say active high, while the kernel assumes active
 low, so interface 1.4 gains `interrupt_configure` (call 89); note 0027 records the change.
+
+**Then:** Chris asked whether we must tell the firmware we're Windows. Roxy's DSDT shows why:
+it asks `_OSI` only about seven Windows names and, told no, behaves as for Windows 2000 (hides
+the HPET device, drops the 64-bit PCI window); a name of our own would never be asked about.
+Note 0028 records this and was accepted. Note 0029 (USB) drafted: `drivers/ehci` per controller
+owning DMA and every hub, class drivers with only a `pbr.usb` capability to their interface;
+the device manager takes EHCI controllers from the firmware before switching devices off;
+`pbr.usb.host` with changes collected one way; `pbr.devices` version 2 (`watch`, paged `list`,
+unclaimed devices, paths and serial numbers); `dma 1M low`; `lib/driver` gains timers. QEMU
+can't test hubs or split transactions (its hub is USB 1.1), so `lib/usb` tests them against a
+simulated bus and Roxy is the first real test.

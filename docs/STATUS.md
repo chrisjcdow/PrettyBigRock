@@ -19,7 +19,8 @@ recommended and are settled as he walks through each note. Roxy's ACPI tables ar
 will get a COM2 header bracket and a USB-serial adapter. Note 0027 (kernel 1.4) is accepted (25
 November), with microcode loading (DESIGN.md section 14's rule for firmware). Note 0028
 (ACPI) is accepted too, answering the firmware like Windows (Roxy's firmware only asks about
-Windows names). **Next**: notes 0029 to 0031.
+Windows names). Note 0029 (USB) is drafted, waiting for Chris. **Next**: notes 0030
+and 0031.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 
