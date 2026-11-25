@@ -39,7 +39,7 @@ written to be read cold.
 | [0025](0025-picker-clipboard-permissions.md) | The file picker, the clipboard and the permissions viewer | Accepted |
 | [0026](0026-apps-m6-tests-and-stages.md) | The 1.x apps rewritten, how M6 is tested, and the order of building | Accepted |
 | [0027](0027-kernel-1.4.md) | Kernel interface 1.4: real hardware (Meltdown, MDS and L1TF; shared interrupt lines; the serial port; the boot partition) | Accepted |
-| [0028](0028-acpi.md) | ACPI: the AML interpreter and the ACPI service | Draft |
+| [0028](0028-acpi.md) | ACPI: the AML interpreter and the ACPI service | Accepted |
 
 ## Writing a note
 
