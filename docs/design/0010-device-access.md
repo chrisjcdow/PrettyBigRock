@@ -310,7 +310,7 @@ record doesn't change.
 
 ## Open questions
 
-- An IOMMU (VT-d, AMD-Vi, SMMU): a later milestone. It makes `memory_bus_address`'s device
+- An IOMMU (VT-d, AMD-Vi, SMMU): M11 for VT-d and AMD-Vi (ROADMAP.md, added 25 November 2026). It makes `memory_bus_address`'s device
   argument real and closes the gap described in section 6.
 - Shared legacy interrupt lines, with AML (M7).
 - Non-coherent DMA (some Arm boards) needs a mapping attribute (section 6).

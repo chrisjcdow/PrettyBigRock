@@ -205,6 +205,8 @@ server.
 
 ## M11: A modern PC
 - NVMe, USB 3 (xHCI), and the remaining ACPI needs (battery, lid, sleep on a laptop).
+- The IOMMU (Intel VT-d, AMD-Vi), so each device can reach only its own driver's memory and a
+  hostile driver can't take over the machine (note 0010, section 6; added 25 November 2026).
 
 **Done when:** a current PC or laptop boots to the desktop and saves files on its own disk.
 
