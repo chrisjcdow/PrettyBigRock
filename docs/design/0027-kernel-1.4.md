@@ -162,9 +162,11 @@ When MDS is on, the very last thing before `iretq` to a program (after `CR3` is 
 `verw` on a memory word holding the kernel's data selector, kept in the entry area. On
 processors whose microcode has been updated for MDS (CPUID leaf 7, `EDX` bit 10, `MD_CLEAR`),
 this old instruction also empties the buffers. Without that microcode it does nothing useful;
-the report says so (section 1a). Roxy's firmware is from 2013, older than the fix (2019), so
-Roxy may well be in that state unless the kernel loads a microcode update itself (open
-questions).
+the report says so (section 1a). **Roxy is in that state**: its firmware's microcode is
+revision `0x28`, from before the fix, and Linux on Roxy is protected only because it loads
+revision `0x2F` at start (Chris, 25 November: Linux reports `Updated early from: 0x00000028`,
+and `mds: Mitigation: Clear CPU buffers`). So on Roxy, unless PrettyBigRock loads the update
+itself, `verw` clears nothing and MDS stays open (open questions).
 
 Returns from the kernel to the kernel don't clear anything: only a program can be the reader.
 
@@ -436,11 +438,15 @@ No new calls, rights, object types or error codes.
 
 ## Open questions
 
-- **Microcode.** Roxy's firmware (2013) probably carries microcode without `MD_CLEAR`, and Linux
-  on Roxy may only be protected because it loads a newer one at start. Should PrettyBigRock's
-  loaders or kernel load Intel's microcode updates? They are redistributable, but not free
-  software. Chris could check on Roxy, under Linux, with `grep . /sys/devices/system/cpu/vulnerabilities/*`
-  and `journalctl -k | grep microcode`, which shows the firmware's revision and Linux's update.
+- **Microcode.** Roxy's firmware carries revision `0x28`, without `MD_CLEAR`; Intel's `0x2F`
+  has it (and the IBRS and IBPB controls Spectre variant 2 needs), and Linux loads it on Roxy
+  at every start. Should PrettyBigRock load Intel's microcode updates? Intel lets them be
+  redistributed in binary form, but they are not free software, and DESIGN.md has no rule yet
+  for firmware blobs. Recommended: yes, as an optional start-up module (`microcode`, Intel's
+  file for the processor, never kept in the repository; the build tool takes it from a path it
+  is given), applied by the kernel on each core as it starts (`IA32_BIOS_UPDT_TRIG`, MSR
+  `0x79`), before the mitigations are decided; without the file, the report says MDS is open.
+  For Chris to decide.
 - **Spectre variant 2** (a program training the processor's guesses of indirect jumps to
   steer the kernel's): needs retpolines, which our pinned compiler offers only on nightly, or
   the microcode's IBRS. Not in M7.
@@ -452,4 +458,7 @@ No new calls, rights, object types or error codes.
 - **Two disks with one boot partition GUID** (section 4): note 0030.
 
 ## Changes
+- 25 November 2026: Roxy's vulnerabilities and microcode, from Linux (Chris): Meltdown, L1TF
+  and MDS affected, as the draft assumed; the firmware's microcode (`0x28`) can't clear
+  buffers, Linux's update (`0x2F`) can. Sections 1c and the microcode question updated.
 - 23 November 2026: first draft, for discussion with Chris.
