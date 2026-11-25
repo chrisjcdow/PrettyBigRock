@@ -199,14 +199,26 @@ variant 2 needs) came in `0x2F`. Chris agreed on 25 November 2026 that PrettyBig
 Intel's updates, under the rule for firmware in DESIGN.md section 14: optional, never kept in
 the repository, and the system works without them (with MDS open on processors like Roxy's).
 
+- **Never in the repository** (Chris, 25 November): it would stay in git's history for ever,
+  growing with each of Intel's releases (the full set is about 21 MB in 126 files), and a copy
+  there goes stale unnoticed. The files come from outside at build time instead.
 - **On the boot disk.** The build tool, given `PBR_MICROCODE=<directory>` (Ubuntu's
   `intel-microcode` package puts Intel's files in `/lib/firmware/intel-ucode/`), copies every
   file in it to `PBR/x86_64/microcode/` on the EFI system partition, and into the BIOS
   loader's payload, keeping Intel's names: family, model and stepping in hexadecimal, such as
-  `06-2a-07` for Roxy's processor. Without it, there is no folder, and nothing else changes.
-- **The loaders** read CPUID leaf 1 on the boot core, work out that name, and load only that
-  file, as a start-up module named `microcode` (note 0003's `modules`). A missing file is not
-  an error.
+  `06-2a-07` for Roxy's processor, with Intel's licence text beside them. Without it, there is
+  no folder, and nothing else changes.
+- **The UEFI loader** reads CPUID leaf 1 on the boot core, works out that name, and loads only
+  that file, as a start-up module named `microcode` (note 0003's `modules`). A missing file is
+  not an error.
+- **The BIOS loader** can't read files: its second stage copies the whole payload to memory,
+  through the BIOS, before anything else runs, and reading through a real BIOS can be slow (a
+  USB stick through the firmware's emulation perhaps a few megabytes a second), so copying
+  all 21 MB would add seconds to every start. So the microcode files go **after** the rest of
+  the payload, with a table of their names, offsets and lengths in the payload's header; the
+  second stage runs CPUID itself (it works in 16-bit mode), and reads only the matching file,
+  after the rest. The BIOS boot partition grows from 32 MiB to 64 MiB to hold them (note 0004;
+  the size is only a constant in the build tool).
 - **The kernel** reads the module straight after its heap is ready (note 0005, section 1,
   step 6), before the hardware description, and well before the protections of sections 1a to
   1d are decided:
@@ -232,7 +244,11 @@ the repository, and the system works without them (with MDS open on processors l
   checks only keep it from passing nonsense. Only Intel's updates are loaded in M7; AMD's
   (another format) can follow when a machine needs them. In QEMU nothing is loaded (QEMU
   ignores the MSR), so this is tested on the host and on Roxy (section 9).
-- **The release image** doesn't include Intel's files until note 0031 decides it should.
+- **Release images include them** (Chris, 25 November): every Intel machine whose firmware is
+  out of date, as most are, gets the fixes. The release build downloads Intel's published
+  release (`intel/Intel-Linux-Processor-Microcode-Data-Files` on GitHub) at a pinned version,
+  checks it against a recorded SHA-256 sum, and passes it to the build tool as above; moving
+  to a newer release is a one-line change, reviewed like any other. Note 0031 builds this.
 
 ### 2. Shared interrupt lines
 
@@ -502,6 +518,8 @@ No new calls, rights, object types or error codes.
 - **Two disks with one boot partition GUID** (section 4): note 0030.
 
 ## Changes
+- 25 November 2026: microcode never in the repository; release images fetch Intel's pinned
+  release; the BIOS loader reads only the matching file, from a 64 MiB BIOS boot partition.
 - 25 November 2026: Chris agreed that PrettyBigRock loads Intel's microcode updates; section
   1e, with DESIGN.md section 14's rule for firmware.
 - 25 November 2026: Roxy's vulnerabilities and microcode, from Linux (Chris): Meltdown, L1TF
