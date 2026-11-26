@@ -19,8 +19,6 @@ use pbr_fs::{BlockDevice, DeviceError, Filesystem, Kind, NodeId};
 use pbr_manifest::Place;
 use pbr_manifest::users::{self, User};
 use pbr_rockfs::RockFs;
-use std::fs;
-use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -119,9 +117,10 @@ fn folder_at(fs: &mut RockFs<MemDisk>, path: &str) -> Result<NodeId, String> {
     Ok(node)
 }
 
-/// The volume, as bytes.
-fn volume() -> Result<Vec<u8>, String> {
-    let mut disk = MemDisk(vec![0; (SIZE - START * SECTOR as u64) as usize]);
+/// The volume, `bytes` long: the data disk's partition, or the stick image's third partition
+/// (docs/design/0031-stick-tests-and-stages.md, section 1).
+pub fn volume(bytes: u64) -> Result<Vec<u8>, String> {
+    let mut disk = MemDisk(vec![0; bytes as usize]);
     pbr_rockfs::format(&mut disk, LABEL, new_uuid(), now()).map_err(|e| format!("{e:?}"))?;
     let mut fs = RockFs::mount(disk, now, false).map_err(|e| format!("mounting: {e:?}"))?;
     for (path, data) in contents()? {
@@ -164,25 +163,18 @@ fn mbr() -> [u8; SECTOR] {
 
 /// Writes the disk to `path`, leaving holes where it is all zeros.
 pub fn write(path: &Path) -> Result<(), String> {
-    let volume = volume()?;
-    let say = |e: std::io::Error| format!("writing {}: {e}", path.display());
-    let _ = fs::remove_file(path);
-    let mut f = fs::File::create(path).map_err(say)?;
-    f.set_len(SIZE).map_err(say)?;
-    f.write_all(&mbr()).map_err(say)?;
-    const PIECE: usize = 64 << 10;
-    for (i, piece) in volume.chunks(PIECE).enumerate() {
-        if piece.iter().any(|&b| b != 0) {
-            f.seek(SeekFrom::Start(START * SECTOR as u64 + (i * PIECE) as u64)).map_err(say)?;
-            f.write_all(piece).map_err(say)?;
-        }
-    }
-    f.sync_all().map_err(say)
+    let start = START as usize * SECTOR;
+    let mut disk = vec![0u8; SIZE as usize];
+    disk[..SECTOR].copy_from_slice(&mbr());
+    let volume = volume(SIZE - start as u64)?;
+    disk[start..].copy_from_slice(&volume);
+    crate::image::write_sparse(path, &disk)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     /// The disk as the system will find it: an MBR with one RockFS partition, mounted clean,
     /// with `owner` the one administrator and their home in place.

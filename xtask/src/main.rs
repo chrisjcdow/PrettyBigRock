@@ -712,24 +712,38 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         kernels.push(k);
         loaders.push(l);
     }
-    // Four images: the ordinary one, without the test programs, and three whose command lines
+    // Six images: the ordinary one, without the test programs, and three whose command lines
     // ask for the boot tests: the self-test, the desktop test (note 0026, section 6), and the
-    // desktop test in text mode (note 0024, section 11).
+    // desktop test in text mode (note 0024, section 11). Then the USB stick images (note 0031,
+    // section 1): the ordinary image with the system volume as a third partition, and the same
+    // with the self-test, both with the words in `PBR_CMDLINE` added to their command lines
+    // (for Roxy, `console=0x2f8`), since `cmdline.txt` can't be edited on a stick from Windows.
+    let extra = env::var("PBR_CMDLINE").unwrap_or_default();
+    let version = pbr_manifest::VERSION;
+    let system_volume = datadisk::volume(image::SYSTEM_SECTORS * 512)?;
+    fs::create_dir_all(root.join(format!("build/{profile}"))).map_err(|e| e.to_string())?;
     let mut paths = Vec::new();
-    for (name, cmdline) in [
-        ("prettybigrock.img", &b""[..]),
-        ("prettybigrock-selftest.img", &b"selftest"[..]),
-        ("prettybigrock-desktoptest.img", &b"desktoptest"[..]),
-        ("prettybigrock-texttest.img", &b"text desktoptest"[..]),
+    for (name, base, stick) in [
+        ("prettybigrock.img", "", false),
+        ("prettybigrock-selftest.img", "selftest", false),
+        ("prettybigrock-desktoptest.img", "desktoptest", false),
+        ("prettybigrock-texttest.img", "text desktoptest", false),
+        ("prettybigrock-stick.img", "", true),
+        ("prettybigrock-stick-selftest.img", "selftest", true),
     ] {
-        let (mbr, bios) =
-            bios_loader(root, tc, release, &kernels[0], archives[0].for_cmdline(cmdline), cmdline)?;
+        let words: Vec<&str> =
+            base.split_whitespace().chain(extra.split_whitespace().filter(|_| stick)).collect();
+        let joined = words.join(" ");
+        let cmdline = joined.as_bytes();
+        // The archive follows the test words only: extra words such as `console=` don't make
+        // an image a test image.
+        let archive = |i: usize| archives[i].for_cmdline(base.as_bytes());
+        let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], archive(0), cmdline)?;
         let mut files: Vec<(String, &[u8])> = Vec::new();
         for (i, arch) in ARCHES.iter().enumerate() {
             files.push((format!("EFI/BOOT/{}", arch.uefi_file), &loaders[i]));
             files.push((format!("PBR/{}/kernel.elf", arch.name), &kernels[i]));
-            files
-                .push((format!("PBR/{}/startup.arc", arch.name), archives[i].for_cmdline(cmdline)));
+            files.push((format!("PBR/{}/startup.arc", arch.name), archive(i)));
         }
         files.push(("PBR/cmdline.txt".to_string(), cmdline));
         let refs: Vec<(&str, &[u8])> = files.iter().map(|(p, d)| (p.as_str(), *d)).collect();
@@ -737,8 +751,13 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
             mbr_code: &mbr,
             bios_partition: &bios,
             esp_files: &refs,
+            system_volume: stick.then_some(&system_volume[..]),
+            version,
         })?;
-        paths.push(write_out(root, &format!("build/{profile}/{name}"), &img)?);
+        let rel = format!("build/{profile}/{name}");
+        image::write_sparse(&root.join(&rel), &img)?;
+        println!("built {rel} ({} MiB)", img.len() >> 20);
+        paths.push(root.join(rel));
     }
     // And the disk the release's launcher attaches, already set up for `owner`.
     let data = root.join(format!("build/{profile}/prettybigrock-data.img"));

@@ -139,8 +139,7 @@ appear within the time limit. GitHub Actions runs this on every change.
 ## Open questions
 
 - Some old BIOSes only boot a disk with an "active" partition, which a protective MBR doesn't
-  have. If Roxy turns out to be one of them, the image needs a hybrid MBR. We'll find out at
-  M7.
+  have. Note 0031 (section 1) settles what to try if Roxy turns out to be one of them.
 - Secure Boot: the loaders aren't signed. Machines need Secure Boot turned off for now.
 
 ## Changes
@@ -157,3 +156,8 @@ appear within the time limit. GitHub Actions runs this on every change.
   both architectures' kernels and start-up archives, and with the Welcome window (note 0024,
   section 6a) the two debug archives, about 31 MiB each, no longer fitted. The image is now
   130 MiB; the release's are mostly zeros, so its zip grows little.
+- 26 November 2026, M7 stage 1a: the BIOS boot partition grew from 32 MiB to 64 MiB, for
+  Intel's microcode files (note 0027, section 1e), so the images are 162 MiB. The partitions'
+  and the disk's unique GUIDs are now made from the version rather than fixed (note 0031,
+  section 1). The USB stick image, `prettybigrock-stick.img`, adds the system volume as a third
+  partition (note 0031). The protective MBR stays unmarked, as the UEFI specification says.

@@ -1,15 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! Writes the boot disk image (docs/design/0004-loaders-and-boot-disk.md): a GPT disk with a
-//! BIOS boot partition and a FAT32 EFI system partition. Everything here is our own code, so
-//! building the image needs nothing but Rust.
+//! Writes the boot disk images (docs/design/0004-loaders-and-boot-disk.md): a GPT disk with a
+//! BIOS boot partition and a FAT32 EFI system partition. The USB stick image
+//! (docs/design/0031-stick-tests-and-stages.md, section 1) has a third partition, the system
+//! volume. Everything here is our own code, so building the images needs nothing but Rust.
+
+use std::fs;
+use std::io::{Seek, SeekFrom, Write};
+use std::path::Path;
 
 const SECTOR: usize = 512;
 const BIOS_START: u64 = 2048;
-const BIOS_SECTORS: u64 = 32 * 2048; // 32 MiB (8 until M5 stage 5, 16 until M6 stage 6; note 0004)
+// 64 MiB (8 until M5 stage 5, 16 until M6 stage 6, 32 until M7 stage 1a; notes 0004 and 0027,
+// which needs the room for Intel's microcode files).
+const BIOS_SECTORS: u64 = 64 * 2048;
 const ESP_START: u64 = BIOS_START + BIOS_SECTORS;
 const ESP_SECTORS: u64 = 96 * 2048; // 96 MiB (64 until M6 stage 10b; note 0004)
+/// Where a stick image's system volume starts, straight after the EFI system partition.
+const SYSTEM_START: u64 = ESP_START + ESP_SECTORS;
+/// Its size: 256 MiB, as `prettybigrock-data.img`'s (note 0031, section 1).
+pub const SYSTEM_SECTORS: u64 = 256 * 2048;
+/// RockFS's GPT partition type (ROCKFS.md, "Where a volume lives").
+const ROCKFS_TYPE: &str = "03971446-6A02-47DC-BB5F-6A7572E5247C";
+/// The disk GUID of the test disks, which don't take theirs from a version.
+const FIXED_DISK_GUID: &str = "7B2E5C00-0000-4000-8000-505242444953";
 
 /// The image's contents.
 pub struct Contents<'a> {
@@ -19,6 +34,12 @@ pub struct Contents<'a> {
     pub bios_partition: &'a [u8],
     /// Files for the EFI system partition, as (path with `/`, contents).
     pub esp_files: &'a [(&'a str, &'a [u8])],
+    /// For a USB stick image: the system volume, which becomes a third partition (note 0031,
+    /// section 1). At most [`SYSTEM_SECTORS`] sectors. `Option` is Rust's way of saying a value
+    /// may be absent (`None`), instead of a null pointer.
+    pub system_volume: Option<&'a [u8]>,
+    /// The version the image is of, from which its unique GUIDs are made ([`version_guid`]).
+    pub version: &'a str,
 }
 
 /// Where the BIOS boot partition starts, in sectors (the first stage needs it).
@@ -26,7 +47,8 @@ pub const BIOS_PARTITION_LBA: u64 = BIOS_START;
 
 /// Builds the whole disk image.
 pub fn build(c: &Contents<'_>) -> Result<Vec<u8>, String> {
-    let total = ESP_START + ESP_SECTORS + 2048; // room for the backup GPT, rounded to a MiB
+    let end = if c.system_volume.is_some() { SYSTEM_START + SYSTEM_SECTORS } else { SYSTEM_START };
+    let total = end + 2048; // room for the backup GPT, rounded to a MiB
     let mut disk = vec![0u8; total as usize * SECTOR];
 
     if c.mbr_code.len() > 440 {
@@ -45,8 +67,34 @@ pub fn build(c: &Contents<'_>) -> Result<Vec<u8>, String> {
     let e = ESP_START as usize * SECTOR;
     disk[e..e + fat.len()].copy_from_slice(&fat);
 
-    gpt(&mut disk, total);
+    if let Some(volume) = c.system_volume {
+        if volume.len() as u64 > SYSTEM_SECTORS * SECTOR as u64 {
+            return Err("the system volume is bigger than its partition".into());
+        }
+        let v = SYSTEM_START as usize * SECTOR;
+        disk[v..v + volume.len()].copy_from_slice(volume);
+    }
+
+    gpt(&mut disk, total, c.version, c.system_volume.is_some());
     Ok(disk)
+}
+
+/// Writes `bytes` to `path`, leaving holes where 64 KiB pieces are all zeros, so that a mostly
+/// empty image (the stick image's system volume is) takes little room on a filesystem that
+/// can leave holes, and is quick to write.
+pub fn write_sparse(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let say = |e: std::io::Error| format!("writing {}: {e}", path.display());
+    let _ = fs::remove_file(path);
+    let mut f = fs::File::create(path).map_err(say)?;
+    f.set_len(bytes.len() as u64).map_err(say)?;
+    const PIECE: usize = 64 << 10;
+    for (i, piece) in bytes.chunks(PIECE).enumerate() {
+        if piece.iter().any(|&b| b != 0) {
+            f.seek(SeekFrom::Start((i * PIECE) as u64)).map_err(say)?;
+            f.write_all(piece).map_err(say)?;
+        }
+    }
+    f.sync_all().map_err(say)
 }
 
 fn put16(b: &mut [u8], o: usize, v: u16) {
@@ -61,7 +109,7 @@ fn put64(b: &mut [u8], o: usize, v: u64) {
 
 pub fn protective_mbr(s: &mut [u8], total: u64) {
     let p = 446;
-    s[p] = 0x00; // not "active" (see the open question in note 0004)
+    s[p] = 0x00; // not "active", as the UEFI specification says (note 0031, section 1)
     s[p + 1..p + 4].copy_from_slice(&[0x00, 0x02, 0x00]);
     s[p + 4] = 0xEE;
     s[p + 5..p + 8].copy_from_slice(&[0xFF, 0xFF, 0xFF]);
@@ -99,38 +147,87 @@ fn guid(s: &str) -> [u8; 16] {
     g
 }
 
-fn gpt(disk: &mut [u8], total: u64) {
-    let parts = [
+/// A unique GUID for an image of `version`: for its partition `n` (counting from 1), or for
+/// the disk itself (`n` = 0). The storage service finds the stick the machine started from by
+/// its boot partition's GUID (note 0030, section 7), so sticks from different releases must
+/// differ; making the GUIDs from the version, rather than at random, keeps a build repeatable
+/// (note 0031, section 1). Sticks written from one image are still alike (note 0031, section 2).
+pub fn version_guid(version: &str, n: u8) -> [u8; 16] {
+    // FNV-1a: a simple hash that lets every byte of the input change all 64 bits.
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for &b in b"PrettyBigRock ".iter().chain(version.as_bytes()).chain(&[0, n]) {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    let mut out = [0u8; 16];
+    for chunk in out.chunks_mut(8) {
+        // splitmix64, as in `datadisk`: spreads the hash over 16 bytes.
+        h = h.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = h;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        chunk.copy_from_slice(&(z ^ (z >> 31)).to_le_bytes());
+    }
+    // Mark it a "random" (version 4) GUID of the usual variant. GPT stores the third group
+    // little-endian, so its version digit is the top half of byte 7.
+    out[7] = (out[7] & 0x0F) | 0x40;
+    out[8] = (out[8] & 0x3F) | 0x80;
+    out
+}
+
+fn gpt(disk: &mut [u8], total: u64, version: &str, system: bool) {
+    let mut parts = vec![
         (
-            "21686148-6449-6E6F-744E-656564454649",
-            "7B2E5C01-0000-4000-8000-505242494F53",
+            guid("21686148-6449-6E6F-744E-656564454649"),
+            version_guid(version, 1),
             BIOS_START,
             BIOS_SECTORS,
             "BIOS boot",
         ),
         (
-            "C12A7328-F81F-11D2-BA4B-00A0C93EC93B",
-            "7B2E5C02-0000-4000-8000-505245535030",
+            guid("C12A7328-F81F-11D2-BA4B-00A0C93EC93B"),
+            version_guid(version, 2),
             ESP_START,
             ESP_SECTORS,
             "EFI system",
         ),
     ];
-    gpt_table(disk, total, &parts);
+    if system {
+        parts.push((
+            guid(ROCKFS_TYPE),
+            version_guid(version, 3),
+            SYSTEM_START,
+            SYSTEM_SECTORS,
+            "Files",
+        ));
+    }
+    gpt_table_raw(disk, total, version_guid(version, 0), &parts);
 }
 
 /// A GPT partition: (type GUID, partition GUID, first sector, sectors, name).
 pub type GptPart<'a> = (&'a str, &'a str, u64, u64, &'a str);
 
-/// Writes a GPT (both copies) describing `parts` onto `disk` of `total` sectors. The protective
-/// MBR is the caller's.
+/// The same, with the GUIDs as GPT stores them.
+type RawPart<'a> = ([u8; 16], [u8; 16], u64, u64, &'a str);
+
+/// Writes a GPT (both copies) describing `parts` onto `disk` of `total` sectors, with fixed
+/// GUIDs (for the test disks). The protective MBR is the caller's.
 pub fn gpt_table(disk: &mut [u8], total: u64, parts: &[GptPart<'_>]) {
+    let raw: Vec<RawPart<'_>> = parts
+        .iter()
+        .map(|&(ty, id, start, len, name)| (guid(ty), guid(id), start, len, name))
+        .collect();
+    gpt_table_raw(disk, total, guid(FIXED_DISK_GUID), &raw);
+}
+
+/// [`gpt_table`], with the disk's GUID and the partitions' GUIDs given as bytes.
+fn gpt_table_raw(disk: &mut [u8], total: u64, disk_guid: [u8; 16], parts: &[RawPart<'_>]) {
     let last = total - 1;
     let mut entries = vec![0u8; 128 * 128];
     for (i, (ty, id, start, len, name)) in parts.iter().enumerate() {
         let e = &mut entries[i * 128..(i + 1) * 128];
-        e[..16].copy_from_slice(&guid(ty));
-        e[16..32].copy_from_slice(&guid(id)); // fixed, so builds are repeatable
+        e[..16].copy_from_slice(ty);
+        e[16..32].copy_from_slice(id);
         put64(e, 32, *start);
         put64(e, 40, start + len - 1);
         for (j, u) in name.encode_utf16().enumerate() {
@@ -147,7 +244,7 @@ pub fn gpt_table(disk: &mut [u8], total: u64, parts: &[GptPart<'_>]) {
         put64(&mut h, 32, alt);
         put64(&mut h, 40, 34);
         put64(&mut h, 48, last - 33);
-        h[56..72].copy_from_slice(&guid("7B2E5C00-0000-4000-8000-505242444953"));
+        h[56..72].copy_from_slice(&disk_guid);
         put64(&mut h, 72, entries_lba);
         put32(&mut h, 80, 128);
         put32(&mut h, 84, 128);
@@ -446,9 +543,14 @@ mod tests {
 
     #[test]
     fn gpt_headers_check_out() {
-        let disk =
-            build(&Contents { mbr_code: &[0x90; 10], bios_partition: b"bios", esp_files: &[] })
-                .unwrap();
+        let disk = build(&Contents {
+            mbr_code: &[0x90; 10],
+            bios_partition: b"bios",
+            esp_files: &[],
+            system_volume: None,
+            version: "1.2.3",
+        })
+        .unwrap();
         assert_eq!(&disk[512..520], b"EFI PART");
         let mut h = disk[512..512 + 92].to_vec();
         let stored = u32::from_le_bytes(h[16..20].try_into().unwrap());
@@ -460,5 +562,140 @@ mod tests {
         assert_eq!(&disk[510..512], &[0x55, 0xAA]);
         assert_eq!(disk[0], 0x90);
         assert_eq!(&disk[2048 * 512..2048 * 512 + 4], b"bios");
+    }
+
+    /// A disk held in a `Vec`, for `lib/partition` to read as the storage service would.
+    struct Bytes<'a>(&'a [u8]);
+    impl pbr_partition::Disk for Bytes<'_> {
+        fn sectors(&self) -> u64 {
+            (self.0.len() / SECTOR) as u64
+        }
+        fn read(&mut self, at: u64, buf: &mut [u8]) -> Result<(), pbr_partition::ReadError> {
+            let at = at as usize * SECTOR;
+            buf.copy_from_slice(self.0.get(at..at + buf.len()).ok_or(pbr_partition::ReadError)?);
+            Ok(())
+        }
+    }
+
+    fn stick(version: &str) -> Vec<u8> {
+        let volume = crate::datadisk::volume(SYSTEM_SECTORS * SECTOR as u64).unwrap();
+        build(&Contents {
+            mbr_code: &[0x90; 10],
+            bios_partition: b"bios",
+            esp_files: &[("PBR/cmdline.txt", b"console=0x2f8")],
+            system_volume: Some(&volume),
+            version,
+        })
+        .unwrap()
+    }
+
+    /// Partition `i`'s unique GUID (from 0), from the main GPT's entries at sector 2.
+    fn part_guid(disk: &[u8], i: usize) -> [u8; 16] {
+        disk[1024 + i * 128 + 16..][..16].try_into().unwrap()
+    }
+
+    /// The stick image (note 0031, section 1): 418 MiB, three partitions where the note says,
+    /// the protective MBR not marked active, found by `lib/partition` as the storage service
+    /// will find it, with the system volume a clean RockFS volume labelled `Files`.
+    #[test]
+    fn the_stick_image() {
+        let disk = stick("2.0.0-alpha.2");
+        assert_eq!(disk.len(), 418 << 20);
+        assert_eq!(disk[446], 0x00, "the protective MBR's entry must not be active");
+        assert_eq!(disk[450], 0xEE);
+        let scan = pbr_partition::scan(&mut Bytes(&disk)).unwrap();
+        assert_eq!(scan.table, pbr_partition::Table::Gpt);
+        assert!(scan.problems.is_empty(), "{:?}", scan.problems);
+        let found: Vec<_> = scan
+            .volumes
+            .iter()
+            .map(|v| (v.partition, v.start, v.sectors, v.filesystem, v.label.as_str()))
+            .collect();
+        use pbr_partition::Filesystem::{Fat32, RockFs, Unknown};
+        assert_eq!(
+            found,
+            [
+                (1, 2048, 64 * 2048, Unknown, ""),
+                (2, 65 * 2048, 96 * 2048, Fat32, "PBR BOOT"),
+                (3, 161 * 2048, 256 * 2048, RockFs, "Files"),
+            ]
+        );
+        // Both copies of the GPT agree: the backup's entries are the main copy's.
+        let last = disk.len() / SECTOR - 1;
+        assert_eq!(&disk[last * SECTOR..][..8], b"EFI PART");
+        let main = &disk[1024..1024 + 128 * 128];
+        let backup = &disk[(last - 32) * SECTOR..][..128 * 128];
+        assert_eq!(main, backup);
+        let rockfs = &disk[161 * 2048 * SECTOR..][..256 * 2048 * SECTOR];
+        let mut fs = pbr_rockfs::RockFs::mount(MemVolume(rockfs.to_vec()), || 0, true).unwrap();
+        assert!(fs.mount_report().is_empty(), "{:?}", fs.mount_report());
+        assert_eq!(fs.info().label, "Files");
+        // `Filesystem` is the trait (note 0016) that gives a volume `root` and `lookup`.
+        use pbr_fs::Filesystem as _;
+        let root = fs.root();
+        let system = fs.lookup(root, "System").unwrap();
+        fs.lookup(system, "users.txt").unwrap();
+    }
+
+    /// Written with `dd` or Rufus onto a bigger stick, the GPT's backup copy is in the middle
+    /// of the disk rather than at its end. The main copy is used, and nothing is reported.
+    #[test]
+    fn a_stick_bigger_than_the_image() {
+        let mut disk = stick("2.0.0-alpha.2");
+        let image = disk.len();
+        disk.resize(image * 2, 0);
+        let scan = pbr_partition::scan(&mut Bytes(&disk)).unwrap();
+        assert!(scan.problems.is_empty(), "{:?}", scan.problems);
+        assert_eq!(scan.volumes.len(), 3);
+        assert_eq!(scan.volumes[2].label, "Files");
+    }
+
+    /// The GUIDs come from the version: the same for the same version, different for another,
+    /// different for each partition, and marked as version 4 GUIDs.
+    #[test]
+    fn guids_from_the_version() {
+        let a = stick("2.0.0-alpha.2");
+        let b = stick("2.0.0-alpha.2");
+        let c = stick("2.0.0-alpha.3");
+        for i in 0..3 {
+            assert_eq!(part_guid(&a, i), part_guid(&b, i));
+            assert_ne!(part_guid(&a, i), part_guid(&c, i));
+            assert_eq!(part_guid(&a, i), version_guid("2.0.0-alpha.2", i as u8 + 1));
+        }
+        let all = [
+            version_guid("v", 0),
+            version_guid("v", 1),
+            version_guid("v", 2),
+            version_guid("v", 3),
+        ];
+        for (i, x) in all.iter().enumerate() {
+            assert_eq!(x[7] >> 4, 4);
+            assert_eq!(x[8] >> 6, 0b10);
+            assert!(all[i + 1..].iter().all(|y| y != x));
+        }
+        // The disk's own GUID, in the GPT header.
+        assert_eq!(a[512 + 56..512 + 72], version_guid("2.0.0-alpha.2", 0));
+    }
+
+    /// A RockFS volume held in memory.
+    struct MemVolume(Vec<u8>);
+    impl pbr_fs::BlockDevice for MemVolume {
+        fn sectors(&self) -> u64 {
+            (self.0.len() / SECTOR) as u64
+        }
+        fn read_only(&self) -> bool {
+            true
+        }
+        fn read(&mut self, sector: u64, buf: &mut [u8]) -> Result<(), pbr_fs::DeviceError> {
+            let at = sector as usize * SECTOR;
+            buf.copy_from_slice(self.0.get(at..at + buf.len()).ok_or(pbr_fs::DeviceError)?);
+            Ok(())
+        }
+        fn write(&mut self, _: u64, _: &[u8]) -> Result<(), pbr_fs::DeviceError> {
+            Err(pbr_fs::DeviceError)
+        }
+        fn flush(&mut self) -> Result<(), pbr_fs::DeviceError> {
+            Ok(())
+        }
     }
 }

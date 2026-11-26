@@ -323,3 +323,9 @@ Chris tries is the one the release will be.
 - 26 November 2026: first draft, for discussion with Chris.
 - 26 November 2026: accepted by Chris from the summary of its decisions. The serial adapter
   goes on Impala, not Harriet; the cable and adapter aren't here yet.
+- 26 November 2026, stage 1a: the GUIDs made from the version are used for every boot image,
+  not only the stick's: one way of making them is simpler, and the stick's are then the same as
+  the ordinary image's of that version (only one of the two is attached at a time). Stage 1a's
+  images: `prettybigrock-stick.img` and `prettybigrock-stick-selftest.img`, written sparse
+  (about 85 MiB of the 418 MiB on disk in a debug build). Both start from a USB stick on QEMU's
+  EHCI through SeaBIOS and OVMF.
