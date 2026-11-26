@@ -1439,3 +1439,7 @@ with KVM the stick starts from USB on EHCI through SeaBIOS and OVMF, reaching th
 files in memory; through virtio its `Files` becomes the system volume. The release self-test
 stick passes the kernel's self-test and stops at the program self-test's test disk, as
 expected away from QEMU. Release-build sticks zipped for Chris's first try on Roxy.
+
+**Roxy, visit 1a, 26 November:** PrettyBigRock started on Roxy from the stick image (release
+build, written with Rufus) and reached the desktop. The keyboard and mouse didn't work: the
+firmware's PS/2 emulation of USB devices isn't enough, as expected, so input waits for stage 5.
