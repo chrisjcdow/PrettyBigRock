@@ -164,3 +164,7 @@ appear within the time limit. GitHub Actions runs this on every change.
 - 26 November 2026, M7 Roxy visit 1a: Roxy's BIOS starts the image with the protective MBR
   unmarked, so the open question about the active mark is settled: neither it nor a hybrid MBR
   is needed for Roxy.
+- 26 November 2026, M7 stage 1a: the UEFI loader chooses the screen's mode as the BIOS loader
+  does: the largest by area with 32-bit pixels and a framebuffer, up to 1920x1080, instead of
+  keeping the firmware's. Roxy's UEFI had left a small mode (QEMU's OVMF leaves 1280x800, now
+  1920x1080). If no mode fits, or the firmware refuses, the screen stays as it was.

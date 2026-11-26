@@ -112,7 +112,7 @@ pub struct BootServices {
     pub get_memory_map:
         unsafe extern "efiapi" fn(*mut usize, *mut u8, *mut usize, *mut usize, *mut u32) -> Status,
     pub allocate_pool: unsafe extern "efiapi" fn(u32, usize, *mut *mut u8) -> Status,
-    pub free_pool: usize,
+    pub free_pool: unsafe extern "efiapi" fn(*mut u8) -> Status,
     pub create_event: usize,
     pub set_timer: usize,
     pub wait_for_event: usize,
@@ -198,8 +198,13 @@ pub const FILE_MODE_READ: u64 = 1;
 
 #[repr(C)]
 pub struct GraphicsOutput {
-    pub query_mode: usize,
-    pub set_mode: usize,
+    pub query_mode: unsafe extern "efiapi" fn(
+        *mut GraphicsOutput,
+        u32,
+        *mut usize,
+        *mut *mut GraphicsModeInfo,
+    ) -> Status,
+    pub set_mode: unsafe extern "efiapi" fn(*mut GraphicsOutput, u32) -> Status,
     pub blt: usize,
     pub mode: *mut GraphicsMode,
 }

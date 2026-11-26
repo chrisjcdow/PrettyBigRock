@@ -1446,3 +1446,9 @@ firmware's PS/2 emulation of USB devices isn't enough, as expected, so input wai
 Then, from the boot menu (F7), through UEFI too: so the first start had been the BIOS route,
 which Roxy's firmware tries first. Both reach the desktop; the UEFI one is smaller, since the
 UEFI loader keeps the firmware's mode. Roxy's BIOS needs no active mark (notes 0004, 0031).
+Chris's UEFI photo: a small mode stretched by the monitor, and the Welcome window off-centre,
+over the clock, as if placed for a bigger screen; QEMU at 1024x768 and 1280x720 places it
+properly. (At 1366x768 QEMU shows a slanted picture: its VGA refuses widths that aren't a
+multiple of 8 while OVMF offers the mode anyway; not ours.) The UEFI loader now chooses the
+largest 32-bit mode up to 1920x1080, as the BIOS loader does: OVMF now gives 1920x1080,
+ramfb stays at 1024x768.

@@ -36,7 +36,10 @@ yet, so this visit relies on the screen.
 BIOS (1920x1080 through VESA), and through UEFI from the boot menu (**F7**, the second entry),
 at a smaller size because the UEFI loader keeps the firmware's mode. Everything looked right;
 keyboard and mouse dead, as expected. No active mark or hybrid MBR needed. Photos in
-`docs/roxy/`. **For stage 6**: the Welcome window's page for files kept in memory names
+`docs/roxy/`. The UEFI loader now picks the largest mode up to 1920x1080, like the BIOS
+loader; on the UEFI start the Welcome window was also off-centre, over the clock, which QEMU
+doesn't reproduce: **next visit**, start through UEFI again and photograph it, and if possible
+the kernel's report (the `Screens:` line) before the desktop covers it. **For stage 6**: the Welcome window's page for files kept in memory names
 `run-prettybigrock.bat` (`apps/welcome/src/lib.rs`), which is wrong on a real machine; it
 should say so only under QEMU, or talk about the stick.
 

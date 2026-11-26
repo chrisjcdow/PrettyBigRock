@@ -231,6 +231,7 @@ impl Firmware {
             // SAFETY: the firmware returned `count` handles.
             let h = unsafe { *handles.add(i) };
             let Some(gop) = self.protocol::<GraphicsOutput>(h, &GRAPHICS_OUTPUT) else { continue };
+            self.choose_mode(gop);
             // SAFETY: a graphics output protocol always has a current mode.
             let (mode, info) = unsafe { (&*(*gop).mode, &*(*(*gop).mode).info) };
             let format = match info.pixel_format {
@@ -294,6 +295,52 @@ impl Firmware {
             n += 1;
         }
         n as u32
+    }
+
+    /// Switches a screen to the mode the BIOS loader would choose (note 0004): the largest, by
+    /// area, whose pixels are 32 bits in memory the kernel can draw in, up to 1920x1080.
+    /// Firmware often starts in a small mode (Roxy's UEFI used one; note 0031, Changes), and
+    /// only firmware can change it: once the kernel runs, the mode is fixed. If nothing fits, or
+    /// the firmware refuses, the screen stays as it was.
+    fn choose_mode(&self, gop: *mut GraphicsOutput) {
+        // SAFETY: a graphics output protocol always has a current mode.
+        let (max, current) = unsafe { ((*(*gop).mode).max_mode, (*(*gop).mode).mode) };
+        let mut best: Option<(u32, u64)> = None;
+        for number in 0..max {
+            let mut size = 0usize;
+            let mut info: *mut GraphicsModeInfo = null_mut();
+            // SAFETY: `gop` is a live protocol and `number` below its `max_mode`; on success
+            // the firmware gives us `info`, from its pool, which is ours to free.
+            let s = unsafe { ((*gop).query_mode)(gop, number, &mut size, &mut info) };
+            if is_error(s) || info.is_null() {
+                continue;
+            }
+            // SAFETY: the firmware filled in `info`. It is copied out before being freed.
+            let i = unsafe { core::ptr::read(info) };
+            // SAFETY: `info` came from the firmware's pool and nothing else refers to it.
+            unsafe { ((*self.bs).free_pool)(info as *mut u8) };
+            let all = i.red_mask | i.green_mask | i.blue_mask | i.reserved_mask;
+            let pixels_32 = match i.pixel_format {
+                0 | 1 => true, // 8 bits each of red, green, blue and one unused
+                2 => all.leading_zeros() < 8 && all != 0, // a bit mask reaching the top byte
+                _ => false,    // no framebuffer at all
+            };
+            let (w, h) = (i.horizontal_resolution, i.vertical_resolution);
+            if !pixels_32 || w == 0 || h == 0 || w > 1920 || h > 1080 {
+                continue;
+            }
+            let area = u64::from(w) * u64::from(h);
+            if best.is_none_or(|(_, a)| area > a) {
+                best = Some((number, area));
+            }
+        }
+        if let Some((number, _)) = best
+            && number != current
+        {
+            // SAFETY: `number` is a mode the firmware just described. On failure the firmware
+            // keeps a valid mode, which is read afresh afterwards.
+            unsafe { ((*gop).set_mode)(gop, number) };
+        }
     }
 
     fn random(&self, seed: &mut [u8; 32]) {
