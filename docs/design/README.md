@@ -42,7 +42,7 @@ written to be read cold.
 | [0028](0028-acpi.md) | ACPI: the AML interpreter and the ACPI service | Accepted |
 | [0029](0029-usb.md) | USB: the EHCI driver, hubs, `pbr.usb` and devices that come and go | Accepted |
 | [0030](0030-usb-devices-and-disks.md) | USB keyboards, mice and storage; SATA; disks that come and go | Accepted |
-| [0031](0031-stick-tests-and-stages.md) | The USB stick image, how M7 is tested, and the order of building | Draft |
+| [0031](0031-stick-tests-and-stages.md) | The USB stick image, how M7 is tested, and the order of building | Accepted |
 
 ## Writing a note
 

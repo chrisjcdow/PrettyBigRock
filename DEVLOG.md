@@ -1426,3 +1426,6 @@ controllers sharing a line, `SandyBridge`, `mitigations=on`, a foreign AHCI disk
 for byte after each boot) and ARM64 EL1 gains EHCI and its system volume on AHCI; Roxy's visits
 per stage; stages 0 to 7 with 1 split into 1a (first start) and 1b (kernel 1.4); the release
 with `cargo xtask microcode` fetching Intel's files at a pinned tag and SHA-256.
+
+**Then:** note 0031 accepted, so every M7 note is. The serial adapter will go on Impala,
+not Harriet; Chris has neither it nor the COM2 cable yet. Note 0030 gains `BootDisk::TwoFound`.

@@ -261,7 +261,7 @@ flexible enum VolumeState { Ready @1, Starting @2, Unsupported @3, Damaged @4, F
                             Gone @6 }
 /// Why a volume can or can't be written (section 6).
 flexible enum Access { Writable @1, OtherDisk @2, WriteProtected @3 }
-flexible enum BootDisk { NotExpected @1, Waiting @2, Found @3, NotFound @4 }
+flexible enum BootDisk { NotExpected @1, Waiting @2, Found @3, NotFound @4, TwoFound @5 }
 
 struct VolumeInfo {
     /// Never reused while the storage service runs.
@@ -472,3 +472,7 @@ Claude Opus writes the storage service's changes (sections 5 to 7), the users se
 ## Changes
 - 26 November 2026: first draft, for discussion with Chris.
 - 26 November 2026: accepted by Chris from the summary of its decisions.
+- 26 November 2026: two disks holding the boot partition (two sticks written from one image):
+  `BootDisk` gains `TwoFound @5`, neither is the boot disk, no system volume is chosen, and the
+  desktop asks for one to be taken out; a second copy plugged in later is just another USB stick.
+  Settled in note 0031, section 2.

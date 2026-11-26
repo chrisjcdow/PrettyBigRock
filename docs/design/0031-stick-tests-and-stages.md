@@ -1,6 +1,6 @@
 # 0031: The USB stick image, how M7 is tested, and the order of building
 
-Status: Draft · 26 November 2026 · Related: DESIGN.md section 14; notes 0004, 0017, 0026 to
+Status: Accepted · 26 November 2026, accepted 26 November 2026 · Related: DESIGN.md section 14; notes 0004, 0017, 0026 to
 0030; `docs/m7-plan.md` (Q5, Q6, Q8, Q9, Q10, Q11, Q12); milestone M7
 
 ## The problem
@@ -184,9 +184,11 @@ more than a quarter, I report it to Chris with what could be cut before going on
 
 ### 4. Seeing what happens on Roxy (Q9)
 
-- **The serial log**: COM2's header, a header-to-DB9 bracket and a USB-serial adapter to Harriet,
-  read with PuTTY at 115200 baud (note 0027, section 3). From stage 1b the kernel writes there
-  when `cmdline.txt` says `console=0x2f8`.
+- **The serial log**: COM2's header, a header-to-DB9 bracket and a USB-serial adapter on
+  **Impala** (Chris, 26 November), at 115200 baud (note 0027, section 3), where Claude can read
+  it directly while Chris drives Roxy. From stage 1b the kernel writes there when `cmdline.txt`
+  says `console=0x2f8`. Until the cable and adapter arrive, Roxy's visits rely on the screen
+  (and a phone photo); stage 1a needs nothing more.
 - **`cmdline.txt` can't be edited from Windows** (section 1), so the build tool takes extra words
   for it: `PBR_CMDLINE="console=0x2f8"` puts them on the stick image's `cmdline.txt`. I build
   Roxy's images on Impala; Chris writes them with Rufus on Harriet (or `dd` on Impala). The
@@ -319,3 +321,5 @@ Chris tries is the one the release will be.
 
 ## Changes
 - 26 November 2026: first draft, for discussion with Chris.
+- 26 November 2026: accepted by Chris from the summary of its decisions. The serial adapter
+  goes on Impala, not Harriet; the cable and adapter aren't here yet.

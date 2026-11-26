@@ -21,7 +21,9 @@ November), with microcode loading (DESIGN.md section 14's rule for firmware). No
 (ACPI) is accepted too, answering the firmware like Windows (Roxy's firmware only asks about
 Windows names). Note 0029 (USB) is accepted (26 November). Note 0030 (USB devices, SATA,
 disks coming and going) is accepted too (26 November). Note 0031 (the stick image, tests,
-stages, the release) is drafted, waiting for Chris. **Next**: stage 1a, once 0031 is accepted.
+stages, the release) is accepted too: every M7 note is accepted. **Next**: stage 1a (the stick image).
+Chris doesn't have the COM2 cable or the USB-serial adapter (for Impala) yet, so Roxy's first
+visits rely on the screen.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 
