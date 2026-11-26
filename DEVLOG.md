@@ -1400,3 +1400,8 @@ the device manager takes EHCI controllers from the firmware before switching dev
 unclaimed devices, paths and serial numbers); `dma 1M low`; `lib/driver` gains timers. QEMU
 can't test hubs or split transactions (its hub is USB 1.1), so `lib/usb` tests them against a
 simulated bus and Roxy is the first real test.
+
+**26 November:** Chris asked whether a USB host driver could restart without its devices
+looking unplugged. Note 0029 now keeps the class drivers and ids through it: they ask
+`pbr.driver.host.reconnect`, and the device manager pairs the re-found interfaces with the old
+ones by path, IDs and serial number, which keeps the system stick's volume through a crash.
