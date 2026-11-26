@@ -329,3 +329,6 @@ Chris tries is the one the release will be.
   images: `prettybigrock-stick.img` and `prettybigrock-stick-selftest.img`, written sparse
   (about 85 MiB of the 418 MiB on disk in a debug build). Both start from a USB stick on QEMU's
   EHCI through SeaBIOS and OVMF.
+- 26 November 2026, stage 1a: on a machine without QEMU's devices, the program self-test stops
+  at its first test (the block device), so only the kernel's self-test counts on Roxy until a
+  self-test for real machines exists (section 4; open questions).

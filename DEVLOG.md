@@ -1429,3 +1429,13 @@ with `cargo xtask microcode` fetching Intel's files at a pinned tag and SHA-256.
 
 **Then:** note 0031 accepted, so every M7 note is. The serial adapter will go on Impala,
 not Harriet; Chris has neither it nor the COM2 cable yet. Note 0030 gains `BootDisk::TwoFound`.
+
+**Stage 1a, 26 November:** the USB stick image. `xtask/src/image.rs` takes an optional system
+volume as a third partition (`datadisk::volume` makes it) and makes the disk's and partitions'
+GUIDs from the version; images are written sparse; `PBR_CMDLINE` adds words to the sticks'
+command lines; the BIOS boot partition grew to 64 MiB for microcode. Host tests read the stick
+back through `lib/partition` and RockFS, on a bigger disk too, and check the GUIDs. In QEMU
+with KVM the stick starts from USB on EHCI through SeaBIOS and OVMF, reaching the desktop with
+files in memory; through virtio its `Files` becomes the system volume. The release self-test
+stick passes the kernel's self-test and stops at the program self-test's test disk, as
+expected away from QEMU. Release-build sticks zipped for Chris's first try on Roxy.

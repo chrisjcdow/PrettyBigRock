@@ -4,7 +4,7 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 23 November 2026 (session 26). **M6 is done: `2.0.0-alpha.1` is released** (a
+Updated 26 November 2026 (M7 stage 1a). Earlier, 23 November 2026 (session 26): **M6 is done: `2.0.0-alpha.1` is released** (a
 pre-release on GitHub, tag `v2.0.0-alpha.1`, `m6` merged into `main`). The last part of stage
 10b gave the release a ready-made system disk and a **Welcome** window (note 0024, section 6a)
 after Chris's first try on Harriet lost a file kept in memory. CI passed; Stress (5 runs × 6
@@ -21,9 +21,30 @@ November), with microcode loading (DESIGN.md section 14's rule for firmware). No
 (ACPI) is accepted too, answering the firmware like Windows (Roxy's firmware only asks about
 Windows names). Note 0029 (USB) is accepted (26 November). Note 0030 (USB devices, SATA,
 disks coming and going) is accepted too (26 November). Note 0031 (the stick image, tests,
-stages, the release) is accepted too: every M7 note is accepted. **Next**: stage 1a (the stick image).
-Chris doesn't have the COM2 cable or the USB-serial adapter (for Impala) yet, so Roxy's first
-visits rely on the screen.
+stages, the release) is accepted too: every M7 note is accepted.
+
+**Stage 1a, 26 November** (note 0031, section 1): the build tool writes
+`prettybigrock-stick.img` and `prettybigrock-stick-selftest.img` (418 MiB, sparse): the boot
+disk plus the system volume as partition 3. GUIDs come from the version; `PBR_CMDLINE` adds
+words to the sticks' command lines; the BIOS boot partition is 64 MiB. Both start from a USB
+stick on QEMU's EHCI through SeaBIOS and OVMF (with files in memory until USB storage, stage
+6); through virtio the stick's `Files` is the system volume. **Waiting for**: CI, and Chris's
+first try on Roxy. Chris doesn't have the COM2 cable or the USB-serial adapter (for Impala)
+yet, so this visit relies on the screen.
+
+**Roxy, visit 1a** (Roxy's own drives disconnected; images in `build/release/roxy-stick-1a.zip`
+on Impala, release builds):
+1. Write `prettybigrock-stick.img` with Rufus (choose Cancel if Windows offers to format).
+2. Start Roxy from it through the boot menu, once as **UEFI** and once as the **BIOS** ("legacy")
+   entry. For each: does it start; a photo of the kernel's report (cores, screen size); does
+   the desktop appear; do the keyboard and mouse work (only through the firmware's PS/2
+   emulation until stage 5, so they may not).
+3. If the BIOS entry refuses the stick, say so: note 0031's next step is marking the
+   protective MBR active.
+4. Optionally `prettybigrock-stick-selftest.img`: only the kernel's self-test line counts;
+   the program self-test then stops because QEMU's test disk isn't there.
+
+**Next**: stage 1b (kernel 1.4).
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 
