@@ -28,7 +28,7 @@ stages, the release) is accepted too: every M7 note is accepted.
 disk plus the system volume as partition 3. GUIDs come from the version; `PBR_CMDLINE` adds
 words to the sticks' command lines; the BIOS boot partition is 64 MiB. Both start from a USB
 stick on QEMU's EHCI through SeaBIOS and OVMF (with files in memory until USB storage, stage
-6); through virtio the stick's `Files` is the system volume. **Waiting for**: CI, and Chris's
+6); through virtio the stick's `Files` is the system volume. CI passed on `812ccd9`. **Waiting for**: Chris's
 first try on Roxy. Chris doesn't have the COM2 cable or the USB-serial adapter (for Impala)
 yet, so this visit relies on the screen.
 
