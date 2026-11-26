@@ -1,6 +1,6 @@
 # 0030: USB keyboards, mice and storage; SATA; disks that come and go
 
-Status: Draft · 26 November 2026 · Related: DESIGN.md sections 7.1, 8 and 10; notes 0011,
+Status: Accepted · 26 November 2026, accepted 26 November 2026 · Related: DESIGN.md sections 7.1, 8 and 10; notes 0011,
 0014, 0015, 0016, 0017, 0021, 0024, 0027, 0029; `docs/m7-plan.md` (Q4, Q5, Q6, Q14); milestone M7
 
 ## The problem
@@ -471,3 +471,4 @@ Claude Opus writes the storage service's changes (sections 5 to 7), the users se
 
 ## Changes
 - 26 November 2026: first draft, for discussion with Chris.
+- 26 November 2026: accepted by Chris from the summary of its decisions.

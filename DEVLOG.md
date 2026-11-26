@@ -1415,3 +1415,5 @@ storage service watching for disks, volumes `Gone`, identities from GPT GUIDs or
 others read-only; the system volume on the boot disk (boot partition from note 0027), waiting up
 to 60 s for it; a live `/Volumes` folder served by the users service, so a stick going no longer
 restarts the session; the desktop's message when the system stick is pulled out.
+
+**Then:** note 0030 accepted by Chris from the summary of its decisions.
