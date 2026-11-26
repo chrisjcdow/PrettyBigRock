@@ -20,7 +20,8 @@ will get a COM2 header bracket and a USB-serial adapter. Note 0027 (kernel 1.4) 
 November), with microcode loading (DESIGN.md section 14's rule for firmware). Note 0028
 (ACPI) is accepted too, answering the firmware like Windows (Roxy's firmware only asks about
 Windows names). Note 0029 (USB) is accepted (26 November). Note 0030 (USB devices, SATA,
-disks coming and going) is accepted too (26 November). **Next**: note 0031.
+disks coming and going) is accepted too (26 November). Note 0031 (the stick image, tests,
+stages, the release) is drafted, waiting for Chris. **Next**: stage 1a, once 0031 is accepted.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 

@@ -1417,3 +1417,12 @@ to 60 s for it; a live `/Volumes` folder served by the users service, so a stick
 restarts the session; the desktop's message when the system stick is pulled out.
 
 **Then:** note 0030 accepted by Chris from the summary of its decisions.
+Note 0031 drafted: the stick image (the boot disk plus the system volume as a third partition,
+418 MiB; GUIDs made from the version); the protective MBR left as the UEFI specification says
+(not active) unless Roxy's BIOS refuses it, correcting the plan; two disks holding the boot
+partition gives `BootDisk::TwoFound` and no system volume, which note 0027 left to 0030 and 0030
+hadn't settled; x86-64 BIOS becomes "Roxy-like" (booting from a USB stick on two EHCI
+controllers sharing a line, `SandyBridge`, `mitigations=on`, a foreign AHCI disk compared byte
+for byte after each boot) and ARM64 EL1 gains EHCI and its system volume on AHCI; Roxy's visits
+per stage; stages 0 to 7 with 1 split into 1a (first start) and 1b (kernel 1.4); the release
+with `cargo xtask microcode` fetching Intel's files at a pinned tag and SHA-256.
