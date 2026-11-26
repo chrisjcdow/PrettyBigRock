@@ -1405,3 +1405,13 @@ simulated bus and Roxy is the first real test.
 looking unplugged. Note 0029 now keeps the class drivers and ids through it: they ask
 `pbr.driver.host.reconnect`, and the device manager pairs the re-found interfaces with the old
 ones by path, IDs and serial number, which keeps the system stick's volume through a crash.
+
+**Later, 26 November:** note 0029 accepted. Note 0030 drafted: `lib/hid` and `drivers/usb-hid`
+(report descriptors, boot protocol as fallback, `decline` for other HID devices);
+`drivers/usb-storage` (bulk-only, SCSI, reset recovery; `BlockError::Gone`, `pbr.block.details`);
+`drivers/ahci` serving each disk as a child (`pbr.driver.host.child`, class `Controller`); the
+storage service watching for disks, volumes `Gone`, identities from GPT GUIDs or the filesystem;
+`pbr.storage` version 2; writable disks are the boot disk, the system volume's disk and USB disks,
+others read-only; the system volume on the boot disk (boot partition from note 0027), waiting up
+to 60 s for it; a live `/Volumes` folder served by the users service, so a stick going no longer
+restarts the session; the desktop's message when the system stick is pulled out.

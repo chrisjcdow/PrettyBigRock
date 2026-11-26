@@ -41,6 +41,7 @@ written to be read cold.
 | [0027](0027-kernel-1.4.md) | Kernel interface 1.4: real hardware (Meltdown, MDS and L1TF; shared interrupt lines; the serial port; the boot partition) | Accepted |
 | [0028](0028-acpi.md) | ACPI: the AML interpreter and the ACPI service | Accepted |
 | [0029](0029-usb.md) | USB: the EHCI driver, hubs, `pbr.usb` and devices that come and go | Accepted |
+| [0030](0030-usb-devices-and-disks.md) | USB keyboards, mice and storage; SATA; disks that come and go | Draft |
 
 ## Writing a note
 
