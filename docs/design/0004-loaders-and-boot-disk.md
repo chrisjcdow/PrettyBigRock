@@ -139,7 +139,7 @@ appear within the time limit. GitHub Actions runs this on every change.
 ## Open questions
 
 - Some old BIOSes only boot a disk with an "active" partition, which a protective MBR doesn't
-  have. Note 0031 (section 1) settles what to try if Roxy turns out to be one of them.
+  have. Roxy's doesn't need one (M7); note 0031 (section 1) says what to try on one that does.
 - Secure Boot: the loaders aren't signed. Machines need Secure Boot turned off for now.
 
 ## Changes
@@ -161,3 +161,6 @@ appear within the time limit. GitHub Actions runs this on every change.
   and the disk's unique GUIDs are now made from the version rather than fixed (note 0031,
   section 1). The USB stick image, `prettybigrock-stick.img`, adds the system volume as a third
   partition (note 0031). The protective MBR stays unmarked, as the UEFI specification says.
+- 26 November 2026, M7 Roxy visit 1a: Roxy's BIOS starts the image with the protective MBR
+  unmarked, so the open question about the active mark is settled: neither it nor a hybrid MBR
+  is needed for Roxy.

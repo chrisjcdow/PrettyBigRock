@@ -1443,3 +1443,6 @@ expected away from QEMU. Release-build sticks zipped for Chris's first try on Ro
 **Roxy, visit 1a, 26 November:** PrettyBigRock started on Roxy from the stick image (release
 build, written with Rufus) and reached the desktop. The keyboard and mouse didn't work: the
 firmware's PS/2 emulation of USB devices isn't enough, as expected, so input waits for stage 5.
+Then, from the boot menu (F7), through UEFI too: so the first start had been the BIOS route,
+which Roxy's firmware tries first. Both reach the desktop; the UEFI one is smaller, since the
+UEFI loader keeps the firmware's mode. Roxy's BIOS needs no active mark (notes 0004, 0031).

@@ -332,3 +332,8 @@ Chris tries is the one the release will be.
 - 26 November 2026, stage 1a: on a machine without QEMU's devices, the program self-test stops
   at its first test (the block device), so only the kernel's self-test counts on Roxy until a
   self-test for real machines exists (section 4; open questions).
+- 26 November 2026, Roxy visit 1a: the stick, protective MBR unmarked, starts on Roxy both
+  ways: by itself through the BIOS (Roxy's firmware tries that first; 1920x1080 through VESA)
+  and through UEFI from the boot menu (F7). Section 1's steps 2 and 3 aren't needed: no active
+  mark, no hybrid MBR. Through UEFI the screen is smaller, because the UEFI loader keeps the mode
+  the firmware set, where the BIOS loader picks the largest up to 1920x1080.

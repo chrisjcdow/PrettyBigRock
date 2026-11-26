@@ -32,11 +32,11 @@ stick on QEMU's EHCI through SeaBIOS and OVMF (with files in memory until USB st
 first try on Roxy. Chris doesn't have the COM2 cable or the USB-serial adapter (for Impala)
 yet, so this visit relies on the screen.
 
-**Visit 1a done (26 November)**: the stick started on its own, without choosing an entry, and
-reached the desktop at 1920x1080; everything looked right; keyboard and mouse dead, as
-expected. **Not yet known**: whether that was UEFI or BIOS. Next visit: open the firmware's boot
-menu and start once from "UEFI: <stick>" and once from the plain "<stick>" entry (the BIOS
-route).
+**Visit 1a done (26 November)**: the stick starts on Roxy **both ways**: by itself through the
+BIOS (1920x1080 through VESA), and through UEFI from the boot menu (**F7**, the second entry),
+at a smaller size because the UEFI loader keeps the firmware's mode. Everything looked right;
+keyboard and mouse dead, as expected. No active mark or hybrid MBR needed. Chris has photos of
+both desktops.
 
 **Roxy, visit 1a, as planned** (Roxy's own drives disconnected; images in `build/release/roxy-stick-1a.zip`
 on Impala, release builds):
