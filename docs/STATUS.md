@@ -35,8 +35,10 @@ yet, so this visit relies on the screen.
 **Visit 1a done (26 November)**: the stick starts on Roxy **both ways**: by itself through the
 BIOS (1920x1080 through VESA), and through UEFI from the boot menu (**F7**, the second entry),
 at a smaller size because the UEFI loader keeps the firmware's mode. Everything looked right;
-keyboard and mouse dead, as expected. No active mark or hybrid MBR needed. Chris has photos of
-both desktops.
+keyboard and mouse dead, as expected. No active mark or hybrid MBR needed. Photos in
+`docs/roxy/`. **For stage 6**: the Welcome window's page for files kept in memory names
+`run-prettybigrock.bat` (`apps/welcome/src/lib.rs`), which is wrong on a real machine; it
+should say so only under QEMU, or talk about the stick.
 
 **Roxy, visit 1a, as planned** (Roxy's own drives disconnected; images in `build/release/roxy-stick-1a.zip`
 on Impala, release builds):
