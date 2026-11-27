@@ -36,7 +36,7 @@ use super::table::Entry;
 use super::{Error, Object, charge, require, rights};
 use crate::mem::space::{Space, perm};
 use crate::sched::{self, Thread, Woken};
-use crate::sync::SpinLock;
+use crate::sync::{Level, SpinLock};
 use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -122,7 +122,7 @@ impl Watch {
             endpoint: Arc::downgrade(endpoint),
             badge,
             count: AtomicU64::new(0),
-            charge: SpinLock::new(Some(charge)),
+            charge: SpinLock::new(Level::EndpointCharge, "a message's charge", Some(charge)),
         })
     }
 
@@ -209,7 +209,10 @@ fn set_phase(t: &Thread, p: Phase) {
 
 impl Reply {
     fn new(caller: Arc<Thread>, through: CallerCap) -> Arc<Reply> {
-        Arc::new(Reply { caller: SpinLock::new(Some(caller)), through })
+        Arc::new(Reply {
+            caller: SpinLock::new(Level::ReplyCaller, "a reply's caller", Some(caller)),
+            through,
+        })
     }
 
     /// Answers the call with the replying thread's message page.
@@ -236,16 +239,20 @@ impl Endpoint {
     /// A new endpoint.
     pub fn new(charge: Option<Charge>) -> Arc<Self> {
         Arc::new(Endpoint {
-            inner: SpinLock::new(Inner {
-                callers: VecDeque::new(),
-                receivers: VecDeque::new(),
-                bound: None,
-                senders: 0,
-                receiver_caps: 0,
-                watch: None,
-                gone: VecDeque::new(),
-                receiver_watches: Vec::new(),
-            }),
+            inner: SpinLock::new(
+                Level::EndpointInner,
+                "an endpoint",
+                Inner {
+                    callers: VecDeque::new(),
+                    receivers: VecDeque::new(),
+                    bound: None,
+                    senders: 0,
+                    receiver_caps: 0,
+                    watch: None,
+                    gone: VecDeque::new(),
+                    receiver_watches: Vec::new(),
+                },
+            ),
             _charge: charge,
         })
     }
@@ -731,13 +738,9 @@ pub fn deliver(
         if Arc::ptr_eq(sp, dp) {
             let s = sp.space.lock();
             copy(&s, &s)?;
-        } else if Arc::as_ptr(sp) < Arc::as_ptr(dp) {
-            let a = sp.space.lock();
-            let b = dp.space.lock();
-            copy(&a, &b)?;
         } else {
-            let b = dp.space.lock();
-            let a = sp.space.lock();
+            // Two address spaces at once: taken in order of address (the lock order).
+            let (a, b) = SpinLock::lock_pair(&sp.space, &dp.space);
             copy(&a, &b)?;
         }
         buf_len = h.buf_len;

@@ -37,7 +37,9 @@ pub struct PerCpu {
     /// Above zero while this core's current thread mustn't be preempted.
     preempt_count: AtomicU32,
     /// Bit `n` set while a lock of level `n` is held on this core (debug builds check the order).
-    held_levels: AtomicU32,
+    held_levels: AtomicU64,
+    /// Bit `n` set while two locks of level `n` are held, through `SpinLock::lock_pair`.
+    held_twice: AtomicU64,
     /// Timer interrupts so far on this core.
     pub ticks: AtomicU64,
     /// The scheduler's state for this core.
@@ -80,7 +82,8 @@ pub fn create(hw_ids: &[u64]) {
             hw_id: hw,
             online: AtomicBool::new(false),
             preempt_count: AtomicU32::new(0),
-            held_levels: AtomicU32::new(0),
+            held_levels: AtomicU64::new(0),
+            held_twice: AtomicU64::new(0),
             ticks: AtomicU64::new(0),
             sched: CpuSched::new(),
             arch: arch::CpuArch::new(),
@@ -153,13 +156,13 @@ pub fn preemptible() -> bool {
 /// debug builds. Interrupts are already masked.
 pub fn lock_level_taken(level: Level, name: &str) {
     let Some(c) = try_this() else { return };
-    let bit = 1u32 << level as u32;
+    let bit = 1u64 << level as u32;
     if crate::panicking() {
         return; // reporting a panic mustn't trip over the locks the panicking code held
     }
     let held = c.held_levels.load(Ordering::Relaxed);
     if cfg!(debug_assertions) && held >= bit {
-        let highest = 31 - held.leading_zeros();
+        let highest = 63 - held.leading_zeros();
         panic!(
             "lock order broken: taking \"{name}\" (level {}) while holding a lock of level {highest}",
             level as u32
@@ -168,10 +171,32 @@ pub fn lock_level_taken(level: Level, name: &str) {
     c.held_levels.store(held | bit, Ordering::Relaxed);
 }
 
+/// Records that a second lock of `level` is being taken, by [`crate::sync::SpinLock::lock_pair`]:
+/// allowed only when that level is the highest held, once. Interrupts are already masked.
+pub fn lock_level_taken_again(level: Level, name: &str) {
+    let Some(c) = try_this() else { return };
+    let bit = 1u64 << level as u32;
+    if crate::panicking() {
+        return;
+    }
+    let (held, twice) =
+        (c.held_levels.load(Ordering::Relaxed), c.held_twice.load(Ordering::Relaxed));
+    if cfg!(debug_assertions) && (held >> level as u32 != 1 || twice & bit != 0) {
+        panic!("lock order broken: taking a second \"{name}\" (level {}) badly", level as u32);
+    }
+    c.held_twice.store(twice | bit, Ordering::Relaxed);
+}
+
 /// Records that a lock of `level` was released on this core.
 pub fn lock_level_released(level: Level) {
     if let Some(c) = try_this() {
-        c.held_levels.fetch_and(!(1u32 << level as u32), Ordering::Relaxed);
+        let bit = 1u64 << level as u32;
+        // One of a pair: the level is still held by the other.
+        if c.held_twice.load(Ordering::Relaxed) & bit != 0 {
+            c.held_twice.fetch_and(!bit, Ordering::Relaxed);
+        } else {
+            c.held_levels.fetch_and(!bit, Ordering::Relaxed);
+        }
     }
 }
 

@@ -251,7 +251,7 @@ pub fn activate_space(root: u64) {
 }
 
 static SHOOTDOWN: crate::sync::SpinLock<()> =
-    crate::sync::SpinLock::new(());
+    crate::sync::SpinLock::new(crate::sync::Level::Shootdown, "TLB shootdowns", ());
 static PENDING: AtomicU32 = AtomicU32::new(0);
 
 /// Called by the shootdown interrupt: forgets every program translation on this core.

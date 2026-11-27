@@ -206,23 +206,53 @@ thread's own stack.
 - **`SpinLock`**: for data never touched by interrupt handlers.
 - **`IrqSpinLock`**: masks interrupts on this core while held. Use it for anything an
   interrupt handler also touches: run queues, timers, the heap, the console.
-- **Lock levels.** Every interrupt-masking lock is given a level. In debug builds, taking a
-  lock whose level isn't higher than one already held on that core is reported as a bug,
-  with both locks' names. This is how the lock order (DESIGN.md section 6.7) is enforced
-  rather than just written down.
+- **Lock levels.** Every lock is given a level and a name (from M7, note 0027, section 6;
+  before, only interrupt-masking ones were). In debug builds, taking a lock whose level isn't
+  higher than every one already held on that core is reported as a bug, with the lock's name.
+  This is how the lock order (DESIGN.md section 6.7) is enforced rather than just written
+  down. Locks of one kind on many objects share a level; two of them may be held at once only
+  through `SpinLock::lock_pair`, which takes them in order of address, and which the checker
+  recognises. Release builds don't check.
 
-  The order, lowest first:
-  0. the list of every thread (kept for diagnostics);
-  1. wait queues;
-  2. the scheduler's run queues;
-  3. timers;
-  4. the interrupt controllers' state (from M4: I/O APICs, the GIC distributor's shared
-     interrupts, the vector pool; taken by device interrupt handlers, which take nothing
-     after it);
-  5. the kernel's page tables and virtual areas;
-  6. the heap (which takes pages from the page allocator);
-  7. the page allocator;
-  8. the console.
+  The order, lowest first. The plain locks come first, since one may be held while an
+  interrupt handler takes an interrupt-masking one. Their order was worked out in M7 stage 1b
+  by recording, in a self-test boot of every configuration, which locks were held when each
+  was taken, then reading the code for nestings the tests don't reach:
+  0. the processes that have begun ending (self-test boots' watch on slow ends);
+  1. the processes waiting for the reaper;
+  2. a process's state;
+  3. a process's tied children;
+  4. who created a process;
+  5. a process's threads;
+  6. who is watching a process;
+  7. who is watching a thread;
+  8. an endpoint's queues;
+  9. a thread's place in a call or receive;
+  10. a reply capability's caller;
+  11. the endpoint a notification is bound to;
+  12. a process's capability table;
+  13. a process's address space (two at once only as a pair: a message's buffer copied
+      between two programs);
+  14. TLB shootdowns (x86-64);
+  15. the budget charge a message carries;
+  16. a notification's waiting threads;
+  17. the interrupt bindings;
+  18. a new thread's entry function;
+  19. the kernel self-test's counter;
+
+  then the interrupt-masking locks:
+  32. the list of every thread (kept for diagnostics);
+  33. wait queues (whose conditions are therefore checked without taking a plain lock: the
+      reaper waits on a count, not on its list);
+  34. the scheduler's run queues;
+  35. timers;
+  36. the interrupt controllers' state (from M4: I/O APICs, the GIC distributor's shared
+      interrupts, the vector pool; taken by device interrupt handlers, which take nothing
+      after it);
+  37. the kernel's page tables and virtual areas;
+  38. the heap (which takes pages from the page allocator);
+  39. the page allocator;
+  40. the console.
 
 ### 10. The self-test
 
@@ -290,5 +320,6 @@ run it with 4 cores on every configuration. It checks:
     passes.
   - Debug builds check that a thread is never switched to while it's on another core, never
     freed while on a core, and always arrives on its own stack.
-- 27 November 2026, M7 stage 1b (note 0027): the x86-64 entry area joins the address space
-  (section 2).
+- 27 November 2026, M7 stage 1b (note 0027): every spin lock has a level and a name, checked
+  in debug builds, with `SpinLock::lock_pair` for two of one kind (section 9's new order). The
+  x86-64 entry area joins the address space (section 2).

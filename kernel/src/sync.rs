@@ -8,9 +8,11 @@
 //! - [`IrqSpinLock`] also masks interrupts on this core while it's held. Use it for anything
 //!   an interrupt handler touches.
 //!
-//! Every [`IrqSpinLock`] has a [`Level`]. In debug builds, taking a lock whose level isn't
+//! Every lock has a [`Level`] and a name. In debug builds, taking a lock whose level isn't
 //! above every level already held on this core is reported as a bug: that's how the lock
-//! order is enforced rather than just written down.
+//! order is enforced rather than just written down. Locks of one kind on many objects share a
+//! level; two of them may be held at once only through [`SpinLock::lock_pair`], which takes
+//! them in order of address so two cores can't each hold one and wait for the other.
 
 use crate::{arch, percpu};
 use core::cell::UnsafeCell;
@@ -22,25 +24,70 @@ use core::sync::atomic::{AtomicBool, Ordering};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Level {
+    // Plain spin locks (note 0027, section 6), below every interrupt-masking one: a plain lock
+    // may be held while an interrupt handler takes one of those.
+    /// The processes that have begun ending (self-test boots' watch on slow ends).
+    Ending = 0,
+    /// The processes waiting for the reaper.
+    Reap = 1,
+    /// A process's state (running, ending, ended).
+    ProcessState = 2,
+    /// A process's tied children.
+    ProcessTied = 3,
+    /// Who created a process.
+    ProcessCreator = 4,
+    /// A process's threads.
+    ProcessThreads = 5,
+    /// Who is watching a process.
+    ProcessWatchers = 6,
+    /// Who is watching a thread.
+    ThreadWatchers = 7,
+    /// An endpoint's queues.
+    EndpointInner = 8,
+    /// A thread's place in a call or receive.
+    ThreadPhase = 9,
+    /// A reply capability's caller.
+    ReplyCaller = 10,
+    /// The endpoint a notification is bound to.
+    NotificationBound = 11,
+    /// A process's capability table.
+    CapTable = 12,
+    /// A process's address space. Two may be held at once, only through
+    /// [`SpinLock::lock_pair`] (a message's buffer copied from one program to another).
+    Space = 13,
+    /// TLB shootdowns (x86-64), taken while an address space is changed.
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+    Shootdown = 14,
+    /// The budget charge a message carries.
+    EndpointCharge = 15,
+    /// A notification's waiting threads.
+    NotificationWaiters = 16,
+    /// The interrupt bindings.
+    InterruptBindings = 17,
+    /// A new thread's entry function.
+    ThreadEntry = 18,
+    /// The kernel self-test's counter.
+    Test = 19,
+    // Interrupt-masking spin locks.
     /// The list of every thread, for diagnostics (taken before anything else).
-    ThreadList = 0,
+    ThreadList = 32,
     /// Wait queues (released before the scheduler is entered).
-    WaitQueue = 1,
+    WaitQueue = 33,
     /// A core's run queue.
-    RunQueue = 2,
+    RunQueue = 34,
     /// A core's timer list.
-    Timers = 3,
+    Timers = 35,
     /// The interrupt controllers' state (taken by interrupt handlers, which then take nothing
     /// else, and by calls that bind and release interrupts).
-    InterruptController = 4,
+    InterruptController = 36,
     /// The kernel's page tables and virtual areas.
-    KernelMemory = 5,
+    KernelMemory = 37,
     /// The kernel heap (which takes pages from the page allocator).
-    Heap = 6,
+    Heap = 38,
     /// The physical page allocator.
-    PageAllocator = 7,
+    PageAllocator = 39,
     /// The console.
-    Console = 8,
+    Console = 40,
 }
 
 fn raw_lock(flag: &AtomicBool) {
@@ -55,6 +102,8 @@ fn raw_lock(flag: &AtomicBool) {
 /// sections only.
 pub struct SpinLock<T> {
     locked: AtomicBool,
+    level: Level,
+    name: &'static str,
     value: UnsafeCell<T>,
 }
 
@@ -63,16 +112,37 @@ pub struct SpinLock<T> {
 unsafe impl<T: Send> Sync for SpinLock<T> {}
 
 impl<T> SpinLock<T> {
-    /// A new, unlocked lock.
-    pub const fn new(value: T) -> Self {
-        Self { locked: AtomicBool::new(false), value: UnsafeCell::new(value) }
+    /// A new, unlocked lock at `level` in the lock order. `name` appears in lock-order reports.
+    pub const fn new(level: Level, name: &'static str, value: T) -> Self {
+        Self { locked: AtomicBool::new(false), level, name, value: UnsafeCell::new(value) }
     }
 
     /// Waits for the lock and takes it.
     pub fn lock(&self) -> SpinGuard<'_, T> {
         percpu::preempt_disable();
+        // The bookkeeping is done with interrupts masked, so an interrupt handler's own locks
+        // can't come between reading and writing this core's record.
+        let irq = arch::irq_save();
+        percpu::lock_level_taken(self.level, self.name);
+        arch::irq_restore(irq);
         raw_lock(&self.locked);
         SpinGuard { lock: self }
+    }
+
+    /// Takes two different locks of one kind, in order of their addresses: the only way two
+    /// locks of one level may be held at once (note 0027, section 6). The guards are returned
+    /// in the order the locks were given.
+    pub fn lock_pair<'a>(a: &'a Self, b: &'a Self) -> (SpinGuard<'a, T>, SpinGuard<'a, T>) {
+        assert!(!core::ptr::eq(a, b), "lock_pair given one lock twice");
+        let (first, second) = if (a as *const Self) < (b as *const Self) { (a, b) } else { (b, a) };
+        let g1 = first.lock();
+        percpu::preempt_disable();
+        let irq = arch::irq_save();
+        percpu::lock_level_taken_again(second.level, second.name);
+        arch::irq_restore(irq);
+        raw_lock(&second.locked);
+        let g2 = SpinGuard { lock: second };
+        if core::ptr::eq(first, a) { (g1, g2) } else { (g2, g1) }
     }
 }
 
@@ -99,6 +169,9 @@ impl<T> DerefMut for SpinGuard<'_, T> {
 impl<T> Drop for SpinGuard<'_, T> {
     fn drop(&mut self) {
         self.lock.locked.store(false, Ordering::Release);
+        let irq = arch::irq_save();
+        percpu::lock_level_released(self.lock.level);
+        arch::irq_restore(irq);
         percpu::preempt_enable();
     }
 }

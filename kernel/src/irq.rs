@@ -21,7 +21,7 @@
 use crate::obj::notification::Notification;
 use crate::obj::{Error, device};
 use crate::sched::{self, Thread};
-use crate::sync::{Once, SpinLock};
+use crate::sync::{Level, Once, SpinLock};
 use crate::{arch, kprintln};
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -57,7 +57,8 @@ pub struct Binding {
 }
 
 /// Every bound interrupt's bindings: one, or more on a shared line, never none.
-static BINDINGS: SpinLock<BTreeMap<u32, Vec<Binding>>> = SpinLock::new(BTreeMap::new());
+static BINDINGS: SpinLock<BTreeMap<u32, Vec<Binding>>> =
+    SpinLock::new(Level::InterruptBindings, "the interrupt bindings", BTreeMap::new());
 
 /// Starts the delivery thread. `selftest` allows [`trigger`].
 pub fn start(selftest: bool) {

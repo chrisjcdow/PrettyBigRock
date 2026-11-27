@@ -9,7 +9,7 @@ use super::Error;
 use super::budget::Charge;
 use super::endpoint::Endpoint;
 use crate::sched::{self, Thread, Woken};
-use crate::sync::SpinLock;
+use crate::sync::{Level, SpinLock};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -27,8 +27,12 @@ impl Notification {
     pub fn new(charge: Option<Charge>) -> Arc<Self> {
         Arc::new(Notification {
             bits: AtomicU64::new(0),
-            waiters: SpinLock::new(Vec::new()),
-            bound: SpinLock::new(None),
+            waiters: SpinLock::new(
+                Level::NotificationWaiters,
+                "a notification's waiters",
+                Vec::new(),
+            ),
+            bound: SpinLock::new(Level::NotificationBound, "a notification's endpoint", None),
             _charge: charge,
         })
     }

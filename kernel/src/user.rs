@@ -13,7 +13,7 @@ use crate::obj::notification::Notification;
 use crate::obj::process::{Fault, Process, Status};
 use crate::obj::{Error, caps, charge};
 use crate::sched::{self, Thread};
-use crate::sync::SpinLock;
+use crate::sync::{Level, SpinLock};
 use crate::{arch, mem};
 use alloc::boxed::Box;
 use alloc::format;
@@ -99,11 +99,11 @@ pub fn create_thread(
         process: process.clone(),
         msg,
         msg_addr,
-        ipc: SpinLock::new(Phase::Idle),
+        ipc: SpinLock::new(Level::ThreadPhase, "a thread's message phase", Phase::Idle),
         started: AtomicBool::new(false),
         regs,
         entry: (pc, sp, arg),
-        watchers: SpinLock::new(Vec::new()),
+        watchers: SpinLock::new(Level::ThreadWatchers, "a thread's watchers", Vec::new()),
         exited: AtomicBool::new(false),
         _charge: c,
     });

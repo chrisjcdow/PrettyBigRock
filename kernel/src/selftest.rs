@@ -4,7 +4,7 @@
 //! The kernel core's self-test (docs/design/0005-kernel-core.md, section 10). Run when the
 //! command line contains `selftest`; the boot tests run it on every configuration.
 
-use crate::sync::SpinLock;
+use crate::sync::{Level, SpinLock};
 use crate::{arch, mem, percpu, sched, time};
 use alloc::boxed::Box;
 use alloc::format;
@@ -154,7 +154,7 @@ fn sleep() -> Result<u64, String> {
 
 fn threads() -> Result<(u64, u32), String> {
     let atomic = Arc::new(AtomicU64::new(0));
-    let locked = Arc::new(SpinLock::new(0u64));
+    let locked = Arc::new(SpinLock::new(Level::Test, "the self-test's counter", 0u64));
     let cores = Arc::new(AtomicU64::new(0));
     let switches_before: u64 =
         percpu::all().iter().map(|c| c.sched.switches.load(Ordering::Relaxed)).sum();

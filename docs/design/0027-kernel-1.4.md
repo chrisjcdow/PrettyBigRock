@@ -559,6 +559,11 @@ Note 0028 (section 8) adds call 89, `interrupt_configure`, and the interrupt rig
     `auto` turns all three on there, on GitHub's runners too, as it will on Roxy; that
     configuration doesn't need `mitigations=on`. Under KVM on Impala the other x86-64
     configuration gets them too, with `MD_CLEAR`.
+  - **The lock order** (section 6) was worked out by recording, in self-test boots, which
+    locks were held when each was taken, then reading the code; it is in note 0005, section
+    9. Two things changed: the reaper waited on its list's plain lock inside a wait queue's
+    interrupt-masking one, and now waits on a count; and the one place two address spaces
+    are held (a message's buffer) uses `SpinLock::lock_pair`.
 - 25 November 2026: QEMU's q35 needs a line's polarity set from AML (its links say active high),
   so note 0028, section 8, adds call 89, `interrupt_configure`, and the right `CONFIGURE` to
   interface 1.4; section 8's table and the open question change with it.

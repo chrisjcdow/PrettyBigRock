@@ -20,7 +20,7 @@ use super::table::Table;
 use super::{Error, charge};
 use crate::mem::space::{Backing, Mapping, Space, perm};
 use crate::sched::{self, Thread, WaitQueue};
-use crate::sync::{Once, SpinLock};
+use crate::sync::{Level, Once, SpinLock};
 use crate::{kprintln, syspage};
 use alloc::collections::VecDeque;
 use alloc::string::String;
@@ -151,20 +151,20 @@ impl Process {
         Ok(Arc::new(Process {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             name: String::from(name),
-            space: SpinLock::new(space),
+            space: SpinLock::new(Level::Space, "a process's address space", space),
             root,
-            table: SpinLock::new(table),
+            table: SpinLock::new(Level::CapTable, "a process's capability table", table),
             budget,
             max_priority,
             syspage: at,
-            state: SpinLock::new(State::Running),
-            threads: SpinLock::new(Vec::new()),
-            watchers: SpinLock::new(Vec::new()),
+            state: SpinLock::new(Level::ProcessState, "a process's state", State::Running),
+            threads: SpinLock::new(Level::ProcessThreads, "a process's threads", Vec::new()),
+            watchers: SpinLock::new(Level::ProcessWatchers, "a process's watchers", Vec::new()),
             external: AtomicU64::new(0),
             started: AtomicBool::new(false),
             thread_count: AtomicU64::new(0),
-            tied: SpinLock::new(Tied::default()),
-            creator: SpinLock::new(None),
+            tied: SpinLock::new(Level::ProcessTied, "a process's tied children", Tied::default()),
+            creator: SpinLock::new(Level::ProcessCreator, "a process's creator", None),
             _charge: c,
         }))
     }
@@ -380,8 +380,13 @@ pub fn describe_fault(kind: u64) -> &'static str {
 // The reaper: finishes ending processes, in a kernel thread of its own, so it never runs
 // with anyone's locks held.
 
-static REAP: SpinLock<VecDeque<Arc<Process>>> = SpinLock::new(VecDeque::new());
+static REAP: SpinLock<VecDeque<Arc<Process>>> =
+    SpinLock::new(Level::Reap, "the processes to reap", VecDeque::new());
 static REAP_WAIT: WaitQueue = WaitQueue::new();
+/// How many processes are in `REAP`. The reaper waits on this rather than on `REAP` itself: a
+/// wait queue's condition runs with the queue's interrupt-masking lock held, under which no
+/// plain spin lock may be taken (the lock order, note 0005, section 9).
+static REAP_QUEUED: AtomicU64 = AtomicU64::new(0);
 static REAPER: Once<()> = Once::new();
 
 /// Starts the reaper thread. Called once, before any process exists.
@@ -389,9 +394,10 @@ pub fn start_reaper() {
     REAPER.set(());
     sched::spawn("reaper", sched::NORMAL + 1, || {
         loop {
-            REAP_WAIT.wait_until(|| !REAP.lock().is_empty());
+            REAP_WAIT.wait_until(|| REAP_QUEUED.load(Ordering::Acquire) != 0);
             let next = REAP.lock().pop_front();
             if let Some(p) = next {
+                REAP_QUEUED.fetch_sub(1, Ordering::AcqRel);
                 finish(&p);
             }
         }
@@ -402,7 +408,8 @@ pub fn start_reaper() {
 const SLOW_END_NS: u64 = 20_000_000_000;
 static WATCH_ENDS: AtomicBool = AtomicBool::new(false);
 /// Processes that have begun ending, and when (self-test boots only).
-static ENDING: SpinLock<Vec<(Weak<Process>, u64)>> = SpinLock::new(Vec::new());
+static ENDING: SpinLock<Vec<(Weak<Process>, u64)>> =
+    SpinLock::new(Level::Ending, "the processes ending", Vec::new());
 
 /// Self-test boots only: starts a kernel thread that reports any process still not completely
 /// ended 20 seconds after it began ending: its threads (where each is), whether it has been
@@ -478,6 +485,7 @@ fn report_end(p: &Arc<Process>, depth: usize) {
 
 fn reap(p: Arc<Process>) {
     REAP.lock().push_back(p);
+    REAP_QUEUED.fetch_add(1, Ordering::AcqRel);
     REAP_WAIT.wake_all();
 }
 
