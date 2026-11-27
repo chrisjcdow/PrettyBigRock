@@ -808,21 +808,36 @@ impl Run<'_> {
         // The desktop opens the menu as a popup, which needs the key's serial within a second;
         // a desktop still busy redrawing its wallpapers (the screens changed just before)
         // can miss that, and the menu doesn't open. A person presses the key again, and so
-        // does the runner, up to three times.
+        // does the runner, up to four times. But a press may only be slow, not lost (under
+        // emulation with KPTI, a busy desktop can take more than the 20 seconds): then the
+        // press after it closes the menu it opened. So the runner goes on only when the menu
+        // is open now, and has stayed open for a moment.
+        let open_now = |text: &str| {
+            let opened = text.rfind("desktop: start menu open");
+            opened.is_some() && opened > text.rfind("desktop: start menu closed")
+        };
         let mut tries = 0;
         loop {
             self.chord(&["meta_l"])?;
             tries += 1;
+            let ready =
+                |t: &str| t.matches("desktop: start menu open").count() >= times && open_now(t);
             let end = Instant::now() + Duration::from_secs(20);
-            while self.text().matches("desktop: start menu open").count() < times
-                && Instant::now() < end
-            {
+            while !ready(&self.text()) && Instant::now() < end {
                 std::thread::sleep(Duration::from_millis(200));
             }
-            if self.text().matches("desktop: start menu open").count() >= times || tries == 3 {
-                break;
+            if ready(&self.text()) {
+                std::thread::sleep(Duration::from_secs(1));
+                if open_now(&self.text()) {
+                    break;
+                }
+                eprintln!("  (the start menu closed again: a late press)");
+            } else {
+                eprintln!("  (the start menu didn't open: pressing the key again)");
             }
-            eprintln!("  (the start menu didn't open: pressing the key again)");
+            if tries == 4 {
+                return Err("the start menu didn't stay open".into());
+            }
         }
         self.lines("desktop: start menu open", times)?;
         // The desktop says where each choice is after it says the menu is open, Shut down
