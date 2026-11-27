@@ -5,6 +5,13 @@
 //!
 //! Both architectures use four levels of 512-entry tables with 4 KiB pages and 48-bit virtual
 //! addresses, so one builder handles both; only the bits inside each entry differ.
+//!
+//! **An entry that isn't present is entirely zero** (note 0027, section 1d). Intel processors
+//! affected by L1TF, while guessing ahead, follow the address bits of a not-present entry to
+//! whatever is in the level 1 cache there; zero points at physical page 0, which is never
+//! handed out and holds nothing secret. So nothing here writes a not-present entry with any
+//! other bit set, and nothing is ever kept in one (no "swapped out" markers, no lazy
+//! mappings) without a change to that note. The tests check it after every operation.
 
 use crate::{DIRECT_MAP_BASE, PAGE, align_down, align_up, is_ram};
 use pbr_bootinfo::{MemoryKind, MemoryRegion};
@@ -226,17 +233,52 @@ pub struct PageTables {
     /// The top table's physical address (for `CR3`, `TTBR0_EL1` or `TTBR1_EL1`).
     pub root: u64,
     format: Format,
+    /// The program's own top-level table, when it has one (x86-64 with KPTI, below).
+    user_copy: Option<UserCopy>,
+}
+
+/// **Separate page tables for programs** (KPTI, note 0027, section 1b). On processors affected
+/// by Meltdown, a program can read whatever the kernel has mapped, so while a program runs it
+/// gets a second top-level table: the same tables below for its own half, and of the kernel's
+/// half only the entry area. Both top-level tables point at the same lower tables, so a change
+/// below the top is seen by both; a top-level entry in the program's half is written to both
+/// here.
+#[derive(Clone, Copy)]
+struct UserCopy {
+    root: u64,
+    /// The kernel's copy marks the program's half no-execute at the top, on processors
+    /// without SMEP: the kernel can then never run a program's code by mistake.
+    kernel_nx: bool,
 }
 
 impl PageTables {
     /// An empty tree.
     pub fn new(fa: &mut impl FrameAlloc, format: Format) -> Result<Self, MapError> {
-        Ok(Self { root: fa.alloc().ok_or(MapError::OutOfMemory)?, format })
+        Ok(Self { root: fa.alloc().ok_or(MapError::OutOfMemory)?, format, user_copy: None })
     }
 
     /// An existing tree.
     pub fn from_root(root: u64, format: Format) -> Self {
-        Self { root, format }
+        Self { root, format, user_copy: None }
+    }
+
+    /// Gives an x86-64 tree a program's own top-level table at `root` (see [`UserCopy`]), with
+    /// the program half's entries copied into it from now on. `kernel_nx` marks them
+    /// no-execute in the kernel's copy. The caller fills in the kernel half's entries the
+    /// program's copy needs (the entry area).
+    pub fn set_user_copy(&mut self, root: u64, kernel_nx: bool) {
+        self.user_copy = Some(UserCopy { root, kernel_nx });
+    }
+
+    /// Writes top-level entry `i`, and its copy in the program's table if it is in the
+    /// program's half.
+    fn set_top(&self, fa: &mut impl FrameAlloc, i: usize, e: u64) {
+        let Some(u) = self.user_copy.filter(|_| i < 256) else {
+            fa.table(self.root)[i] = e;
+            return;
+        };
+        fa.table(self.root)[i] = if e != 0 && u.kernel_nx { e | X_NX } else { e };
+        fa.table(u.root)[i] = e;
     }
 
     /// The entry format.
@@ -319,7 +361,11 @@ impl PageTables {
                 }
                 let child = e & ADDR_MASK;
                 if self.prune_table(fa, child, level - 1, from, start, end) {
-                    fa.table(phys)[i] = 0;
+                    if level == 3 {
+                        self.set_top(fa, i, 0);
+                    } else {
+                        fa.table(phys)[i] = 0;
+                    }
                     fa.free(child);
                 }
             }
@@ -396,7 +442,7 @@ impl PageTables {
                 fa.free(t1);
             }
             fa.free(t2);
-            fa.table(self.root)[i] = 0;
+            self.set_top(fa, i, 0);
         }
     }
 
@@ -439,7 +485,12 @@ impl PageTables {
             let e = fa.table(table)[i];
             table = if !self.format.present(e) {
                 let t = fa.alloc().ok_or(MapError::OutOfMemory)?;
-                fa.table(table)[i] = self.format.table_entry(t, attr.user);
+                let entry = self.format.table_entry(t, attr.user);
+                if level == 3 {
+                    self.set_top(fa, i, entry);
+                } else {
+                    fa.table(table)[i] = entry;
+                }
                 t
             } else if self.format.is_leaf(e, level) {
                 return Err(MapError::AlreadyMapped);
@@ -691,6 +742,109 @@ pub(crate) mod tests {
         pub fn next(&mut self) -> u64 {
             self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             self.0 >> 33
+        }
+    }
+
+    /// Every table reachable from `root`, by level: none of them has a not-present entry
+    /// that isn't zero (note 0027, section 1d).
+    fn assert_not_present_entries_are_zero(fa: &mut FakeFrames, root: u64, format: Format) {
+        let mut tables = vec![(root, 3u32)];
+        while let Some((t, level)) = tables.pop() {
+            for (i, &e) in fa.table(t).iter().enumerate() {
+                if !format.present(e) {
+                    assert_eq!(e, 0, "{format:?}: entry {i} at level {level} is {e:#x}");
+                } else if !format.is_leaf(e, level) {
+                    tables.push((e & ADDR_MASK, level - 1));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_user_copy_follows_the_program_half() {
+        for kernel_nx in [false, true] {
+            let mut fa = FakeFrames(vec![]);
+            let mut t = PageTables::new(&mut fa, Format::X86_64).unwrap();
+            let user = fa.alloc().unwrap();
+            t.set_user_copy(user, kernel_nx);
+            let data = Attr { write: true, exec: true, mem: Memory::Normal, user: true };
+            // Two program mappings under different top-level entries, and a kernel one.
+            t.map(&mut fa, 0x4000_0000, 0x20_0000, PAGE, data).unwrap();
+            t.map(&mut fa, 0x80_0000_0000, 0x30_0000, PAGE, data).unwrap();
+            t.map(&mut fa, 0xFFFF_8000_0000_0000, 0x40_0000, PAGE, Attr::DATA).unwrap();
+            let (k, u) = (*fa.table(t.root), *fa.table(user));
+            for i in [0, 1] {
+                assert_ne!(u[i], 0);
+                assert_eq!(k[i] & !X_NX, u[i]);
+                assert_eq!(k[i] & X_NX != 0, kernel_nx);
+                assert_eq!(u[i] & X_NX, 0);
+            }
+            // The kernel's half isn't copied.
+            assert_ne!(k[256], 0);
+            assert_eq!(u[256], 0);
+            // Both see what is below the top: the program's copy translates the same.
+            let mut via_user = PageTables::from_root(user, Format::X86_64);
+            assert_eq!(via_user.translate(&mut fa, 0x4000_0008), Some((0x20_0008, data)));
+            via_user = PageTables::from_root(user, Format::X86_64);
+            assert_eq!(via_user.translate(&mut fa, 0xFFFF_8000_0000_0000), None);
+            // Emptied and pruned, or freed, both copies' entries go.
+            t.unmap(&mut fa, 0x4000_0000);
+            t.prune(&mut fa, 0x4000_0000, PAGE);
+            assert_eq!((fa.table(t.root)[0], fa.table(user)[0]), (0, 0));
+            t.free_tables(&mut fa, 0..256);
+            assert_eq!((fa.table(t.root)[1], fa.table(user)[1]), (0, 0));
+            assert_ne!(fa.table(t.root)[256], 0);
+        }
+    }
+
+    #[test]
+    fn not_present_entries_are_zero() {
+        for format in [Format::X86_64, Format::Aarch64] {
+            let mut fa = FakeFrames(vec![]);
+            let mut t = PageTables::new(&mut fa, format).unwrap();
+            let mut rng = Lcg(11);
+            let mut mapped: Vec<(u64, u64)> = Vec::new();
+            for step in 0..600 {
+                match rng.next() % 5 {
+                    // Map a run of pages (some aligned for 2 MiB pages), with random rights.
+                    0 | 1 => {
+                        let va = (rng.next() % (1 << 20)) * PAGE;
+                        let pages = 1 + rng.next() % 600;
+                        let attr = Attr {
+                            write: rng.next().is_multiple_of(2),
+                            exec: rng.next().is_multiple_of(2),
+                            mem: [Memory::Normal, Memory::Device, Memory::Framebuffer]
+                                [(rng.next() % 3) as usize],
+                            user: rng.next().is_multiple_of(2),
+                        };
+                        if t.map(&mut fa, va, 0x4000_0000, pages * PAGE, attr).is_ok() {
+                            mapped.push((va, pages));
+                        }
+                    }
+                    // Unmap part of a run, and prune.
+                    2 if !mapped.is_empty() => {
+                        let (va, pages) = mapped.swap_remove((rng.next() as usize) % mapped.len());
+                        for i in 0..pages {
+                            t.unmap(&mut fa, va + i * PAGE);
+                        }
+                        if rng.next().is_multiple_of(2) {
+                            t.prune(&mut fa, va, pages * PAGE);
+                        }
+                    }
+                    // Change a page's rights, mapped or not.
+                    3 => {
+                        let va = (rng.next() % (1 << 20)) * PAGE;
+                        t.protect(&mut fa, va, Attr::DATA);
+                    }
+                    // Free everything below a top-level entry now and then.
+                    _ if step % 97 == 0 => {
+                        t.free_tables(&mut fa, 0..1);
+                        mapped.clear();
+                    }
+                    _ => {}
+                }
+                assert_not_present_entries_are_zero(&mut fa, t.root, format);
+            }
         }
     }
 
