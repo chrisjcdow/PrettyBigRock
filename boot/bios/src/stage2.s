@@ -7,7 +7,8 @@
 #
 # Low memory it uses (see also boot/bios/src/main.rs, which reads these):
 #   0x0500 boot drive (byte)          0x0504 next payload sector    0x0508 sectors left
-#   0x050C payload destination        0x0600 int 15h/87h descriptor table
+#   0x050C payload destination        0x0518 end of the Usable range the payload is in
+#   0x0600 int 15h/87h descriptor table
 #   0x0700 disk address packet        0x1000 E820 count (word), entries of 24 bytes from 0x1008
 #   0x2000 VBE controller info        0x2200 VBE mode info          0x2400 VBE mode list copy
 #   0x2600 chosen VBE mode (word, 0 = none)   0x2604 best area so far (dword)
@@ -148,49 +149,47 @@ vbe_set:
     mov ecx, dword ptr [12]
     pop ds
     mov dword ptr [0x508], ecx
+
+    # The whole destination, from 1 MiB, must be one Usable range of the memory map (note
+    # 0027, section 5): a real PC may keep a hole there, such as one at 15 MiB.
+    mov eax, ecx
+    shl eax, 9
+    add eax, 0x100000           # the payload's end
+    mov si, 0x1008
+    mov cx, word ptr [0x1000]
+e820_check:
+    test cx, cx
+    jz memory_error
+    cmp dword ptr [si + 16], 1  # Usable
+    jne e820_check_next
+    cmp dword ptr [si + 4], 0   # starting above 4 GiB
+    jne e820_check_next
+    mov edx, dword ptr [si]
+    cmp edx, 0x100000           # starting above 1 MiB
+    ja e820_check_next
+    cmp dword ptr [si + 12], 0  # 4 GiB long or more
+    jne fits_below_4g
+    add edx, dword ptr [si + 8]
+    jc fits_below_4g            # ending above 4 GiB
+    cmp edx, eax
+    jae payload_fits
+e820_check_next:
+    add si, 24
+    dec cx
+    jmp e820_check
+memory_error:
+    mov si, offset msg_memory
+    call print
+    jmp stop
+fits_below_4g:
+    mov edx, 0xFFFFFFFF
+payload_fits:
+    mov dword ptr [0x518], edx
     mov dword ptr [0x50C], 0x100000
-copy_next:
-    mov ecx, dword ptr [0x508]
-    test ecx, ecx
-    jz copy_done
-    cmp ecx, 64
-    jbe 1f
-    mov ecx, 64
-1:
-    mov eax, dword ptr [0x504]
-    mov bx, 0x7000
-    call read_sectors
+    call copy_run
     jc disk_error
-    # Copy above 1 MiB with the BIOS's "move extended memory" call.
-    mov di, 0x600
-    push cx
-    mov cx, 24
-    xor ax, ax
-    rep stosw
-    pop cx
-    mov word ptr [0x610], 0xFFFF    # source: 0x70000
-    mov dword ptr [0x612], 0x93070000
-    mov word ptr [0x618], 0xFFFF    # destination
-    mov eax, dword ptr [0x50C]
-    mov word ptr [0x61A], ax
-    shr eax, 16
-    mov byte ptr [0x61C], al
-    mov byte ptr [0x61D], 0x93
-    mov byte ptr [0x61F], ah
-    push cx
-    shl cx, 8                   # sectors to 16-bit words
-    mov si, 0x600
-    mov ah, 0x87
-    int 0x15
-    pop cx
-    jc disk_error
-    movzx ecx, cx
-    add dword ptr [0x504], ecx
-    sub dword ptr [0x508], ecx
-    shl ecx, 9
-    add dword ptr [0x50C], ecx
-    jmp copy_next
-copy_done:
+
+
 
     # --- The GPT (note 0027, section 4): its header, from sector 1, and the first 32 sectors
     # of its partition list (128 entries, the usual number), for the third stage to find the
@@ -260,10 +259,59 @@ gpt_done:
 disk_error:
     mov si, offset msg_disk
     call print
-1:
+stop:
     cli
     hlt
-    jmp 1b
+    jmp stop
+
+# copy_run: [0x508] sectors from disk sector [0x504] to [0x50C] and up, 64 at a time through
+# the buffer at 0x70000. Advances all three. Carry set if a read or copy failed.
+copy_run:
+copy_next:
+    mov ecx, dword ptr [0x508]
+    test ecx, ecx
+    jz copy_finished
+    cmp ecx, 64
+    jbe 1f
+    mov ecx, 64
+1:
+    mov eax, dword ptr [0x504]
+    mov bx, 0x7000
+    call read_sectors
+    jc copy_failed
+    # Copy above 1 MiB with the BIOS's "move extended memory" call.
+    mov di, 0x600
+    push cx
+    mov cx, 24
+    xor ax, ax
+    rep stosw
+    pop cx
+    mov word ptr [0x610], 0xFFFF    # source: 0x70000
+    mov dword ptr [0x612], 0x93070000
+    mov word ptr [0x618], 0xFFFF    # destination
+    mov eax, dword ptr [0x50C]
+    mov word ptr [0x61A], ax
+    shr eax, 16
+    mov byte ptr [0x61C], al
+    mov byte ptr [0x61D], 0x93
+    mov byte ptr [0x61F], ah
+    push cx
+    shl cx, 8                   # sectors to 16-bit words
+    mov si, 0x600
+    mov ah, 0x87
+    int 0x15
+    pop cx
+    jc copy_failed
+    movzx ecx, cx
+    add dword ptr [0x504], ecx
+    sub dword ptr [0x508], ecx
+    shl ecx, 9
+    add dword ptr [0x50C], ecx
+    jmp copy_next
+copy_finished:
+    clc
+copy_failed:
+    ret
 
 # read_sectors: CX sectors (at most 64) from sector EAX to BX:0000. Carry set on failure.
 read_sectors:
@@ -309,6 +357,7 @@ gdt_pointer:
 msg_hello:   .asciz "PrettyBigRock BIOS loader\r\n"
 msg_loading: .asciz "Loading PrettyBigRock...\r\n"
 msg_disk:    .asciz "PrettyBigRock can't read the boot disk.\r\n"
+msg_memory:  .asciz "PrettyBigRock can't start: no room for it at 1 MiB.\r\n"
 
 .code64
 long_mode:

@@ -34,6 +34,8 @@ impl Serial {
 struct Console {
     serial: Serial,
     screen: Option<fb::FbConsole>,
+    /// The screen's text, kept so the screen is never read (note 0027, section 5).
+    text: fb::Text,
     /// Set when the display stack has taken the screen: text is no longer drawn on it, except
     /// a panic's (note 0010, section 7).
     screen_released: bool,
@@ -54,7 +56,7 @@ impl Write for Console {
         if !self.screen_released
             && let Some(screen) = &mut self.screen
         {
-            screen.write_str(s);
+            screen.write_str(s, &mut self.text);
         }
         Ok(())
     }
@@ -63,7 +65,7 @@ impl Write for Console {
 static CONSOLE: IrqSpinLock<Console> = IrqSpinLock::new(
     Level::Console,
     "console",
-    Console { serial: Serial::None, screen: None, screen_released: false },
+    Console { serial: Serial::None, screen: None, text: fb::Text::new(), screen_released: false },
 );
 
 static UART_KIND: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
@@ -111,6 +113,9 @@ pub unsafe fn init(info: &BootInfo, direct_map_base: u64) {
     });
     let mut c = CONSOLE.lock();
     c.serial = serial;
+    if let Some(s) = &screen {
+        s.clear(&mut c.text);
+    }
     c.screen = screen;
 }
 

@@ -245,7 +245,9 @@ extern "C" fn dispatch(f: &mut Frame) {
             apic::eoi();
             super::user::shootdown_interrupt();
         }
+        // The local APIC's spurious vector, and the masked 8259s': neither wants an EOI.
         SPURIOUS => {}
+        v if apic::PIC_SPURIOUS.contains(&v) => {}
         v if super::irqchip::is_device_vector(v) => super::irqchip::interrupt(v),
         _ => apic::eoi(),
     }

@@ -4,7 +4,7 @@
 //! Starting the other cores (docs/design/0005-kernel-core.md, section 7): a trampoline below
 //! 1 MiB takes each from 16-bit real mode to 64-bit mode and into the kernel.
 
-use super::{apic, cpu};
+use super::{apic, clock, cpu};
 use crate::mem::{self, pmm, vm};
 use crate::percpu::{self, PerCpu};
 use crate::{hw, sched, time};
@@ -145,12 +145,27 @@ pub fn start_other_cores(m: &hw::Machine) -> usize {
         }
         if cpu.online.load(Ordering::Acquire) {
             started += 1;
+            if !clock::tsc_agrees_with_new_core() {
+                tsc_disagrees(id);
+            }
         }
     }
     vm::identity_unmap(page, mem::PAGE);
     pmm::free(page, 1);
     let _ = m;
     started
+}
+
+/// A core's TSC doesn't agree with the boot core's, so programs can't read the TSC as the
+/// clock: the clock moves to the HPET, if there is one, without a jump (note 0027, section 5).
+fn tsc_disagrees(id: u32) {
+    if !clock::is_tsc() {
+        return; // already moved
+    }
+    match crate::time::change_counter(clock::fall_back_to_hpet) {
+        true => crate::kprintln!("Clock:         core {id}'s TSC differs; using the HPET instead"),
+        false => crate::kprintln!("Clock:         core {id}'s TSC differs, and there's no HPET"),
+    }
 }
 
 /// Where each new core arrives, in 64-bit mode on the kernel's page tables and its own stack.
@@ -163,5 +178,6 @@ extern "C" fn ap_main(cpu: u64) -> ! {
     apic::start_timer();
     sched::init_this_core();
     cpu.online.store(true, Ordering::Release);
+    clock::tsc_answer_boot_core();
     sched::idle_loop()
 }

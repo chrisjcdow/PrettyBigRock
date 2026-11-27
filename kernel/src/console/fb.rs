@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Christopher Cameron-Dow
 
 //! A text console drawn on a framebuffer, with the 1.x font.
+//!
+//! The screen's memory is never read back (note 0027, section 5). Firmware screens are mapped
+//! write-combining: writes are gathered and sent to the graphics card in bursts, which is fast,
+//! but every read goes to the card on its own and is very slow, so scrolling by copying the
+//! screen upwards would take a tenth of a second a line on a real PC. Instead the text on the
+//! screen is kept in ordinary memory ([`Text`]), and scrolling redraws only the cells whose
+//! letter changes.
 
 // The font is shared with the console service, so both draw the same letters.
 use pbr_bootinfo::Framebuffer;
@@ -13,6 +20,24 @@ const BACKGROUND: (u8, u8, u8) = (0x1B, 0x26, 0x3B);
 const TEXT: (u8, u8, u8) = (0xE8, 0xEC, 0xF1);
 /// The first line.
 const TITLE: (u8, u8, u8) = (0xF2, 0xB8, 0x4B);
+
+/// The most columns and rows kept; a larger screen uses only this much of itself.
+const MAX_COLS: usize = 256;
+const MAX_ROWS: usize = 128;
+
+/// What is on the screen, cell by cell, and which rows are in the first line's colour. It
+/// lives in the console's `static`, not on a stack, since it is large (128 KiB).
+pub struct Text {
+    cells: [[char; MAX_COLS]; MAX_ROWS],
+    title: [bool; MAX_ROWS],
+}
+
+impl Text {
+    /// An empty screen. `const` so it can start a `static`.
+    pub const fn new() -> Self {
+        Self { cells: [[' '; MAX_COLS]; MAX_ROWS], title: [false; MAX_ROWS] }
+    }
+}
 
 /// A screen of text.
 pub struct FbConsole {
@@ -59,6 +84,14 @@ impl FbConsole {
         Some(c)
     }
 
+    /// Clears `text` to match the screen [`FbConsole::new`] just cleared. In place: a new
+    /// `Text` would be built on the stack first, and the loader's stack, which the kernel is
+    /// still on, is too small for it.
+    pub fn clear(&self, text: &mut Text) {
+        text.cells.iter_mut().for_each(|row| row.fill(' '));
+        text.title.fill(false);
+    }
+
     fn pixel(&self, (r, g, b): (u8, u8, u8)) -> u32 {
         let f = &self.fb.format;
         let chan = |v: u8, shift: u8, size: u8| {
@@ -70,10 +103,16 @@ impl FbConsole {
     }
 
     fn fill(&mut self, x: usize, y: usize, w: usize, h: usize, colour: (u8, u8, u8)) {
-        let p = self.pixel(colour).to_le_bytes();
+        let pixel = self.pixel(colour);
+        let p = pixel.to_le_bytes();
         for yy in y..(y + h).min(self.height) {
             for xx in x..(x + w).min(self.width) {
                 let o = yy * self.stride + xx * self.bytes_per_pixel;
+                if self.bytes_per_pixel == 4 && o.is_multiple_of(4) {
+                    // SAFETY: as below, and the four bytes are aligned.
+                    unsafe { self.base.add(o).cast::<u32>().write_volatile(pixel) };
+                    continue;
+                }
                 for (i, byte) in p.iter().take(self.bytes_per_pixel).enumerate() {
                     // SAFETY: (xx, yy) is inside the screen, so the byte is inside the
                     // framebuffer `new`'s caller gave us.
@@ -95,16 +134,18 @@ impl FbConsole {
         8 * self.scale
     }
     fn cols(&self) -> usize {
-        (self.width - 2 * self.margin()) / self.cell_w()
+        ((self.width - 2 * self.margin()) / self.cell_w()).min(MAX_COLS)
     }
     fn rows(&self) -> usize {
-        (self.height - 2 * self.margin()) / self.cell_h()
+        ((self.height - 2 * self.margin()) / self.cell_h()).min(MAX_ROWS)
     }
 
-    fn draw(&mut self, c: char) {
-        let colour = if self.lines == 0 { TITLE } else { TEXT };
-        let (x0, y0) =
-            (self.margin() + self.col * self.cell_w(), self.margin() + self.row * self.cell_h());
+    /// Draws `c` in the cell at (`col`, `row`), over whatever was there.
+    fn draw_at(&mut self, col: usize, row: usize, c: char, title: bool) {
+        let colour = if title { TITLE } else { TEXT };
+        let (x0, y0) = (self.margin() + col * self.cell_w(), self.margin() + row * self.cell_h());
+        let (w, h) = (self.cell_w(), self.cell_h());
+        self.fill(x0, y0, w, h, BACKGROUND);
         let s = self.scale;
         for (dy, bits) in font::glyph(c).iter().enumerate() {
             for dx in 0..font::WIDTH {
@@ -115,41 +156,43 @@ impl FbConsole {
         }
     }
 
-    fn newline(&mut self) {
+    fn newline(&mut self, text: &mut Text) {
         self.col = 0;
         self.lines += 1;
         if self.row + 1 < self.rows() {
             self.row += 1;
             return;
         }
-        // Scroll up one line.
-        let (top, ch) = (self.margin(), self.cell_h());
-        let span = self.width * self.bytes_per_pixel;
-        for y in top..top + (self.rows() - 1) * ch {
-            // SAFETY: both rows are inside the framebuffer, and they don't overlap.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    self.base.add((y + ch) * self.stride),
-                    self.base.add(y * self.stride),
-                    span,
-                );
+        // Scroll up one line: each row takes the one below's text, redrawing only the cells
+        // that change, then the last row is emptied.
+        let (rows, cols) = (self.rows(), self.cols());
+        for r in 0..rows {
+            let title = r + 1 < rows && text.title[r + 1];
+            for c in 0..cols {
+                let new = if r + 1 < rows { text.cells[r + 1][c] } else { ' ' };
+                if new != text.cells[r][c] || (title != text.title[r] && new != ' ') {
+                    self.draw_at(c, r, new, title);
+                    text.cells[r][c] = new;
+                }
             }
+            text.title[r] = title;
         }
-        let y = top + (self.rows() - 1) * ch;
-        self.fill(0, y, self.width, ch, BACKGROUND);
     }
 
     /// Writes text, wrapping at the right edge.
-    pub fn write_str(&mut self, s: &str) {
+    pub fn write_str(&mut self, s: &str, text: &mut Text) {
         for c in s.chars() {
             match c {
-                '\n' => self.newline(),
+                '\n' => self.newline(text),
                 '\r' => self.col = 0,
                 c => {
                     if self.col >= self.cols() {
-                        self.newline();
+                        self.newline(text);
                     }
-                    self.draw(c);
+                    let (col, row, title) = (self.col, self.row, self.lines == 0);
+                    self.draw_at(col, row, c, title);
+                    text.cells[row][col] = c;
+                    text.title[row] = title;
                     self.col += 1;
                 }
             }

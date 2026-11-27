@@ -17,6 +17,7 @@ const SVR: u32 = 0xF0;
 const ICR_LOW: u32 = 0x300;
 const ICR_HIGH: u32 = 0x310;
 const LVT_TIMER: u32 = 0x320;
+const LVT_LINT0: u32 = 0x350;
 const TIMER_INITIAL: u32 = 0x380;
 const TIMER_CURRENT: u32 = 0x390;
 const TIMER_DIVIDE: u32 = 0x3E0;
@@ -53,13 +54,42 @@ fn has_x2apic() -> bool {
     core::arch::x86_64::__cpuid(1).ecx & (1 << 21) != 0
 }
 
+/// Where the legacy interrupt controllers' vectors are moved to (note 0027, section 5).
+pub const PIC_BASE: u8 = 0x20;
+/// The two vectors a masked 8259 can still send: its "spurious" interrupts (line 7 of each
+/// chip), which must be ignored without telling it they're done.
+pub const PIC_SPURIOUS: [u8; 2] = [PIC_BASE + 7, PIC_BASE + 15];
+
+/// Moves the legacy interrupt controllers (the two 8259 chips of the first PCs, still
+/// emulated by every PC's chipset) out of the processor's exception vectors, then masks them,
+/// so only the APICs deliver interrupts. The firmware leaves the 8259s at vectors 0x08 to
+/// 0x0F, where a stray interrupt would look like a double fault.
+fn quieten_pic() {
+    // The initialisation words: ICW1 "start, with ICW4"; ICW2 the first vector; ICW3 how the
+    // two chips are joined (the second on the first's line 2); ICW4 "8086 mode".
+    let words: [(u16, u8); 10] = [
+        (0x20, 0x11),
+        (0xA0, 0x11),
+        (0x21, PIC_BASE),
+        (0xA1, PIC_BASE + 8),
+        (0x21, 4),
+        (0xA1, 2),
+        (0x21, 1),
+        (0xA1, 1),
+        (0x21, 0xFF), // and every line masked
+        (0xA1, 0xFF),
+    ];
+    for (port, v) in words {
+        // SAFETY: the 8259s' ports, which every PC has (writing them is harmless if not).
+        unsafe {
+            core::arch::asm!("out dx, al", in("dx") port, in("al") v, options(nomem, nostack))
+        };
+    }
+}
+
 /// Turns on this core's local APIC (and, on the boot core, chooses the mode).
 pub fn init(phys: u64) {
-    // The legacy PIC: mask everything, so only the APIC delivers interrupts.
-    // SAFETY: the 8259 PIC's data ports; masking is harmless even if there's no PIC.
-    unsafe {
-        core::arch::asm!("out 0x21, al", "out 0xA1, al", in("al") 0xFFu8, options(nomem, nostack));
-    }
+    quieten_pic();
     if MODE.load(Ordering::Relaxed) == 0 {
         PHYS.store(phys, Ordering::Relaxed);
         let mode = if has_x2apic() { 1 } else { vm::map_device(phys, 0x1000) };
@@ -79,6 +109,9 @@ pub fn enable_this_core() {
     }
     write(TPR, 0);
     write(SVR, 0x100 | u32::from(super::interrupts::SPURIOUS));
+    // The firmware may leave the APIC in "virtual wire" mode, passing the 8259's interrupts
+    // in through LINT0. They're masked at the 8259, but mask the way in too.
+    write(LVT_LINT0, 1 << 16);
 }
 
 /// Signals the end of an interrupt.
@@ -122,13 +155,23 @@ pub fn send_startup(dest: u32, page: u32) {
 pub fn start_timer() {
     write(TIMER_DIVIDE, 0b1011); // divide by 1
     if TIMER_COUNT.load(Ordering::Relaxed) == 0 {
-        write(LVT_TIMER, 1 << 16); // masked, one-shot
-        write(TIMER_INITIAL, u32::MAX);
-        clock::wait_reference_ns(10_000_000);
-        let elapsed = u32::MAX - read(TIMER_CURRENT);
-        write(TIMER_INITIAL, 0);
-        let per_tick = (u64::from(elapsed) * 100 / TICK_HZ).max(1000) as u32;
+        // Three 10 ms measurements, and the middle one: a firmware interrupt (SMI) during one
+        // makes it too long, and would otherwise be wrong for the whole run.
+        let elapsed = clock::middle_of_three(|| {
+            write(LVT_TIMER, 1 << 16); // masked, one-shot
+            write(TIMER_INITIAL, u32::MAX);
+            clock::wait_reference_ns(10_000_000);
+            let elapsed = u32::MAX - read(TIMER_CURRENT);
+            write(TIMER_INITIAL, 0);
+            u64::from(elapsed)
+        });
+        let per_tick = (elapsed * 100 / TICK_HZ).max(1000) as u32;
         TIMER_COUNT.store(per_tick, Ordering::Relaxed);
+        // Some processors stop the APIC timer in their deeper sleep states. The idle loop
+        // only uses `hlt`, which doesn't, but say so if this processor is one of them.
+        if core::arch::x86_64::__cpuid(6).eax & (1 << 2) == 0 {
+            crate::kprintln!("APIC timer:    may stop in deep sleep (no ARAT); idle uses hlt only");
+        }
     }
     write(LVT_TIMER, u32::from(super::interrupts::TIMER) | (1 << 17)); // periodic
     write(TIMER_INITIAL, TIMER_COUNT.load(Ordering::Relaxed));

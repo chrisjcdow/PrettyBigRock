@@ -22,6 +22,21 @@ pub fn init(freq: u64) {
     START.store(arch::clock_counter(), Ordering::Relaxed);
 }
 
+/// Moves the clock to another counter without a jump: `switch` changes the counter the
+/// architecture layer reads and returns its frequency, or `None` to stay as it was. Only used
+/// at start-up, before any program reads the clock (note 0027, section 5). True if it moved.
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))] // x86-64 core start-up uses it
+pub fn change_counter(switch: impl FnOnce() -> Option<u64>) -> bool {
+    let now = now_ns();
+    let Some(freq) = switch() else { return false };
+    FREQ.store(freq, Ordering::Relaxed);
+    MULT.store(((1_000_000_000u128 << 32) / u128::from(freq.max(1))) as u64, Ordering::Relaxed);
+    // The new counter's reading `now` nanoseconds ago becomes the clock's start.
+    let ticks = (u128::from(now) * u128::from(freq) / 1_000_000_000) as u64;
+    START.store(arch::clock_counter().wrapping_sub(ticks), Ordering::Relaxed);
+    true
+}
+
 /// Nanoseconds since the clock started.
 ///
 /// It's `(ticks × mult) >> 32` rather than a division, because programs compute exactly the
