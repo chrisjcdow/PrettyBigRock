@@ -106,7 +106,10 @@ impl Interrupts {
         sys::call(num::INTERRUPT_UNBIND, [self.0.raw().into(), index, 0, 0, 0, 0]).map(|_| ())
     }
 
-    /// Says the driver has handled interrupt `index`, so it may fire again.
+    /// Says this process has handled interrupt `index`. Its own binding is no longer owed an
+    /// acknowledgement, and once no binding is (several processes may share a level-triggered
+    /// line, interface 1.4), the interrupt may fire again. `BAD_STATE` if this process hasn't
+    /// bound it.
     pub fn acknowledge(&self, index: u64) -> Result<()> {
         sys::call(num::INTERRUPT_ACKNOWLEDGE, [self.0.raw().into(), index, 0, 0, 0, 0]).map(|_| ())
     }
@@ -122,10 +125,27 @@ impl Interrupts {
         sys::call(num::INTERRUPT_MSI_INFO, [self.0.raw().into(), 0, 0, 0, 0, 0])
     }
 
-    /// Makes interrupt `index` fire by software. Only in self-test runs.
-    pub fn trigger(&self, index: u64) -> Result<()> {
-        sys::call(num::INTERRUPT_TRIGGER, [self.0.raw().into(), index, 0, 0, 0, 0]).map(|_| ())
+    /// Sets line `index`'s trigger and polarity (needs `CONFIGURE`): `mode` is
+    /// [`LEVEL`](line_mode::LEVEL) and [`ACTIVE_LOW`](line_mode::ACTIVE_LOW) or'd together, or 0
+    /// for edge-triggered and active high. Only while nobody has it bound (interface 1.4).
+    pub fn configure(&self, index: u64, mode: u64) -> Result<()> {
+        sys::call(num::INTERRUPT_CONFIGURE, [self.0.raw().into(), index, mode, 0, 0, 0]).map(|_| ())
     }
+
+    /// Makes interrupt `index` fire by software. Only in self-test runs. Returns true, and
+    /// triggers nothing, if it is masked waiting for another sharer's acknowledgement.
+    pub fn trigger(&self, index: u64) -> Result<bool> {
+        sys::call(num::INTERRUPT_TRIGGER, [self.0.raw().into(), index, 0, 0, 0, 0])
+            .map(|(masked, _)| masked != 0)
+    }
+}
+
+/// The `mode` bits of [`Interrupts::configure`].
+pub mod line_mode {
+    /// Level-triggered (otherwise edge-triggered).
+    pub const LEVEL: u64 = 1 << 0;
+    /// Active low (otherwise active high).
+    pub const ACTIVE_LOW: u64 = 1 << 1;
 }
 
 /// A range of I/O ports (x86-64 only).

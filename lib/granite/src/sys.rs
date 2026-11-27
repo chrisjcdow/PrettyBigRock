@@ -186,6 +186,8 @@ pub mod rights {
     pub const BIND: u32 = 1 << 8;
     /// Interrupts: unmask after handling.
     pub const ACKNOWLEDGE: u32 = 1 << 9;
+    /// Interrupts: set a line's trigger and polarity (interface 1.4).
+    pub const CONFIGURE: u32 = 1 << 10;
     /// The kernel log: take over the screen.
     pub const CONTROL: u32 = 1 << 8;
     /// The machine: turn it off or restart it.
@@ -262,6 +264,7 @@ pub mod num {
     pub const INTERRUPT_ACKNOWLEDGE: u64 = 86;
     pub const INTERRUPT_MSI_ALLOCATE: u64 = 87;
     pub const INTERRUPT_MSI_INFO: u64 = 88;
+    pub const INTERRUPT_CONFIGURE: u64 = 89;
     pub const IOPORT_SLICE: u64 = 90;
     pub const IOPORT_IN: u64 = 91;
     pub const IOPORT_OUT: u64 = 92;
@@ -272,7 +275,7 @@ pub mod num {
 
 /// The interface version this `granite` is built for, recorded in every program's
 /// PrettyBigRock note.
-pub const VERSION: (u16, u16) = (1, 3);
+pub const VERSION: (u16, u16) = (1, 4);
 
 static CALL: AtomicU64 = AtomicU64::new(0);
 static CLOCK: AtomicU64 = AtomicU64::new(0);

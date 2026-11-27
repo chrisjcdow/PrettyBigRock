@@ -44,7 +44,7 @@ fn main(mut start: granite::Start) -> i32 {
         "budget" => budget(num(1)),
         "load" => load(&mut start, num(1), num(2)),
         "device-revoke" => device_revoke(&mut start),
-        "interrupt-hold" => interrupt_hold(&mut start),
+        "interrupt-share" => interrupt_share(&mut start),
         "tied" => tied(&mut start, num(1), &args[2..]),
         _ => Err(99),
     };
@@ -480,14 +480,33 @@ fn device_revoke(start: &mut granite::Start) -> Result<(), i32> {
 
 /// Binds an interrupt, says it's ready, and crashes with the interrupt still bound: the kernel
 /// must release the binding when the process ends.
-fn interrupt_hold(start: &mut granite::Start) -> Result<(), i32> {
+/// `interrupt-share`: binds INTERRUPT's first interrupt, to share it with the root program
+/// (note 0027, section 2). If that is refused as already bound, it signals READY with 8 and
+/// ends. Otherwise it checks a second binding of its own is refused, signals READY with 1, and
+/// then for each interrupt: signals READY with 2, and waits on GO, which says (1) acknowledge
+/// it, after which it signals READY with 4, or (2) end without acknowledging.
+fn interrupt_share(start: &mut granite::Start) -> Result<(), i32> {
     let i = Interrupts(start.take(role::INTERRUPT).ok_or(1)?);
     let ready = Notification(start.take(role::READY).ok_or(1)?);
+    let go = Notification(start.take(role::GO).ok_or(1)?);
     let n = Notification::create().map_err(|_| 2)?;
-    i.bind(0, &n, 1).map_err(|_| 3)?;
-    ready.signal(1).map_err(|_| 4)?;
-    time::sleep_ms(50);
-    fault_null()
+    match i.bind(0, &n, 1) {
+        Ok(()) => {}
+        Err(Error::AlreadyExists) => return ready.signal(8).map_err(|_| 3),
+        Err(_) => return Err(3),
+    }
+    check(4, i.bind(0, &n, 1) == Err(Error::AlreadyExists))?;
+    ready.signal(1).map_err(|_| 5)?;
+    loop {
+        n.wait(time::after_ms(30_000)).map_err(|_| 6)?;
+        ready.signal(2).map_err(|_| 7)?;
+        let g = go.wait(time::after_ms(30_000)).map_err(|_| 8)?;
+        if g & 2 != 0 {
+            return Ok(());
+        }
+        i.acknowledge(0).map_err(|_| 9)?;
+        ready.signal(4).map_err(|_| 10)?;
+    }
 }
 
 // ------------------------------------------------------------------------------------------

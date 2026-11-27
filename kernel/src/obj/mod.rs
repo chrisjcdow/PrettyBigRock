@@ -127,6 +127,8 @@ pub mod rights {
     pub const BIND: u32 = 1 << 8;
     /// Interrupts: unmask after handling.
     pub const ACKNOWLEDGE: u32 = 1 << 9;
+    /// Interrupts: set a line's trigger and polarity (note 0028, section 8).
+    pub const CONFIGURE: u32 = 1 << 10;
     /// The kernel log: take over the screen.
     pub const CONTROL: u32 = 1 << 8;
     /// The machine: turn it off or restart it.
@@ -212,7 +214,7 @@ impl Object {
             Object::Notification(_) => COMMON | SIGNAL | WAIT,
             Object::Reply(_) => 0,
             Object::Log => COMMON | WRITE | CONTROL,
-            Object::Interrupts(_) => COMMON | BIND | ACKNOWLEDGE,
+            Object::Interrupts(_) => COMMON | BIND | ACKNOWLEDGE | CONFIGURE,
             Object::DeviceMemory(_) => COMMON | READ | WRITE | MAP | DMA,
             Object::IoPorts(_) => COMMON | READ | WRITE,
             Object::Machine => COMMON | POWER,

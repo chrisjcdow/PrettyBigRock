@@ -39,6 +39,9 @@ struct State {
     wired: [u8; WIRED_END as usize],
     /// ISA overrides: (global system interrupt, flags).
     overrides: Vec<(u32, u16)>,
+    /// Each line's trigger and polarity as `interrupt_configure` set them (note 0028, section
+    /// 8): 0 for the default, otherwise `CONFIGURED | mode`.
+    configured: [u8; WIRED_END as usize],
     /// Where line interrupts are sent: the boot core's APIC ID.
     line_target: u32,
     /// APIC IDs of cores message-signalled interrupts may go to (the message format has 8 bits).
@@ -69,12 +72,39 @@ fn io_write(base: u64, reg: u32, v: u32) {
     }
 }
 
+/// Marks a line's entry in `configured` as set; the mode is in the low bits.
+const CONFIGURED: u8 = 0x80;
+
 impl State {
     fn pin(&self, gsi: u32) -> Option<(u64, u32)> {
         self.ioapics
             .iter()
             .find(|a| gsi >= a.first && gsi < a.first + a.pins)
             .map(|a| (a.base, gsi - a.first))
+    }
+
+    /// Line `id`'s (active low, level-triggered).
+    fn mode(&self, id: u32) -> (bool, bool) {
+        let set = self.configured.get(id as usize).copied().unwrap_or(0);
+        if set & CONFIGURED != 0 {
+            return (set & 2 != 0, set & 1 != 0);
+        }
+        // ISA lines default to active high and edge-triggered; the firmware's overrides change
+        // that. Everything else (PCI lines) is active low and level-triggered.
+        let flags = self.overrides.iter().find(|o| o.0 == id).map(|o| o.1);
+        match flags {
+            Some(f) => {
+                let p = f & 3;
+                let t = (f >> 2) & 3;
+                let default_isa = id < 16;
+                (
+                    if p == 0 { !default_isa } else { p == 3 },
+                    if t == 0 { !default_isa } else { t == 3 },
+                )
+            }
+            None if id < 16 => (false, false),
+            None => (true, true),
+        }
     }
 }
 
@@ -97,6 +127,7 @@ pub fn init(m: &hw::Machine) {
         pool: VectorPool::new(u32::from(FIRST_VECTOR), u32::from(LAST_VECTOR)),
         wired: [0; WIRED_END as usize],
         overrides: m.overrides.iter().map(|&(_, gsi, flags)| (gsi, flags)).collect(),
+        configured: [0; WIRED_END as usize],
         line_target: m.cores.first().map_or(0, |c| c.hw_id as u32),
         msi_targets,
     });
@@ -158,25 +189,31 @@ pub fn attach(id: u32) -> Result<(), Error> {
     let mut g = STATE.lock();
     let s = g.as_mut().ok_or(Error::NotSupported)?;
     let (base, pin) = s.pin(id).ok_or(Error::InvalidArgument)?;
-    // ISA lines default to active high and edge-triggered; the firmware's overrides change
-    // that. Everything else (PCI lines) is active low and level-triggered.
-    let flags = s.overrides.iter().find(|o| o.0 == id).map(|o| o.1);
-    let (polarity, trigger) = match flags {
-        Some(f) => {
-            let p = f & 3;
-            let t = (f >> 2) & 3;
-            let default_isa = id < 16;
-            (if p == 0 { !default_isa } else { p == 3 }, if t == 0 { !default_isa } else { t == 3 })
-        }
-        None if id < 16 => (false, false),
-        None => (true, true),
-    };
+    let (polarity, trigger) = s.mode(id);
     let v = s.pool.take().ok_or(Error::OutOfMemory)?;
     s.wired[id as usize] = v as u8;
     VECTOR_ID[v as usize].store(id, Ordering::SeqCst);
     let low = v | MASKED | (u32::from(polarity) << 13) | (u32::from(trigger) << 15);
     io_write(base, 0x11 + 2 * pin, s.line_target << 24);
     io_write(base, 0x10 + 2 * pin, low);
+    Ok(())
+}
+
+/// True if line `id` may be shared between drivers: it is level-triggered (note 0027,
+/// section 2). Message-signalled interrupts never are.
+pub fn shareable(id: u32) -> bool {
+    id < MSI_BASE && STATE.lock().as_ref().is_some_and(|s| s.pin(id).is_some() && s.mode(id).1)
+}
+
+/// Sets line `id`'s trigger and polarity, for the next time it is attached (note 0028, section
+/// 8). The caller makes sure nobody has it bound.
+pub fn configure(id: u32, level: bool, active_low: bool) -> Result<(), Error> {
+    let mut g = STATE.lock();
+    let s = g.as_mut().ok_or(Error::NotSupported)?;
+    if id >= MSI_BASE || s.pin(id).is_none() {
+        return Err(Error::InvalidArgument);
+    }
+    s.configured[id as usize] = CONFIGURED | u8::from(level) | u8::from(active_low) << 1;
     Ok(())
 }
 

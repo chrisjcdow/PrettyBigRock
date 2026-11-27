@@ -21,8 +21,9 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 
-/// The interface version (note 0007, section 7; 1.2 is note 0013, 1.3 note 0019).
-pub const VERSION: (u64, u64) = (1, 3);
+/// The interface version (note 0007, section 7; 1.2 is note 0013, 1.3 note 0019, 1.4
+/// note 0027).
+pub const VERSION: (u64, u64) = (1, 4);
 
 type R = Result<(u64, u64), Error>;
 
@@ -466,8 +467,7 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
         85 => caps::unbind_interrupt(p, handle_arg(a[0])?, a[1]).map(|()| (0, 0)),
         86 => {
             let i = interrupts(p, a[0], rights::ACKNOWLEDGE)?;
-            crate::irq::acknowledge(i.number(a[1])?);
-            Ok((0, 0))
+            crate::irq::acknowledge(i.number(a[1])?, p.id).map(|()| (0, 0))
         }
         87 => {
             let mask = u32::MAX;
@@ -482,6 +482,10 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
             let i = interrupts(p, a[0], rights::INSPECT)?;
             let v = i.msi.as_ref().ok_or(Error::WrongType)?;
             Ok((v.address, u64::from(v.data)))
+        }
+        89 => {
+            let i = interrupts(p, a[0], rights::CONFIGURE)?;
+            crate::irq::configure(i.number(a[1])?, a[2]).map(|()| (0, 0))
         }
         90 => {
             let (first, count) = (a[1], a[2]);
@@ -501,7 +505,7 @@ fn dispatch(me: &Arc<Thread>, p: &Arc<Process>, num: u64, a: [u64; 6]) -> R {
         }
         99 => {
             let i = interrupts(p, a[0], rights::ACKNOWLEDGE)?;
-            crate::irq::trigger(i.number(a[1])?).map(|()| (0, 0))
+            crate::irq::trigger(i.number(a[1])?).map(|masked| (u64::from(masked), 0))
         }
 
         // The machine (note 0019, section 1).

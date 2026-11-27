@@ -61,7 +61,7 @@ pub fn run(f: &Files<'_>, start: &mut granite::Start) -> Result<String, String> 
     let irq = interrupts(f, &caps)?;
     parts.push(format!("interrupts (line {irq})"));
     if caps.pool.is_some() {
-        msi(&caps)?;
+        msi(f, &caps)?;
         parts.push("message-signalled interrupts".into());
     } else if cfg!(target_arch = "aarch64") {
         // The self-test only runs on QEMU's `virt` machine, whose GICv2m the firmware tables
@@ -376,31 +376,107 @@ fn interrupts(f: &Files<'_>, c: &Caps) -> Result<u64, String> {
     a.bind(0, &n, 0x30).map_err(|x| format!("binding after the revoke: {x}"))?;
     a.unbind(0).map_err(e("unbinding"))?;
 
-    // A program that ends with an interrupt bound loses it.
-    let ready = Notification::create().map_err(e("notification"))?;
-    let held = all.slice(line, 1, ALL).map_err(e("slicing"))?;
-    let s = spawn(
-        f.probe,
-        "probe",
-        "interrupt-hold",
-        &[
-            (role::INTERRUPT, held.0.raw(), rights::BIND | rights::ACKNOWLEDGE, false),
-            (role::READY, ready.0.raw(), rights::SIGNAL, false),
-        ],
-        8 * crate::selftest::MIB,
-    )?;
-    ready.wait(time::after_ms(30_000)).map_err(|x| format!("the probe never got going: {x}"))?;
-    refused("binding what a running program holds", a.bind(0, &n, 1), Error::AlreadyExists)?;
-    match wait(&s, 60)? {
-        State::Faulted(_) => {}
-        other => return Err(format!("the probe ended {other:?}, not with a fault")),
+    sharing(f, all, &a, line)?;
+    #[cfg(target_arch = "x86_64")]
+    {
+        // ISA line 7 (the first printer port's) is edge-triggered, so it is never shared.
+        // QEMU's firmware tables make lines 5, 9, 10 and 11 level-triggered, but not 7.
+        let edge = all.slice(7, 1, ALL).map_err(e("slicing line 7"))?;
+        edge.bind(0, &n, 1).map_err(e("binding line 7"))?;
+        let other = all.slice(7, 1, ALL).map_err(e("slicing line 7"))?;
+        match share_probe(f, &other)? {
+            Shared::Refused => {}
+            Shared::Bound(..) => return Err("an edge-triggered line was shared".into()),
+        }
+        edge.unbind(0).map_err(e("unbinding line 7"))?;
     }
-    a.bind(0, &n, 0x40).map_err(|x| format!("binding after the program ended: {x}"))?;
-    a.unbind(0).map_err(e("unbinding"))?;
     Ok(line)
 }
 
-fn msi(c: &Caps) -> Outcome {
+/// How the `interrupt-share` probe got on.
+enum Shared {
+    /// Its binding was refused as already bound, and it ended.
+    Refused,
+    /// It bound the interrupt: the probe, its READY notification (2 when it was signalled, 4
+    /// when it has acknowledged) and its GO notification (1: acknowledge, 2: end).
+    Bound(granite::process::Spawned, Notification, Notification),
+}
+
+/// Starts the `interrupt-share` probe with `slice`.
+fn share_probe(f: &Files<'_>, slice: &Interrupts) -> Result<Shared, String> {
+    let ready = Notification::create().map_err(e("notification"))?;
+    let go = Notification::create().map_err(e("notification"))?;
+    let s = spawn(
+        f.probe,
+        "probe",
+        "interrupt-share",
+        &[
+            (role::INTERRUPT, slice.0.raw(), rights::BIND | rights::ACKNOWLEDGE, false),
+            (role::READY, ready.0.raw(), rights::SIGNAL, false),
+            (role::GO, go.0.raw(), rights::WAIT, false),
+        ],
+        8 * crate::selftest::MIB,
+    )?;
+    match ready.wait(time::after_ms(30_000)) {
+        Ok(b) if b & 8 != 0 => match wait(&s, 60)? {
+            State::Exited(0) => Ok(Shared::Refused),
+            other => Err(format!("the probe ended {other:?} after its binding was refused")),
+        },
+        Ok(b) if b & 1 != 0 => Ok(Shared::Bound(s, ready, go)),
+        Ok(b) => Err(format!("the probe said {b:#x}")),
+        Err(x) => Err(format!("the probe never got going: {x}")),
+    }
+}
+
+/// Two processes sharing a level-triggered line (note 0027, section 2): both are signalled,
+/// the line stays masked until both have acknowledged, and one ending while it owes an
+/// acknowledgement unmasks the line for the other. `a` is the root program's slice of `line`,
+/// not bound.
+fn sharing(f: &Files<'_>, all: &Interrupts, a: &Interrupts, line: u64) -> Outcome {
+    match sys::version() {
+        (1, minor) if minor >= 4 => {}
+        (x, y) => return Err(format!("the kernel says it is interface version {x}.{y}, not 1.4")),
+    }
+    let n = Notification::create().map_err(e("notification"))?;
+    let theirs = all.slice(line, 1, ALL).map_err(e("slicing"))?;
+    let Shared::Bound(s, ready, go) = share_probe(f, &theirs)? else {
+        return Err("a level-triggered line wasn't shared".into());
+    };
+    a.bind(0, &n, 0x10).map_err(e("binding alongside the probe"))?;
+    let masked = |what: &str, want: bool| -> Outcome {
+        match a.trigger(0) {
+            Ok(m) if m == want => Ok(()),
+            Ok(m) => Err(format!("{what}: the line was masked {m}, not {want}")),
+            Err(x) => Err(format!("{what}: triggering: {x}")),
+        }
+    };
+    masked("the first shared interrupt", false)?;
+    expect(&n, 0x10, "the shared interrupt, here")?;
+    expect(&ready, 2, "the shared interrupt, in the probe")?;
+    a.acknowledge(0).map_err(e("acknowledging"))?;
+    masked("with one acknowledgement owed", true)?;
+    quiet(&n, "while the probe owes an acknowledgement")?;
+    go.signal(1).map_err(e("telling the probe to acknowledge"))?;
+    expect(&ready, 4, "the probe's acknowledgement")?;
+    masked("after both acknowledged", false)?;
+    expect(&n, 0x10, "the second shared interrupt, here")?;
+    expect(&ready, 2, "the second shared interrupt, in the probe")?;
+    a.acknowledge(0).map_err(e("acknowledging"))?;
+    // The probe ends owing its acknowledgement: that mustn't hold the line masked.
+    go.signal(2).map_err(e("telling the probe to end"))?;
+    match wait(&s, 60)? {
+        State::Exited(0) => {}
+        other => return Err(format!("the sharing probe ended {other:?}")),
+    }
+    masked("after the probe ended owing", false)?;
+    expect(&n, 0x10, "an interrupt after the probe ended")?;
+    a.acknowledge(0).map_err(e("acknowledging"))?;
+    a.unbind(0).map_err(e("unbinding"))?;
+    refused("acknowledging with no binding", a.acknowledge(0), Error::BadState)?;
+    Ok(())
+}
+
+fn msi(f: &Files<'_>, c: &Caps) -> Outcome {
     let pool = c.pool.as_ref().ok_or("no pool")?;
     let (kind, _, _) = pool.info().map_err(e("pool info"))?;
     if kind != interrupt_kind::POOL {
@@ -431,6 +507,13 @@ fn msi(c: &Caps) -> Outcome {
         return Err(format!("odd MSI message: address {address:#x}, data {data:#x}"));
     }
     a.bind(0, &n, 0x20).map_err(e("binding an MSI"))?;
+    // A message-signalled interrupt is never shared.
+    let copy = Interrupts(a.0.duplicate(ALL).map_err(e("duplicating"))?);
+    match share_probe(f, &copy)? {
+        Shared::Refused => {}
+        Shared::Bound(..) => return Err("a message-signalled interrupt was shared".into()),
+    }
+    drop(copy);
     a.trigger(0).map_err(e("triggering an MSI"))?;
     expect(&n, 0x20, "the MSI")?;
     a.acknowledge(0).map_err(e("acknowledging"))?;

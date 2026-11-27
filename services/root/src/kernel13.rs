@@ -34,8 +34,14 @@ const CLIENT: u32 = rights::SEND | rights::TRANSFER | rights::DUPLICATE;
 /// handle, which stays the root program's).
 pub fn run(f: &Files<'_>, echo: &Endpoint, power: Option<u32>) -> Outcome {
     match sys::version() {
-        (1, 3) => {}
-        (a, b) => return Err(format!("the kernel says it is interface version {a}.{b}, not 1.3")),
+        // Later minor versions only add to 1.3 (note 0007, section 7); the device tests check
+        // for 1.4.
+        (1, minor) if minor >= 3 => {}
+        (a, b) => {
+            return Err(format!(
+                "the kernel says it is interface version {a}.{b}, not 1.3 or later"
+            ));
+        }
     }
     watches(f, echo).map_err(|e| format!("receiver watches: {e}"))?;
     let power = power.ok_or("the root program wasn't given the machine capability")?;

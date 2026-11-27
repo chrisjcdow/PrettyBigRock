@@ -9,6 +9,14 @@
 //! signalling a notification takes ordinary spin locks that aren't safe in an interrupt
 //! handler. The `irq` thread then signals the notification. The driver handles its device and
 //! calls `interrupt_acknowledge` to unmask the interrupt again.
+//!
+//! **Shared lines** (note 0027, section 2). A PCI device without message-signalled interrupts
+//! raises its interrupt by holding a wire low until its driver has dealt with it
+//! ("level-triggered"), and several devices' wires may be joined into one line. The kernel
+//! can't tell which device it was, so every driver bound to the line is signalled, each
+//! binding is marked as **owed** an acknowledgement, and the line is unmasked only when none
+//! is owed: unmasking earlier would let it fire again at once. Edge-triggered lines and
+//! message-signalled interrupts are never shared.
 
 use crate::obj::notification::Notification;
 use crate::obj::{Error, device};
@@ -17,6 +25,7 @@ use crate::sync::{Once, SpinLock};
 use crate::{arch, kprintln};
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use pbr_captree::NodeId;
 
@@ -43,9 +52,12 @@ pub struct Binding {
     pub node: NodeId,
     /// Keeps a message-signalled vector from being reused while it's bound.
     pub _object: Arc<device::Interrupts>,
+    /// Signalled of an interrupt it hasn't acknowledged yet.
+    pub owed: bool,
 }
 
-static BINDINGS: SpinLock<BTreeMap<u32, Binding>> = SpinLock::new(BTreeMap::new());
+/// Every bound interrupt's bindings: one, or more on a shared line, never none.
+static BINDINGS: SpinLock<BTreeMap<u32, Vec<Binding>>> = SpinLock::new(BTreeMap::new());
 
 /// Starts the delivery thread. `selftest` allows [`trigger`].
 pub fn start(selftest: bool) {
@@ -84,13 +96,23 @@ fn run() {
 }
 
 fn deliver(id: u32) {
-    let target = BINDINGS.lock().get(&id).map(|b| (b.notification.clone(), b.bits));
-    match target {
-        Some((n, bits)) => {
-            DELIVERED.fetch_add(1, Ordering::Relaxed);
-            n.signal(bits);
+    // Who to signal, gathered under the lock and signalled after it: signalling takes the
+    // notifications' own locks.
+    let mut targets = Vec::new();
+    if let Some(list) = BINDINGS.lock().get_mut(&id) {
+        for b in list {
+            b.owed = true;
+            targets.push((b.notification.clone(), b.bits));
         }
-        None => {
+    }
+    match targets.is_empty() {
+        false => {
+            DELIVERED.fetch_add(1, Ordering::Relaxed);
+            for (n, bits) in targets {
+                n.signal(bits);
+            }
+        }
+        true => {
             let (w, bit) = (id as usize / 64, 1u64 << (id % 64));
             if REPORTED[w].fetch_or(bit, Ordering::Relaxed) & bit == 0 {
                 kprintln!("Interrupt {id} fired with nobody bound; it stays masked.");
@@ -99,80 +121,126 @@ fn deliver(id: u32) {
     }
 }
 
-/// Binds interrupt `id` as `binding` says, and unmasks it.
+/// Binds interrupt `id` as `binding` says, and unmasks it. A level-triggered line already
+/// bound by another process is shared; a second binding from the same process never is.
 pub fn bind(id: u32, binding: Binding) -> Result<(), Error> {
     let mut table = BINDINGS.lock();
-    if table.contains_key(&id) {
-        return Err(Error::AlreadyExists);
+    if let Some(list) = table.get_mut(&id) {
+        if list.iter().any(|b| b.process == binding.process) || !arch::irqchip::shareable(id) {
+            return Err(Error::AlreadyExists);
+        }
+        // The line is already set up, and unmasked unless it's waiting for the others'
+        // acknowledgements, in which case this binding hears of the next interrupt.
+        list.push(Binding { owed: false, ..binding });
+        return Ok(());
     }
     arch::irqchip::attach(id)?;
-    table.insert(id, binding);
+    table.insert(id, alloc::vec![Binding { owed: false, ..binding }]);
     arch::irqchip::unmask(id);
     Ok(())
 }
 
-/// Releases the binding of `id`, if `process` made it. Masks a line interrupt, so that a
-/// program that ends mid-interrupt can't leave a storm behind. Returns the binding's node.
-pub fn unbind(id: u32, process: Option<u64>) -> Result<NodeId, Error> {
-    let mut table = BINDINGS.lock();
-    let b = table.get(&id).ok_or(Error::BadState)?;
-    if process.is_some_and(|p| p != b.process) {
-        return Err(Error::NoRight);
+/// Removes the bindings `gone` picks from `id`'s list, and returns them. If none remain, the
+/// line is masked and its vector given back, so a program that ends mid-interrupt can't leave
+/// a storm behind; if others remain and none is owed, it is unmasked, so they aren't held up
+/// by one that ended without acknowledging.
+fn remove(
+    table: &mut BTreeMap<u32, Vec<Binding>>,
+    id: u32,
+    mut gone: impl FnMut(&Binding) -> bool,
+) -> Vec<Binding> {
+    let Some(list) = table.get_mut(&id) else { return Vec::new() };
+    let (out, keep): (Vec<Binding>, Vec<Binding>) = list.drain(..).partition(|b| gone(b));
+    *list = keep;
+    if out.is_empty() {
+        return out;
     }
-    let b = table.remove(&id).expect("found just now");
-    arch::irqchip::detach(id);
-    // The binding (and the vector it keeps) goes after the lock is released.
-    drop(table);
-    let node = b.node;
-    drop(b);
-    Ok(node)
+    if list.is_empty() {
+        table.remove(&id);
+        arch::irqchip::detach(id);
+    } else if list.iter().all(|b| !b.owed) {
+        arch::irqchip::unmask(id);
+    }
+    out
 }
 
-/// Releases the binding of `id` if its node is `node` (the node was revoked).
+/// Releases `process`'s binding of `id`. Returns the binding's node.
+pub fn unbind(id: u32, process: u64) -> Result<NodeId, Error> {
+    let mut table = BINDINGS.lock();
+    let gone = remove(&mut table, id, |b| b.process == process);
+    // The bindings (and the vector they keep) go after the lock is released.
+    drop(table);
+    gone.first().map(|b| b.node).ok_or(Error::BadState)
+}
+
+/// Releases the binding of `id` whose node is `node` (the node was revoked).
 pub fn release_node(id: u32, node: NodeId) {
     let mut table = BINDINGS.lock();
-    if table.get(&id).is_some_and(|b| b.node == node)
-        && let Some(b) = table.remove(&id)
-    {
-        arch::irqchip::detach(id);
-        drop(table);
-        drop(b);
-    }
+    let gone = remove(&mut table, id, |b| b.node == node);
+    drop(table);
+    drop(gone);
 }
 
 /// Releases every binding `process` made, and returns their nodes (for the caller to remove
 /// from the derivation tree).
-pub fn release_process(process: u64) -> alloc::vec::Vec<NodeId> {
+pub fn release_process(process: u64) -> Vec<NodeId> {
     let mut table = BINDINGS.lock();
-    let ids: alloc::vec::Vec<u32> =
-        table.iter().filter(|(_, b)| b.process == process).map(|(&i, _)| i).collect();
-    let mut gone = alloc::vec::Vec::new();
+    let ids: Vec<u32> = table
+        .iter()
+        .filter(|(_, list)| list.iter().any(|b| b.process == process))
+        .map(|(&i, _)| i)
+        .collect();
+    let mut gone = Vec::new();
     for id in ids {
-        if let Some(b) = table.remove(&id) {
-            arch::irqchip::detach(id);
-            gone.push(b);
-        }
+        gone.extend(remove(&mut table, id, |b| b.process == process));
     }
     drop(table);
     gone.into_iter().map(|b| b.node).collect()
 }
 
-/// Unmasks `id` after the driver has handled it. Does nothing if it isn't bound.
-pub fn acknowledge(id: u32) {
-    if BINDINGS.lock().contains_key(&id) {
+/// `process` has handled interrupt `id`: its binding is no longer owed, and once no binding
+/// on the line is, the line is unmasked. `BAD_STATE` if `process` hasn't bound `id`; when
+/// nothing is owed, it does nothing harmful.
+pub fn acknowledge(id: u32, process: u64) -> Result<(), Error> {
+    let mut table = BINDINGS.lock();
+    let list = table.get_mut(&id).ok_or(Error::BadState)?;
+    let mine = list.iter_mut().find(|b| b.process == process).ok_or(Error::BadState)?;
+    mine.owed = false;
+    if list.iter().all(|b| !b.owed) {
         arch::irqchip::unmask(id);
     }
+    Ok(())
 }
 
-/// Makes `id` pending by software (self-test runs only).
-pub fn trigger(id: u32) -> Result<(), Error> {
+/// Sets line `id`'s trigger and polarity (`interrupt_configure`, note 0028, section 8): `mode`
+/// bit 0 level-triggered, bit 1 active low. Only while nobody has the line bound, so everyone
+/// sharing it agrees.
+pub fn configure(id: u32, mode: u64) -> Result<(), Error> {
+    if mode & !3 != 0 {
+        return Err(Error::InvalidArgument);
+    }
+    // The bindings' lock is held throughout, so nobody can bind the line half-way.
+    let table = BINDINGS.lock();
+    if table.contains_key(&id) {
+        return Err(Error::BadState);
+    }
+    arch::irqchip::configure(id, mode & 1 != 0, mode & 2 != 0)
+}
+
+/// Makes `id` pending by software (self-test runs only). Returns whether the line was masked
+/// at the controller, waiting for acknowledgements: then nothing is triggered, as a real
+/// device's interrupt wouldn't get through either until it is unmasked.
+pub fn trigger(id: u32) -> Result<bool, Error> {
     if !SELFTEST.load(Ordering::Relaxed) {
         return Err(Error::NotSupported);
     }
-    if !BINDINGS.lock().contains_key(&id) {
-        return Err(Error::BadState);
+    let table = BINDINGS.lock();
+    let list = table.get(&id).ok_or(Error::BadState)?;
+    if list.iter().any(|b| b.owed) {
+        return Ok(true);
     }
-    arch::irqchip::trigger(id)
+    arch::irqchip::trigger(id)?;
+    Ok(false)
 }
 
 /// True if `id` is bound (tests).

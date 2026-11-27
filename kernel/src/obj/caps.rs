@@ -410,8 +410,14 @@ pub fn bind_interrupt(
     require(e.rights, rights::BIND)?;
     let number = irq.number(index)?;
     let node = tree.insert_child(e.node, Owner::Nowhere).map_err(|_| Error::OutOfMemory)?;
-    let binding =
-        crate::irq::Binding { process: p.id, notification, bits, node, _object: irq.clone() };
+    let binding = crate::irq::Binding {
+        process: p.id,
+        notification,
+        bits,
+        node,
+        _object: irq.clone(),
+        owed: false,
+    };
     match crate::irq::bind(number, binding) {
         Ok(()) => {
             if let Some(o) = tree.get_mut(node) {
@@ -433,7 +439,7 @@ pub fn unbind_interrupt(p: &Arc<Process>, h: u32, index: u64) -> Result<(), Erro
     let Object::Interrupts(irq) = &e.object else { return Err(Error::WrongType) };
     require(e.rights, rights::BIND)?;
     let number = irq.number(index)?;
-    let node = crate::irq::unbind(number, Some(p.id))?;
+    let node = crate::irq::unbind(number, p.id)?;
     let _ = tree.remove(node);
     Ok(())
 }

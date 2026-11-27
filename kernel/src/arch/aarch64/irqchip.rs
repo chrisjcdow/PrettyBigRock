@@ -26,6 +26,15 @@ struct State {
     pool: VectorPool,
     /// Which line interrupts are attached.
     attached: [bool; WIRED_END as usize],
+    /// Lines `interrupt_configure` made edge-triggered (note 0028, section 8); the rest are
+    /// level-triggered, as the kernel sets every line by default.
+    edge: [bool; WIRED_END as usize],
+}
+
+impl State {
+    fn is_msi(&self, id: u32) -> bool {
+        self.msi.is_some_and(|(_, first, n)| id >= first && id < first + n)
+    }
 }
 
 static STATE: IrqSpinLock<Option<State>> =
@@ -60,6 +69,7 @@ pub fn init(m: &hw::Machine) {
         msi,
         pool,
         attached: [false; WIRED_END as usize],
+        edge: [false; WIRED_END as usize],
     });
 }
 
@@ -73,12 +83,10 @@ pub fn wired_range() -> (u32, u32) {
 
 /// True if `id` is a line interrupt that exists and isn't one of the MSI frame's.
 pub fn wired_usable(id: u32) -> bool {
-    STATE.lock().as_ref().is_some_and(|s| {
-        id >= 32
-            && id < s.count
-            && id < WIRED_END
-            && !s.msi.is_some_and(|(_, first, n)| id >= first && id < first + n)
-    })
+    STATE
+        .lock()
+        .as_ref()
+        .is_some_and(|s| id >= 32 && id < s.count && id < WIRED_END && !s.is_msi(id))
 }
 
 /// True if the machine has an MSI frame.
@@ -114,8 +122,33 @@ pub fn attach(id: u32) -> Result<(), Error> {
     if id < 32 || id >= s.count || id >= WIRED_END {
         return Err(Error::InvalidArgument);
     }
-    gic::configure_spi(id, false, s.interface);
+    gic::configure_spi(id, s.edge[id as usize], s.interface);
     s.attached[id as usize] = true;
+    Ok(())
+}
+
+/// True if line `id` may be shared between drivers: it is level-triggered (note 0027,
+/// section 2). Message-signalled interrupts never are.
+pub fn shareable(id: u32) -> bool {
+    id < MSI_BASE
+        && STATE.lock().as_ref().is_some_and(|s| {
+            id >= 32 && id < s.count.min(WIRED_END) && !s.is_msi(id) && !s.edge[id as usize]
+        })
+}
+
+/// Sets line `id`'s trigger for the next time it is attached (note 0028, section 8). The GIC
+/// only takes lines that are active high, so active low is `NOT_SUPPORTED`. The caller makes
+/// sure nobody has it bound.
+pub fn configure(id: u32, level: bool, active_low: bool) -> Result<(), Error> {
+    let mut g = STATE.lock();
+    let s = g.as_mut().ok_or(Error::NotSupported)?;
+    if !(32..s.count.min(WIRED_END)).contains(&id) || s.is_msi(id) {
+        return Err(Error::InvalidArgument);
+    }
+    if active_low {
+        return Err(Error::NotSupported);
+    }
+    s.edge[id as usize] = !level;
     Ok(())
 }
 
@@ -144,10 +177,7 @@ pub fn trigger(id: u32) -> Result<(), Error> {
 /// The handler for a shared interrupt `intid`: disables a line interrupt (so a level-triggered
 /// one can't fire again at once), tells the GIC it's done, and passes the interrupt on.
 pub fn interrupt(iar: u32, intid: u32) {
-    let msi = STATE
-        .lock()
-        .as_ref()
-        .is_some_and(|s| s.msi.is_some_and(|(_, first, n)| intid >= first && intid < first + n));
+    let msi = STATE.lock().as_ref().is_some_and(|s| s.is_msi(intid));
     if !msi {
         gic::set_enabled(intid, false);
     }
