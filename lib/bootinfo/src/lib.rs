@@ -21,7 +21,11 @@ pub const VERSION_MAJOR: u16 = 1;
 
 /// The minor version. New minor versions only add fields at the end, so a kernel accepts any
 /// minor version, using [`BootInfo::size`] to tell which fields are present.
-pub const VERSION_MINOR: u16 = 0;
+pub const VERSION_MINOR: u16 = 1;
+
+/// The size of version 1.0's structure, the smallest a kernel accepts. Version 1.1 added
+/// [`BootInfo::boot_partition`] after it (note 0027, section 4).
+pub const SIZE_1_0: u32 = 536;
 
 /// Flag: (Arm) the processor started at exception level 2, and the loader left the EL2 stub
 /// in place, so the kernel can take over EL2 later to run virtual machines.
@@ -231,7 +235,7 @@ pub struct BootInfo {
     pub version_major: u16,
     /// The minor version the loader wrote.
     pub version_minor: u16,
-    /// The size in bytes of the structure the loader wrote (at least `size_of::<BootInfo>()`
+    /// The size in bytes of the structure the loader wrote (at least [`SIZE_1_0`],
     /// for version 1.0).
     pub size: u32,
     /// A [`LoaderKind`] value.
@@ -281,6 +285,10 @@ pub struct BootInfo {
     /// The hardware ID of the processor core that runs the kernel first (x86 APIC ID, Arm
     /// MPIDR affinity bits).
     pub boot_cpu_id: u64,
+
+    /// (1.1) The unique GUID of the GPT partition the loader read the kernel from, as its 16
+    /// bytes are stored in the partition entry; all zero if not known.
+    pub boot_partition: [u8; 16],
 }
 
 /// Why a [`BootInfo`] was rejected.
@@ -290,7 +298,7 @@ pub enum BootInfoError {
     BadMagic,
     /// A different major version, which this kernel can't read.
     UnsupportedVersion(u16),
-    /// The structure is smaller than version 1.0 requires.
+    /// The structure is smaller than version 1.0's.
     TooSmall(u32),
     /// More framebuffers claimed than there is room for.
     TooManyFramebuffers(u32),
@@ -339,7 +347,41 @@ impl BootInfo {
             boot_time_ns: 0,
             random_seed: [0; 32],
             boot_cpu_id: 0,
+            boot_partition: [0; 16],
         }
+    }
+
+    /// Copies the boot information at `p` out of the loader's memory, after checking its header.
+    /// An older minor version's structure is shorter: only the bytes it wrote are read, and the
+    /// fields it doesn't have are left zero, as note 0003's rules say.
+    ///
+    /// # Safety
+    ///
+    /// `p` must point to readable memory holding at least the 1.0 structure, and as many bytes
+    /// as its `size` field says (up to this version's size).
+    pub unsafe fn read(p: *const u8) -> Result<BootInfo, BootInfoError> {
+        let mut info = BootInfo::new(LoaderKind::Unknown);
+        let n = core::mem::size_of::<Self>();
+        // SAFETY: the caller promises 1.0's bytes are readable; `info` is a plain `repr(C)`
+        // structure of integers, so any bytes make a valid value.
+        unsafe {
+            core::ptr::copy_nonoverlapping(p, (&raw mut info).cast::<u8>(), SIZE_1_0 as usize)
+        };
+        info.validate()?;
+        let more = (info.size as usize).min(n);
+        if more > SIZE_1_0 as usize {
+            let at = SIZE_1_0 as usize;
+            // SAFETY: the header says the loader wrote `size` bytes, and the caller promises
+            // they are readable.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    p.add(at),
+                    (&raw mut info).cast::<u8>().add(at),
+                    more - at,
+                )
+            };
+        }
+        Ok(info)
     }
 
     /// Checks the header: the first thing the kernel does with boot information.
@@ -350,7 +392,7 @@ impl BootInfo {
         if self.version_major != VERSION_MAJOR {
             return Err(BootInfoError::UnsupportedVersion(self.version_major));
         }
-        if (self.size as usize) < core::mem::size_of::<Self>() {
+        if self.size < SIZE_1_0 {
             return Err(BootInfoError::TooSmall(self.size));
         }
         if self.framebuffer_count as usize > MAX_FRAMEBUFFERS {
@@ -374,6 +416,20 @@ impl BootInfo {
     pub fn framebuffers(&self) -> &[Framebuffer] {
         let n = (self.framebuffer_count as usize).min(MAX_FRAMEBUFFERS);
         &self.framebuffers[..n]
+    }
+}
+
+/// A GUID in its usual written form, such as `c12a7328-f81f-11d2-ba4b-00a0c93ec93b`. GPT stores
+/// the first three fields little-endian, so they are printed back to front.
+pub struct GuidText(pub [u8; 16]);
+
+impl core::fmt::Display for GuidText {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let g = &self.0;
+        write!(f, "{:02x}{:02x}{:02x}{:02x}-", g[3], g[2], g[1], g[0])?;
+        write!(f, "{:02x}{:02x}-{:02x}{:02x}-", g[5], g[4], g[7], g[6])?;
+        write!(f, "{:02x}{:02x}-", g[8], g[9])?;
+        g[10..].iter().try_for_each(|b| write!(f, "{b:02x}"))
     }
 }
 
@@ -403,7 +459,8 @@ const _: () = {
     assert!(offset_of!(BootInfo, boot_time_ns) == 488);
     assert!(offset_of!(BootInfo, random_seed) == 496);
     assert!(offset_of!(BootInfo, boot_cpu_id) == 528);
-    assert!(size_of::<BootInfo>() == 536);
+    assert!(size_of::<BootInfo>() == 552);
+    assert!(offset_of!(BootInfo, boot_partition) == SIZE_1_0 as usize);
 };
 
 #[cfg(test)]
@@ -452,6 +509,30 @@ mod tests {
     }
 
     #[test]
+    fn version_1_0_reads_with_no_boot_partition() {
+        let mut info = BootInfo::new(LoaderKind::Bios);
+        info.boot_partition = [7; 16];
+        // SAFETY: `info` is a plain structure; viewing it as bytes is fine.
+        let mut bytes = unsafe {
+            core::slice::from_raw_parts((&raw const info).cast::<u8>(), size_of::<BootInfo>())
+        }
+        .to_vec();
+        // SAFETY: `bytes` holds the whole structure.
+        let got = unsafe { BootInfo::read(bytes.as_ptr()) }.unwrap();
+        assert_eq!(got.boot_partition, [7; 16]);
+        // A 1.0 loader wrote only 536 bytes: what follows isn't its, and isn't read.
+        bytes[10..12].copy_from_slice(&0u16.to_le_bytes()); // version 1.0
+        bytes[12..16].copy_from_slice(&SIZE_1_0.to_le_bytes());
+        // SAFETY: as above.
+        let got = unsafe { BootInfo::read(bytes.as_ptr()) }.unwrap();
+        assert_eq!(got.boot_partition, [0; 16]);
+        bytes[12..16].copy_from_slice(&100u32.to_le_bytes());
+        // SAFETY: as above.
+        let got = unsafe { BootInfo::read(bytes.as_ptr()) };
+        assert_eq!(got.err(), Some(BootInfoError::TooSmall(100)));
+    }
+
+    #[test]
     fn unknown_values_are_handled() {
         let region =
             MemoryRegion { range: PhysRange { base: 0, len: 4096 }, kind: 999, reserved: 0 };
@@ -470,6 +551,15 @@ mod tests {
         assert_eq!(m.name().map(str::len), Some(48));
         m.name[0] = 0xFF;
         assert_eq!(m.name(), None);
+    }
+
+    #[test]
+    fn guid_text() {
+        let esp = [
+            0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11, 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E,
+            0xC9, 0x3B,
+        ];
+        assert_eq!(GuidText(esp).to_string(), "c12a7328-f81f-11d2-ba4b-00a0c93ec93b");
     }
 
     #[test]

@@ -40,6 +40,7 @@ name = "pbr-boot-common"
 version = "0.0.0"
 dependencies = [
  "pbr-bootinfo",
+ "pbr-crc",
  "pbr-elf",
  "pbr-platform",
 ]
@@ -738,6 +739,7 @@ version = "0.0.0"
 dependencies = [
  "pbr-archive",
  "pbr-bmp",
+ "pbr-bootinfo",
  "pbr-crc",
  "pbr-desktop",
  "pbr-devices",

@@ -11,7 +11,9 @@
 #   0x0700 disk address packet        0x1000 E820 count (word), entries of 24 bytes from 0x1008
 #   0x2000 VBE controller info        0x2200 VBE mode info          0x2400 VBE mode list copy
 #   0x2600 chosen VBE mode (word, 0 = none)   0x2604 best area so far (dword)
-#   0x3000-0x6FFF temporary page tables       0x70000-0x7FFFF disk buffer, then the stack
+#   0x3000-0x6FFF temporary page tables
+#   0x68000 the disk's GPT header (sector 1)  0x68200-0x6C1FF its partition list (32 sectors)
+#   0x70000-0x7FFFF disk buffer, then the stack
 
 .section .stage2, "ax"
 .code16
@@ -189,6 +191,37 @@ copy_next:
     add dword ptr [0x50C], ecx
     jmp copy_next
 copy_done:
+
+    # --- The GPT (note 0027, section 4): its header, from sector 1, and the first 32 sectors
+    # of its partition list (128 entries, the usual number), for the third stage to find the
+    # partition we were read from. The third stage checks everything; if a read fails here,
+    # the header is cleared, which it takes as "not known".
+    mov eax, 1
+    mov cx, 1
+    mov bx, 0x6800
+    call read_sectors
+    jc gpt_none
+    push es
+    mov ax, 0x6800
+    mov es, ax
+    mov eax, dword ptr es:[72]  # the list's first sector, which must fit in 32 bits
+    mov edx, dword ptr es:[76]
+    pop es
+    test edx, edx
+    jnz gpt_none
+    cmp eax, 2
+    jb gpt_none
+    mov cx, 32
+    mov bx, 0x6820
+    call read_sectors
+    jnc gpt_done
+gpt_none:
+    push es
+    mov ax, 0x6800
+    mov es, ax
+    mov dword ptr es:[0], 0
+    pop es
+gpt_done:
 
     # --- 64-bit mode, with the first 2 GiB identity-mapped by 2 MiB pages.
     cli

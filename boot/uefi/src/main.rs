@@ -23,14 +23,13 @@ use pbr_boot_common::memmap::{MapBuilder, from_uefi};
 use pbr_boot_common::paging::BumpAlloc;
 use pbr_boot_common::tables::build_standard;
 use pbr_boot_common::{DIRECT_MAP_BASE, PAGE, align_up, fdt};
-#[cfg(target_arch = "aarch64")]
 use pbr_boot_common::{IdentityMapped, acpi};
-#[cfg(target_arch = "aarch64")]
-use pbr_bootinfo::FLAG_EL2_STUB;
 use pbr_bootinfo::{
-    BootInfo, EarlyConsole, Framebuffer, LoaderKind, MAX_FRAMEBUFFERS, MemoryKind, MemoryRegion,
-    Module, PhysRange, PixelFormat,
+    BootInfo, Framebuffer, LoaderKind, MAX_FRAMEBUFFERS, MemoryKind, MemoryRegion, Module,
+    PhysRange, PixelFormat,
 };
+#[cfg(target_arch = "aarch64")]
+use pbr_bootinfo::{EarlyConsole, FLAG_EL2_STUB};
 
 #[cfg(target_arch = "x86_64")]
 mod arch {
@@ -180,6 +179,34 @@ impl Firmware {
             fail("can't open the boot disk");
         }
         root
+    }
+
+    /// The unique GUID of the GPT partition this loader was read from (note 0027, section 4),
+    /// from its device's device path, or all zero if the firmware doesn't say.
+    fn boot_partition(&self) -> [u8; 16] {
+        let Some(li) = self.protocol::<LoadedImage>(self.image, &LOADED_IMAGE) else {
+            return [0; 16];
+        };
+        // SAFETY: `li` is the firmware's loaded-image protocol for us.
+        let dev = unsafe { (*li).device_handle };
+        let Some(path) = self.protocol::<u8>(dev, &DEVICE_PATH) else { return [0; 16] };
+        // A device path has no overall length: it is a run of nodes, each giving its own, up to
+        // an end node. Measure it a node at a time, so nothing past its end is read, then hand
+        // the bytes to the shared code that checks them.
+        let mut len = 0usize;
+        while len + 4 <= 4096 {
+            // SAFETY: the bytes up to `len` were a whole node each, so a node header follows.
+            let head = unsafe { core::slice::from_raw_parts(path.add(len), 4) };
+            let n = usize::from(u16::from_le_bytes([head[2], head[3]]));
+            len += 4;
+            if head[0] == 0x7F || n < 4 {
+                break;
+            }
+            len += n - 4;
+        }
+        // SAFETY: the firmware's device path, measured above.
+        let bytes = unsafe { core::slice::from_raw_parts(path, len.min(4096)) };
+        pbr_boot_common::bootpart::from_device_path(bytes).unwrap_or([0; 16])
     }
 
     /// Reads a whole file into newly allocated pages. Returns its physical address and size.
@@ -494,16 +521,33 @@ extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
         info.modules = PhysRange { base: list, len: 64 };
     }
     info.framebuffer_count = fw.framebuffers(&mut info.framebuffers);
+    info.boot_partition = fw.boot_partition();
     fw.random(&mut info.random_seed);
     info.boot_time_ns = fw.time_ns();
+    // The serial console (note 0027, section 3): the command line's `console=` first.
+    let cmdline_bytes = match cmdline {
+        // SAFETY: the file just read, `len` bytes at `base`.
+        Some((base, len)) => unsafe {
+            core::slice::from_raw_parts(base as *const u8, len as usize)
+        },
+        None => &[],
+    };
     #[cfg(target_arch = "x86_64")]
     {
-        info.early_console = EarlyConsole { kind: 1, register_width: 1, address: 0x3F8 };
+        let mem = IdentityMapped;
+        let spcr = (info.acpi_rsdp != 0)
+            .then(|| acpi::find_table(&mem, info.acpi_rsdp, b"SPCR"))
+            .flatten()
+            .and_then(|t| acpi::spcr_console(&mem, t));
+        info.early_console = pbr_boot_common::console::choose_x86(cmdline_bytes, spcr);
         info.boot_cpu_id = u64::from(core::arch::x86_64::__cpuid(1).ebx >> 24);
     }
     #[cfg(target_arch = "aarch64")]
     {
-        info.early_console = arm_console(info.acpi_rsdp, info.device_tree);
+        info.early_console = match pbr_boot_common::console::word(cmdline_bytes) {
+            Some(pbr_boot_common::console::Word::None) => EarlyConsole::default(),
+            _ => arm_console(info.acpi_rsdp, info.device_tree),
+        };
         let mpidr: u64;
         // SAFETY: reading MPIDR_EL1 has no side effects.
         unsafe { core::arch::asm!("mrs {}, MPIDR_EL1", out(reg) mpidr, options(nomem, nostack)) };

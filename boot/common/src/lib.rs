@@ -9,6 +9,8 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod bootpart;
+pub mod console;
 pub mod elf;
 #[cfg(not(test))]
 pub mod handover;

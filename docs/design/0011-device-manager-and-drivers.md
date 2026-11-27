@@ -51,7 +51,7 @@ find things again:
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | Magic `"PBRMACH\0"` |
-| 8 | 2 | Version, major (1) |
+| 10 | 2 | Version, minor (1; 0 before M7) |
 | 10 | 2 | Version, minor (0) |
 | 12 | 4 | Flags: bit 0 the legacy PS/2 controller is present (x86-64, from ACPI's FADT), bit 1 the message-signalled interrupt pool is present |
 | 16 | 8 | Physical address of the ACPI root pointer, or 0 |
@@ -59,7 +59,7 @@ find things again:
 | 32 | 8 | Length of the device tree |
 | 40 | 4 | The number of interrupt numbers the interrupt controllers have |
 | 44 | 4 | The number of framebuffers (0 to 8) |
-| 48 | 16 | Reserved, 0 |
+| 48 | 16 | (1.1) The boot partition: the unique GUID of the GPT partition the loader read the kernel from, or 0 if not known (note 0027, section 4); before 1.1, reserved and 0 |
 | 64 | | The framebuffers, each a copy of the boot information's `Framebuffer` record (note 0003) |
 
 The page is versioned like the others; later versions only add fields after the end.

@@ -12,6 +12,7 @@
 #![no_main]
 
 use core::fmt::Write;
+use core::sync::atomic::{AtomicU16, Ordering};
 use pbr_boot_common::elf::{EM_X86_64, Kernel};
 use pbr_boot_common::handover::{Handover, jump};
 use pbr_boot_common::memmap::{MapBuilder, from_e820};
@@ -19,8 +20,7 @@ use pbr_boot_common::paging::{BumpAlloc, Format};
 use pbr_boot_common::tables::build_standard;
 use pbr_boot_common::{DIRECT_MAP_BASE, IdentityMapped, PAGE, acpi, align_up};
 use pbr_bootinfo::{
-    BootInfo, EarlyConsole, Framebuffer, LoaderKind, MemoryKind, MemoryRegion, Module, PhysRange,
-    PixelFormat,
+    BootInfo, Framebuffer, LoaderKind, MemoryKind, MemoryRegion, Module, PhysRange, PixelFormat,
 };
 
 core::arch::global_asm!(include_str!("stage1.s"));
@@ -38,11 +38,16 @@ const LOW_END: u64 = 0x8_0000;
 /// The temporary page tables identity-map this much; everything the loader allocates is below.
 const IDENTITY_LIMIT: u64 = 2 << 30;
 
+/// Where the second stage leaves the disk's GPT header (sector 1) and its partition list.
+const GPT_HEADER: u64 = 0x6_8000;
+const GPT_ENTRIES: u64 = 0x6_8200;
+/// Where the first stage keeps the loader's first sector: the BIOS boot partition's.
+const LOADER_SECTOR: u64 = 0x7DB0;
+
 const STACK_SIZE: u64 = 128 * 1024;
-const COM1: u16 = 0x3F8;
 
 fn outb(port: u16, v: u8) {
-    // SAFETY: only used for COM1 and the CMOS clock, which every PC has.
+    // SAFETY: only used for the serial console's port and the CMOS clock, which every PC has.
     unsafe { core::arch::asm!("out dx, al", in("dx") port, in("al") v, options(nomem, nostack)) };
 }
 
@@ -53,8 +58,14 @@ fn inb(port: u16) -> u8 {
     v
 }
 
-/// Messages go to COM1: once the graphics mode is set, the BIOS can't show text.
+/// Messages go to the serial console: once the graphics mode is set, the BIOS can't show text.
+/// That is the same port the kernel will use (note 0027, section 3), or none (0) when there is
+/// no console on an I/O port.
 struct Serial;
+
+/// The serial console's I/O port, 0 until it is chosen. An atomic is a value that can be
+/// shared safely without a lock; here it only spares us a `static mut`.
+static PORT: AtomicU16 = AtomicU16::new(0);
 
 impl Write for Serial {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -69,20 +80,26 @@ impl Write for Serial {
 }
 
 impl Serial {
-    fn init() {
+    /// Sets up the 16550 UART at `port` at 115,200 bits a second.
+    fn init(port: u16) {
+        PORT.store(port, Ordering::Relaxed);
         for (off, v) in
             [(1, 0x00), (3, 0x80), (0, 0x01), (1, 0x00), (3, 0x03), (2, 0xC7), (4, 0x03)]
         {
-            outb(COM1 + off, v);
+            outb(port + off, v);
         }
     }
     fn byte(&mut self, b: u8) {
+        let port = PORT.load(Ordering::Relaxed);
+        if port == 0 {
+            return;
+        }
         for _ in 0..100_000 {
-            if inb(COM1 + 5) & 0x20 != 0 {
+            if inb(port + 5) & 0x20 != 0 {
                 break;
             }
         }
-        outb(COM1, b);
+        outb(port, b);
     }
 }
 
@@ -206,10 +223,43 @@ fn find_smbios() -> u64 {
     0
 }
 
+/// The unique GUID of the BIOS boot partition we were read from (note 0027, section 4), from
+/// the GPT the second stage read, or all zero if it isn't a sound GPT.
+fn boot_partition() -> [u8; 16] {
+    let header = read::<[u8; 512]>(GPT_HEADER);
+    // SAFETY: the second stage's buffer for the list, below the loader's stack.
+    let entries = unsafe {
+        core::slice::from_raw_parts(
+            GPT_ENTRIES as *const u8,
+            pbr_boot_common::bootpart::MAX_ENTRIES_BYTES,
+        )
+    };
+    let first = u64::from(read::<u32>(LOADER_SECTOR));
+    pbr_boot_common::bootpart::from_gpt(&header, entries, first).unwrap_or([0; 16])
+}
+
 /// Called by the second stage in 64-bit mode, with the first 2 GiB identity-mapped.
 #[unsafe(no_mangle)]
 pub extern "C" fn bios_main() -> ! {
-    Serial::init();
+    // The serial console first, so every message goes where the person asked: the command
+    // line's `console=`, else the firmware's SPCR table, else COM1 (note 0027, section 3).
+    let cmdline = payload_file("cmdline.txt");
+    let cmdline_bytes = match cmdline {
+        // SAFETY: the second stage copied the payload, and this file is inside it.
+        Some((base, len)) => unsafe {
+            core::slice::from_raw_parts(base as *const u8, len as usize)
+        },
+        None => &[],
+    };
+    let rsdp = acpi::find_rsdp_bios(&IdentityMapped).unwrap_or(0);
+    let spcr = (rsdp != 0)
+        .then(|| acpi::find_table(&IdentityMapped, rsdp, b"SPCR"))
+        .flatten()
+        .and_then(|t| acpi::spcr_console(&IdentityMapped, t));
+    let console = pbr_boot_common::console::choose_x86(cmdline_bytes, spcr);
+    if console.kind == 1 {
+        Serial::init(console.address as u16);
+    }
     say!("PrettyBigRock loader (BIOS, x86_64)");
 
     // The memory map the BIOS gave.
@@ -241,7 +291,7 @@ pub extern "C" fn bios_main() -> ! {
     info.kernel_physical = PhysRange { base: kernel_phys, len: hi - lo };
     info.kernel_virtual_base = lo;
     info.direct_map_base = DIRECT_MAP_BASE;
-    if let Some((base, len)) = payload_file("cmdline.txt") {
+    if let Some((base, len)) = cmdline {
         info.command_line = PhysRange { base, len };
     }
     // The start-up archive (note 0009), if there is one: the kernel reports it if not.
@@ -251,9 +301,10 @@ pub extern "C" fn bios_main() -> ! {
         unsafe { (list as *mut Module).write(Module::new("startup", PhysRange { base, len })) };
         info.modules = PhysRange { base: list, len: 64 };
     }
-    info.acpi_rsdp = acpi::find_rsdp_bios(&IdentityMapped).unwrap_or(0);
+    info.acpi_rsdp = rsdp;
     info.smbios = find_smbios();
-    info.early_console = EarlyConsole { kind: 1, register_width: 1, address: u64::from(COM1) };
+    info.early_console = console;
+    info.boot_partition = boot_partition();
     info.boot_time_ns = clock_ns();
     info.boot_cpu_id = u64::from(core::arch::x86_64::__cpuid(1).ebx >> 24);
     if core::arch::x86_64::__cpuid(1).ecx & (1 << 30) != 0 {

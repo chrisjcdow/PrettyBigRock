@@ -87,8 +87,8 @@ two `u64`s: `base` and `len` (in bytes; `len = 0` means "none").
 |-------:|-----:|-------|---------|
 | 0 | 8 | `magic` | `"PBRBOOT\0"` as bytes, so `0x00544F4F42524250` as a `u64` |
 | 8 | 2 | `version_major` | 1 |
-| 10 | 2 | `version_minor` | 0 |
-| 12 | 4 | `size` | Size in bytes of the structure as written: 536 for version 1.0 |
+| 10 | 2 | `version_minor` | 1 (0 before M7) |
+| 12 | 4 | `size` | Size in bytes of the structure as written: 536 for version 1.0, 552 for 1.1 |
 | 16 | 4 | `loader` | 1 UEFI, 2 BIOS, 3 Raspberry Pi stage, 4 test harness, 0 unknown. For logs only |
 | 20 | 4 | `flags` | Bit 0: `FLAG_EL2_STUB` (Arm). Other bits zero |
 | 24 | 16 | `memory_map` | Array of `MemoryRegion`s |
@@ -108,6 +108,7 @@ two `u64`s: `base` and `len` (in bytes; `len = 0` means "none").
 | 488 | 8 | `boot_time_ns` | Wall-clock time in nanoseconds since 1970-01-01 UTC, or 0 |
 | 496 | 32 | `random_seed` | Random bytes, or all zero if none were available |
 | 528 | 8 | `boot_cpu_id` | x86 APIC ID, or Arm `MPIDR_EL1` affinity bits, of the core running the kernel |
+| 536 | 16 | `boot_partition` | (1.1) The unique GUID of the GPT partition the loader read the kernel from, as stored in its GPT entry, or all zero if not known (note 0027, section 4) |
 
 `MemoryRegion` (24 bytes):
 - `range` (`PhysRange`);
@@ -145,7 +146,8 @@ The memory map is sorted by address and has no overlaps. Usable regions are alig
 
 Several framebuffers are allowed, for several screens (DESIGN.md section 8).
 
-`EarlyConsole` (16 bytes):
+`EarlyConsole` (16 bytes; the x86-64 loaders choose it from `console=`, SPCR or COM1, note 0027,
+section 3):
 - `kind` (`u32`): 0 none, 1 16550 UART on x86 I/O ports, 2 16550 memory-mapped, 3 Arm PL011
   memory-mapped;
 - `register_width` (`u32`, bytes between registers for memory-mapped UARTs);
@@ -190,6 +192,9 @@ table.
 - A fuller EL2 stub interface on Arm, if the virtual-machine work needs one.
 
 ## Changes
+- 27 November 2026: version 1.1 (M7 stage 1b, note 0027, section 4): `boot_partition` at 536,
+  `size` 552. The kernel copies only `size` bytes, so a 1.0 loader's information still reads,
+  with the field zero.
 - 11 November 2026: the `HCR_EL2.E2H` rule. Newer firmware hands over at EL2 with E2H on,
   which made the loader's set-up of EL1 reprogram EL2 instead; found on Chris's machine with
   QEMU 10.2 and EDK2 2025.11 (M6, while stress-testing stage 1).

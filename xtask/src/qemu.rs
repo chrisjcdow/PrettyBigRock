@@ -730,7 +730,16 @@ pub fn test(cfg: &Config, image: &Path, work: &Path, limit: Duration) -> Result<
     let _ = child.wait();
     let text = result?.replace('\r', "");
     check_conversation(&text)?;
-    let missing: Vec<&str> = cfg.expect.iter().copied().filter(|e| !text.contains(e)).collect();
+    let mut missing: Vec<String> =
+        cfg.expect.iter().filter(|e| !text.contains(*e)).map(|e| e.to_string()).collect();
+    // The loader said which partition it was read from (note 0027, section 4): the BIOS boot
+    // partition (1) or the EFI system partition (2), whose GUIDs come from the version.
+    let n = if cfg.bios { 1 } else { 2 };
+    let guid = crate::image::version_guid(pbr_manifest::VERSION, n);
+    let started = format!("Started from:  partition {}", pbr_bootinfo::GuidText(guid));
+    if !text.contains(&started) {
+        missing.push(started);
+    }
     // What the guest wrote to its second serial port.
     if cfg.arch == "x86_64" {
         let out = fs::read_to_string(&com2).unwrap_or_default();

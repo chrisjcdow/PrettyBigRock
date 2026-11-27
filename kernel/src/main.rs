@@ -65,6 +65,8 @@ struct Boot {
     smbios: u64,
     boot_time_ns: u64,
     seeded: bool,
+    /// The GPT partition the loader read the kernel from, or all zero (note 0027, section 4).
+    boot_partition: [u8; 16],
     /// The start-up archive (note 0009), copied before the loader's memory is reused.
     startup: Option<Vec<u8>>,
 }
@@ -102,6 +104,12 @@ pub fn boot_description() -> (&'static [Framebuffer], u64) {
     (&b.framebuffers, b.acpi_rsdp)
 }
 
+/// The unique GUID of the partition the loader read the kernel from, or all zero if it didn't
+/// say (note 0027, section 4).
+pub fn boot_partition() -> [u8; 16] {
+    BOOT.get().expect("boot information copied").boot_partition
+}
+
 /// True once some core has panicked.
 pub fn panicking() -> bool {
     PANICKING.load(Ordering::Relaxed)
@@ -114,11 +122,12 @@ pub fn kernel_main(boot_info: u64, direct_map_base: u64) -> ! {
     arch::zero_percpu();
     mem::set_direct_map(direct_map_base);
     // SAFETY: note 0003 promises `boot_info` is the physical address of a BootInfo, reachable
-    // through the direct map, and kept until the kernel is done with it.
-    let info = unsafe { &*mem::phys_ptr::<BootInfo>(boot_info) };
-    if info.validate().is_err() {
+    // through the direct map, and kept until the kernel is done with it. `read` copies only
+    // as many bytes as the loader says it wrote, since an older loader writes fewer.
+    let Ok(info) = (unsafe { BootInfo::read(mem::phys_ptr::<u8>(boot_info)) }) else {
         arch::halt_forever(); // without valid boot information there's no console to complain on
-    }
+    };
+    let info = &info;
     // SAFETY: called once, here, with the loader's boot information.
     unsafe { console::init(info, direct_map_base) };
     // SAFETY: the memory map holds `len / 24` regions, in LoaderReclaimable memory (note 0003).
@@ -172,6 +181,7 @@ pub fn kernel_main(boot_info: u64, direct_map_base: u64) -> ! {
         smbios: info.smbios,
         boot_time_ns: info.boot_time_ns,
         seeded: info.random_seed.iter().any(|&b| b != 0),
+        boot_partition: info.boot_partition,
         startup,
     });
     KERNEL_PHYS.store(info.kernel_physical.base, Ordering::Relaxed);
@@ -301,6 +311,11 @@ fn report(boot: &Boot) {
         yes(boot.smbios != 0)
     );
     kprintln!("Command line:  \"{}\"", boot.command_line);
+    if boot.boot_partition == [0; 16] {
+        kprintln!("Started from:  an unknown partition");
+    } else {
+        kprintln!("Started from:  partition {}", pbr_bootinfo::GuidText(boot.boot_partition));
+    }
     kprintln!("Randomness:    {}", if boot.seeded { "seeded" } else { "none available" });
     if boot.boot_time_ns == 0 {
         kprintln!("Time:          unknown");

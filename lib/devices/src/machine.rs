@@ -91,6 +91,9 @@ pub struct Machine {
     pub framebuffers: u32,
     /// The framebuffers, when `decode` was given their record size.
     pub screens: alloc::vec::Vec<Screen>,
+    /// (1.1) The unique GUID of the GPT partition the loader read the kernel from, as the GPT
+    /// stores it; all zero if not known, or from a version 1.0 page (note 0027, section 4).
+    pub boot_partition: [u8; 16],
 }
 
 /// What was wrong with the page.
@@ -148,7 +151,10 @@ impl Machine {
                 });
             }
         }
+        let mut boot_partition = [0u8; 16];
+        boot_partition.copy_from_slice(&b[48..64]);
         Ok(Machine {
+            boot_partition,
             flags: u32_at(12),
             rsdp: u64_at(16),
             device_tree: u64_at(24),
@@ -186,6 +192,15 @@ mod tests {
         b[10] = 5;
         b.extend_from_slice(&[9; 100]);
         assert!(Machine::decode(&b, 40).is_ok());
+    }
+
+    #[test]
+    fn reads_the_boot_partition() {
+        let mut b = page(0);
+        assert_eq!(Machine::decode(&b, 40).unwrap().boot_partition, [0; 16]);
+        b[10] = 1;
+        b[48..64].copy_from_slice(&[0xAB; 16]);
+        assert_eq!(Machine::decode(&b, 40).unwrap().boot_partition, [0xAB; 16]);
     }
 
     #[test]

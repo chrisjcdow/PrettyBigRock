@@ -264,7 +264,8 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
 
     // The devices that aren't on PCI (note 0011, section 4).
     if let (Some(io), Some(lines)) = (&io_ports, &lines) {
-        if com2_present(io) {
+        let com2 = com2_present(io);
+        if com2 == Some(true) {
             legacy(
                 &drivers,
                 &manifests,
@@ -276,8 +277,11 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
                 &mut next_id,
                 selftest,
             );
-        } else {
+        } else if com2 == Some(false) {
             granite::println!("devmgr: com2: not present.");
+        } else {
+            // The kernel refuses to slice its own console's ports (note 0027, section 3).
+            granite::println!("devmgr: com2: the kernel's console.");
         }
         if machine.flags & pbr_devices::machine::flags::PS2 != 0 {
             legacy(
@@ -403,11 +407,11 @@ fn legacy(
 }
 
 /// Whether the second serial port exists: a byte written with the chip in loopback mode comes
-/// back from the receive register. (Nothing at the ports reads as 0xFF, so it can't.)
-fn com2_present(io: &IoPorts) -> bool {
-    let Ok(p) = io.slice(drivers::COM2.port, drivers::COM2.ports, rights::ALL) else {
-        return false;
-    };
+/// back from the receive register. (Nothing at the ports reads as 0xFF, so it can't.) `None`
+/// when its ports can't be had, which means the kernel uses it as its console: the root
+/// program's ports are all the others.
+fn com2_present(io: &IoPorts) -> Option<bool> {
+    let p = io.slice(drivers::COM2.port, drivers::COM2.ports, rights::ALL).ok()?;
     const MCR: u64 = 4;
     const LOOPBACK: u64 = 0x10;
     let ok = (|| -> granite::Result<bool> {
@@ -427,7 +431,7 @@ fn com2_present(io: &IoPorts) -> bool {
         p.write(MCR, 1, 0)?;
         Ok(ok)
     })();
-    ok.unwrap_or(false)
+    Some(ok.unwrap_or(false))
 }
 
 /// Reports a failed answer (the caller may have gone).

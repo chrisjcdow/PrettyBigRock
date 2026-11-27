@@ -43,7 +43,7 @@ fn machine_description() -> Vec<u8> {
     let mut b = Vec::new();
     b.extend_from_slice(b"PBRMACH\0");
     b.extend_from_slice(&1u16.to_le_bytes());
-    b.extend_from_slice(&0u16.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes()); // version 1.1: the boot partition, below
     b.extend_from_slice(&(u32::from(m.ps2) | u32::from(msi) << 1).to_le_bytes());
     b.extend_from_slice(&rsdp.to_le_bytes());
     b.extend_from_slice(&0u64.to_le_bytes()); // the device tree (not used before M10)
@@ -51,6 +51,7 @@ fn machine_description() -> Vec<u8> {
     let (first, count) = arch::irqchip::wired_range();
     b.extend_from_slice(&(first + count).to_le_bytes());
     b.extend_from_slice(&(framebuffers.len() as u32).to_le_bytes());
+    b.extend_from_slice(&crate::boot_partition());
     b.resize(64, 0);
     for f in framebuffers {
         // SAFETY: `Framebuffer` is a plain `repr(C)` record with no padding that matters; its
