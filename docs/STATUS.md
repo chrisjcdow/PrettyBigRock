@@ -4,7 +4,7 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 26 November 2026 (M7 stage 1a). Earlier, 23 November 2026 (session 26): **M6 is done: `2.0.0-alpha.1` is released** (a
+Updated 27 November 2026 (M7 stage 1b). Earlier, 23 November 2026 (session 26): **M6 is done: `2.0.0-alpha.1` is released** (a
 pre-release on GitHub, tag `v2.0.0-alpha.1`, `m6` merged into `main`). The last part of stage
 10b gave the release a ready-made system disk and a **Welcome** window (note 0024, section 6a)
 after Chris's first try on Harriet lost a file kept in memory. CI passed; Stress (5 runs × 6
@@ -56,7 +56,29 @@ on Impala, release builds):
 4. Optionally `prettybigrock-stick-selftest.img`: only the kernel's self-test line counts;
    the program self-test then stops because QEMU's test disk isn't there.
 
-**Next**: stage 1b (kernel 1.4).
+**Stage 1b, 27 November** (note 0027, kernel interface 1.4), built in pieces on `m7`:
+- `a8b2853` boot information 1.1 (the boot partition's GUID, from UEFI's device path or the
+  GPT the BIOS loader reads; "Started from:" in the report, checked by the boot tests) and
+  `console=` in the x86-64 loaders (then SPCR, then COM1);
+- `56cc604` section 5: the 8259 moved and masked, calibration from the middle of three, the
+  TSC checked on every core, the text console never reading the screen, the BIOS payload's
+  room checked against `E820`;
+- `5654276` shared interrupt lines and `interrupt_configure` (call 89), with the sharing test;
+- `c72f014` page tables: the L1TF rule tested, and a program's own top level;
+- `0417401` microcode: `lib/microcode`, `cargo xtask microcode` (Intel's `microcode-20261110`,
+  SHA-256 pinned), `PBR_MICROCODE` putting the files in `PBR/x86_64/ucode/` and after the BIOS
+  payload, the kernel loading the update on every core;
+- then KPTI and `verw` (the entry area, `kernel/src/arch/x86_64/entry.rs`), the mitigations'
+  report and `mitigations=`, the Roxy-like configuration on `SandyBridge`, the cost of a
+  system call measured, and the lock-order checker for every spin lock.
+
+Working notes: build Roxy's images with `PBR_MICROCODE=build/microcode/intel-ucode` after
+`cargo xtask microcode`; KVM's Intel processor on Impala reports microcode 0xf8 with no newer
+update, so the update itself is only seen working on Roxy. Stress for 1b is still to run.
+
+**Next**: finish stage 1b (CI, Stress, the report to Chris), then stage 2 (ACPI, note 0028);
+a Roxy visit when the serial cable and adapter arrive, to see the microcode update, KPTI's
+cost and COM2's log.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 

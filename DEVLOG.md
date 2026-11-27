@@ -1452,3 +1452,27 @@ properly. (At 1366x768 QEMU shows a slanted picture: its VGA refuses widths that
 multiple of 8 while OVMF offers the mode anyway; not ours.) The UEFI loader now chooses the
 largest 32-bit mode up to 1920x1080, as the BIOS loader does: OVMF now gives 1920x1080,
 ramfb stays at 1024x768.
+
+**Stage 1b, 27 November (kernel interface 1.4, note 0027):** built in small commits.
+Boot information 1.1 carries the GUID of the partition the loader read the kernel from (UEFI
+from its loaded image's device path; BIOS by reading the GPT in its second stage), and the
+machine description 1.1 passes it on; the x86-64 loaders choose the serial console from
+`console=`, SPCR, then COM1. Section 5's real-hardware fixes: the 8259 remapped and masked
+with LINT0, calibration from the middle of three measurements, a TSC handshake with each new
+core (falling back to the HPET without a jump), a text console that keeps its text in memory
+(the first version built its 128 KiB grid on the loader's small stack and overran it, which
+showed as the page allocator finding no room), and the BIOS payload's destination checked
+against `E820`. Shared interrupt lines with owed acknowledgements and `interrupt_configure`
+(QEMU's tables make ISA lines 5, 9, 10 and 11 level-triggered, so the edge-triggered test line
+is 7). The L1TF rule tested over random sequences. Microcode: `lib/microcode` reads every one
+of Ubuntu's files and gives Roxy 0x2f; `cargo xtask microcode` fetches and checks Intel's
+release; the FAT32 writer's 8.3 names made the folder `ucode`. KPTI: an entry area with the
+entry code mapped a second time, the IDT, and per-core slots; `GS` points at an entry block;
+two top-level tables 8 KiB apart; the trampoline's low page set aside first after OVMF ran out
+of them. It worked at the first boot under KVM on Impala, whose i7-7700K is affected (1.6 µs a
+system call with KPTI and `verw`). The Roxy-like configuration runs QEMU's `SandyBridge`
+(GenuineIntel, no SMEP), where `auto` turns everything on, under emulation too. The lock
+order for every spin lock came from recording which locks were held when each was taken, in
+self-test boots of each configuration, then reading the code: the reaper's wait took a plain
+lock inside a wait queue's interrupt-masking one (now an atomic count), and the one pair of
+address spaces held at once goes through `SpinLock::lock_pair`.

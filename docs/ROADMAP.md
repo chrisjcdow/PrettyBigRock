@@ -181,6 +181,11 @@ it, and without M8's network stack nothing could use or test it. Plan: `docs/m7-
 **Done when:** PrettyBigRock boots on Roxy from a USB stick, without touching Roxy's own disks,
 and runs the desktop with a USB keyboard and mouse.
 
+Progress (stages in note 0031, section 5): stage 1a (the stick image, Roxy's first start)
+done 26 November 2026; stage 1b (kernel interface 1.4: KPTI, MDS and L1TF, microcode, shared
+lines, the boot partition, `console=`, the lock-order checker) built 27 November, CI and
+Stress to come.
+
 ## M8: Networking
 - Network drivers: virtio-net (for QEMU) and Roxy's RTL8168.
 - Ethernet, IPv4, IPv6, UDP, TCP, DHCP and DNS, with the network as a capability.
