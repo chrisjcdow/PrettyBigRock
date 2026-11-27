@@ -21,6 +21,7 @@ pbr-bootinfo = { path = "../lib/bootinfo" }
 pbr-captree = { path = "../lib/captree" }
 pbr-elf = { path = "../lib/elf", features = ["alloc"] }
 pbr-font = { path = "../lib/font" }
+pbr-microcode = { path = "../lib/microcode" }
 pbr-platform = { path = "../lib/platform" }
 pbr-ranges = { path = "../lib/ranges" }
 

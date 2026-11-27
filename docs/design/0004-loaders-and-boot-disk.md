@@ -36,6 +36,7 @@ EFI/BOOT/BOOTAA64.EFI      the UEFI loader for ARM64
 PBR/x86_64/kernel.elf      the kernel for each architecture
 PBR/aarch64/kernel.elf
 PBR/cmdline.txt            the kernel command line (optional)
+PBR/x86_64/ucode/  Intel's microcode files and licence, when built with them (note 0027)
 ```
 
 The BIOS payload, starting at the first sector after the BIOS loader, is a 512-byte header
@@ -49,6 +50,14 @@ followed by the files it lists. The header is:
   - a 40-byte UTF-8 name, padded with zero bytes.
 
 The names are `kernel.elf` and `cmdline.txt`, the same files as on the EFI system partition.
+
+From M7, the header may also say where **microcode files** are (note 0027, section 1e): at
+offset 448, a `u32` first sector of a table (from the header) and a `u32` number of entries,
+both zero without them. The table and the files come after the payload's `total` sectors, so
+the second stage doesn't copy them with the rest. Each table entry is 12 bytes: the CPUID
+signature the file is for (masked with `0x0FFF0FFF`), its first sector (from the header) and
+its length in bytes. The second stage runs CPUID, reads the table, and copies only the matching
+file, to just after the payload; the third stage passes it on as the module `microcode`.
 
 The FAT32 filesystem and the GPT are written by the build tool's own code, not by outside
 tools.
@@ -104,7 +113,12 @@ Rust crate, so no separate assembler is needed.
    - gets the memory map (`E820`);
    - chooses and sets a graphics mode (VESA BIOS Extensions; prefers the largest 32-bit
      mode up to 1920×1080, with the same choice logic as 1.x);
-   - copies the payload above 1 MiB through a buffer in low memory;
+   - checks that 1 MiB and up, as far as the payload reaches, is one Usable range of the
+     memory map, and stops with a message if not (note 0027, section 5);
+   - copies the payload above 1 MiB through a buffer in low memory, then this processor's
+     microcode file, if the payload has one;
+   - reads the GPT's header and partition list, for the boot partition's GUID (note 0027,
+     section 4);
    - builds temporary page tables identity-mapping the first 4 GiB, and switches to 64-bit
      mode.
 3. **Third stage** (Rust): does what the UEFI loader does from step 2 onwards:
@@ -168,3 +182,9 @@ appear within the time limit. GitHub Actions runs this on every change.
   does: the largest by area with 32-bit pixels and a framebuffer, up to 1920x1080, instead of
   keeping the firmware's. Roxy's UEFI had left a small mode (QEMU's OVMF leaves 1280x800, now
   1920x1080). If no mode fits, or the firmware refuses, the screen stays as it was.
+- 27 November 2026, M7 stage 1b (note 0027): the BIOS second stage checks the payload's
+  destination against the memory map, reads the GPT for the boot partition's GUID, and reads
+  only this processor's microcode file through a table after the payload (offset 448 of the
+  header). The x86-64 loaders choose the serial console from `console=`, SPCR, then COM1. The
+  UEFI loader passes the boot partition's GUID from its device path, and the microcode file
+  `PBR/x86_64/ucode/<family>-<model>-<stepping>` if it is there.

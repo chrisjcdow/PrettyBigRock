@@ -18,6 +18,7 @@ bench = false
 [dependencies]
 pbr-boot-common = { path = "../common" }
 pbr-bootinfo = { path = "../../lib/bootinfo" }
+pbr-microcode = { path = "../../lib/microcode" }
 
 [lints]
 workspace = true

@@ -514,11 +514,31 @@ extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
     if let Some((base, len)) = cmdline {
         info.command_line = PhysRange { base, len };
     }
+    // The start-up modules: the archive, and on x86-64 this processor's microcode update, if
+    // the disk has Intel's file for it (note 0027, section 1e; a missing file isn't an error).
+    let mut modules = [Module::default(); 2];
+    let mut n = 0;
     if let Some((base, len)) = startup {
+        modules[n] = Module::new("startup", PhysRange { base, len });
+        n += 1;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let name = pbr_microcode::file_name(core::arch::x86_64::__cpuid(1).eax);
+        let mut path = *b"\\PBR\\x86_64\\ucode\\00-00-00";
+        let at = path.len() - name.len();
+        path[at..].copy_from_slice(&name);
+        let path = core::str::from_utf8(&path).unwrap_or("");
+        if let Some((base, len)) = fw.read_file(root, path) {
+            modules[n] = Module::new("microcode", PhysRange { base, len });
+            n += 1;
+        }
+    }
+    if n > 0 {
         let list = fw.alloc_pages(PAGE);
-        // SAFETY: a page just allocated, big enough for one 64-byte Module.
-        unsafe { (list as *mut Module).write(Module::new("startup", PhysRange { base, len })) };
-        info.modules = PhysRange { base: list, len: 64 };
+        // SAFETY: a page just allocated, big enough for two 64-byte Modules.
+        unsafe { core::ptr::copy_nonoverlapping(modules.as_ptr(), list as *mut Module, n) };
+        info.modules = PhysRange { base: list, len: 64 * n as u64 };
     }
     info.framebuffer_count = fw.framebuffers(&mut info.framebuffers);
     info.boot_partition = fw.boot_partition();

@@ -7,8 +7,9 @@
 #
 # Low memory it uses (see also boot/bios/src/main.rs, which reads these):
 #   0x0500 boot drive (byte)          0x0504 next payload sector    0x0508 sectors left
-#   0x050C payload destination        0x0518 end of the Usable range the payload is in
-#   0x0600 int 15h/87h descriptor table
+#   0x050C payload destination        0x0510 microcode address      0x0514 microcode length
+#   0x0518 end of the Usable range the payload is in               0x0520 payload's first sector
+#   0x0524 microcode table's sector   0x0528 its entries            0x0600 int 15h/87h table
 #   0x0700 disk address packet        0x1000 E820 count (word), entries of 24 bytes from 0x1008
 #   0x2000 VBE controller info        0x2200 VBE mode info          0x2400 VBE mode list copy
 #   0x2600 chosen VBE mode (word, 0 = none)   0x2604 best area so far (dword)
@@ -139,6 +140,7 @@ vbe_set:
     movzx edx, word ptr [0x7DB4]
     add eax, edx
     mov dword ptr [0x504], eax
+    mov dword ptr [0x520], eax
     mov cx, 1
     mov bx, 0x7000
     call read_sectors           # its header, to read how long it is
@@ -147,8 +149,12 @@ vbe_set:
     mov ax, 0x7000
     mov ds, ax
     mov ecx, dword ptr [12]
+    mov eax, dword ptr [448]    # the microcode table, if there is one (note 0027, section 1e)
+    mov edx, dword ptr [452]
     pop ds
     mov dword ptr [0x508], ecx
+    mov dword ptr [0x524], eax
+    mov dword ptr [0x528], edx
 
     # The whole destination, from 1 MiB, must be one Usable range of the memory map (note
     # 0027, section 5): a real PC may keep a hole there, such as one at 15 MiB.
@@ -184,11 +190,72 @@ memory_error:
 fits_below_4g:
     mov edx, 0xFFFFFFFF
 payload_fits:
-    mov dword ptr [0x518], edx
+    mov dword ptr [0x518], edx  # for the microcode, which goes after the payload
     mov dword ptr [0x50C], 0x100000
     call copy_run
     jc disk_error
 
+    # --- The microcode update for this processor, if the payload has any (note 0027, section
+    # 1e): a table of (signature, first sector, bytes) after the rest of the payload, from
+    # which only the file that matches is read, to just after the payload. Reading all of
+    # them through a real BIOS would add seconds to every start. Anything wrong here means
+    # no microcode, never a failed start.
+    mov dword ptr [0x510], 0
+    mov dword ptr [0x514], 0
+    mov ecx, dword ptr [0x528]
+    test ecx, ecx
+    jz ucode_done
+    cmp ecx, 2730               # a table of at most 64 sectors
+    ja ucode_done
+    mov eax, dword ptr [0x524]
+    add eax, dword ptr [0x520]
+    imul ecx, ecx, 12
+    add ecx, 511
+    shr ecx, 9
+    mov bx, 0x7000
+    call read_sectors
+    jc ucode_done
+    mov eax, 1
+    cpuid                       # EAX: this processor's signature
+    and eax, 0x0FFF0FFF         # without its type and reserved bits
+    mov ebx, eax
+    mov ecx, dword ptr [0x528]
+    xor si, si
+    push ds
+    mov ax, 0x7000
+    mov ds, ax
+ucode_find:
+    cmp dword ptr [si], ebx
+    je ucode_found
+    add si, 12
+    dec ecx
+    jnz ucode_find
+    pop ds
+    jmp ucode_done
+ucode_found:
+    mov eax, dword ptr [si + 4]
+    mov edx, dword ptr [si + 8]
+    pop ds
+    mov ecx, dword ptr [0x50C]  # straight after the payload, in the same Usable range
+    add ecx, edx
+    jc ucode_done
+    cmp ecx, dword ptr [0x518]
+    ja ucode_done
+    test edx, edx
+    jz ucode_done
+    mov ecx, dword ptr [0x50C]
+    mov dword ptr [0x510], ecx
+    mov dword ptr [0x514], edx
+    add eax, dword ptr [0x520]
+    mov dword ptr [0x504], eax
+    add edx, 511
+    shr edx, 9
+    mov dword ptr [0x508], edx
+    call copy_run
+    jnc ucode_done
+    mov dword ptr [0x510], 0    # a read failed part-way: no microcode
+    mov dword ptr [0x514], 0
+ucode_done:
 
 
     # --- The GPT (note 0027, section 4): its header, from sector 1, and the first 32 sectors

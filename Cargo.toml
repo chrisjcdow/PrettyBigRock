@@ -55,6 +55,7 @@ members = [
     "lib/interfaces",
     "lib/keymap",
     "lib/manifest",
+    "lib/microcode",
     "lib/partition",
     "lib/platform",
     "lib/ranges",

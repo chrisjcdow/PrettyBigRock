@@ -41,6 +41,10 @@ const IDENTITY_LIMIT: u64 = 2 << 30;
 /// Where the second stage leaves the disk's GPT header (sector 1) and its partition list.
 const GPT_HEADER: u64 = 0x6_8000;
 const GPT_ENTRIES: u64 = 0x6_8200;
+/// Where the second stage leaves this processor's microcode file, if the payload had one:
+/// its address and length (note 0027, section 1e).
+const MICROCODE_ADDRESS: u64 = 0x510;
+const MICROCODE_LENGTH: u64 = 0x514;
 /// Where the first stage keeps the loader's first sector: the BIOS boot partition's.
 const LOADER_SECTOR: u64 = 0x7DB0;
 
@@ -278,7 +282,11 @@ pub extern "C" fn bios_main() -> ! {
     let kbytes = unsafe { core::slice::from_raw_parts(kaddr as *const u8, klen as usize) };
     let kernel =
         Kernel::parse(kbytes, EM_X86_64).unwrap_or_else(|_| fail("the kernel file is damaged"));
-    let payload_end = PAYLOAD + u64::from(read::<u32>(PAYLOAD + 12)) * 512;
+    let microcode =
+        (u64::from(read::<u32>(MICROCODE_ADDRESS)), u64::from(read::<u32>(MICROCODE_LENGTH)));
+    // Memory is allocated after the payload and the microcode file the second stage put after it.
+    let payload_end =
+        (PAYLOAD + u64::from(read::<u32>(PAYLOAD + 12)) * 512).max(microcode.0 + microcode.1);
     let mut mem = Allocator { next: align_up(payload_end, PAGE) };
     let (lo, hi) = kernel.span();
     let kernel_phys = mem.alloc(hi - lo, e820);
@@ -294,12 +302,23 @@ pub extern "C" fn bios_main() -> ! {
     if let Some((base, len)) = cmdline {
         info.command_line = PhysRange { base, len };
     }
-    // The start-up archive (note 0009), if there is one: the kernel reports it if not.
+    // The start-up archive (note 0009), if there is one: the kernel reports it if not. Then
+    // this processor's microcode, if the payload had it (note 0027, section 1e).
+    let mut modules = [Module::default(); 2];
+    let mut n = 0;
     if let Some((base, len)) = payload_file("startup.arc") {
+        modules[n] = Module::new("startup", PhysRange { base, len });
+        n += 1;
+    }
+    if microcode.0 != 0 && microcode.1 != 0 {
+        modules[n] = Module::new("microcode", PhysRange { base: microcode.0, len: microcode.1 });
+        n += 1;
+    }
+    if n > 0 {
         let list = mem.alloc(PAGE, e820);
-        // SAFETY: a page just allocated, big enough for one 64-byte Module.
-        unsafe { (list as *mut Module).write(Module::new("startup", PhysRange { base, len })) };
-        info.modules = PhysRange { base: list, len: 64 };
+        // SAFETY: a page just allocated, big enough for two 64-byte Modules.
+        unsafe { core::ptr::copy_nonoverlapping(modules.as_ptr(), list as *mut Module, n) };
+        info.modules = PhysRange { base: list, len: 64 * n as u64 };
     }
     info.acpi_rsdp = rsdp;
     info.smbios = find_smbios();

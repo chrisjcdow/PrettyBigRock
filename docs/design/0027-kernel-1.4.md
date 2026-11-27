@@ -204,7 +204,7 @@ the repository, and the system works without them (with MDS open on processors l
   there goes stale unnoticed. The files come from outside at build time instead.
 - **On the boot disk.** The build tool, given `PBR_MICROCODE=<directory>` (Ubuntu's
   `intel-microcode` package puts Intel's files in `/lib/firmware/intel-ucode/`), copies every
-  file in it to `PBR/x86_64/microcode/` on the EFI system partition, and into the BIOS
+  file in it to `PBR/x86_64/ucode/` on the EFI system partition, and into the BIOS
   loader's payload, keeping Intel's names: family, model and stepping in hexadecimal, such as
   `06-2a-07` for Roxy's processor, with Intel's licence text beside them. Without it, there is
   no folder, and nothing else changes.
@@ -524,6 +524,25 @@ Note 0028 (section 8) adds call 89, `interrupt_configure`, and the interrupt rig
 - **Two disks with one boot partition GUID** (section 4): note 0030.
 
 ## Changes
+- 27 November 2026, M7 stage 1b, as built so far:
+  - **Sharing** (section 2): `interrupt_trigger` on a line masked while a sharer still owes an
+    acknowledgement reports 1 and triggers nothing, as a real device's interrupt wouldn't get
+    through either; on x86-64 the software trigger is a message straight to the core, which
+    would otherwise bypass the mask. `interrupt_unbind` by a process without a binding of
+    the line is `BAD_STATE` (it was `NO_RIGHT` when another process had bound it). QEMU's
+    firmware tables make ISA lines 5, 9, 10 and 11 level-triggered, so they can be shared
+    there; the self-test's edge-triggered line is 7.
+  - **Calibration** (section 5): the APIC timer was measured over 10 ms, not 20; both it and
+    the TSC now take the middle of three 10 ms measurements.
+  - **Microcode** (section 1e): the release is pinned at Intel's `microcode-20261110`
+    (`xtask/src/microcode.rs`). The folder is `PBR/x86_64/ucode/`, not `microcode/`, since
+    the build tool's FAT32 writer makes 8.3 names only; Intel's file names already fit. The
+    licence goes beside the files as `license.txt`. The BIOS
+    payload's table is at offset 448 of its header (note 0004). The kernel loads the update as
+    soon as it has copied the modules, before its own page tables, and reports it with the
+    processor.
+  - **The text console** (section 5) keeps its text in a 256-by-128 grid in the console's
+    `static` (128 KiB), and redraws only the cells that change when it scrolls.
 - 25 November 2026: QEMU's q35 needs a line's polarity set from AML (its links say active high),
   so note 0028, section 8, adds call 89, `interrupt_configure`, and the right `CONFIGURE` to
   interface 1.4; section 8's table and the open question change with it.

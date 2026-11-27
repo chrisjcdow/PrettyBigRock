@@ -154,6 +154,7 @@ pub fn kernel_main(boot_info: u64, direct_map_base: u64) -> ! {
     };
     rng::seed(&info.random_seed);
     let mut startup = None;
+    let mut microcode = None;
     if !info.modules.is_none() {
         // SAFETY: the loader's array of modules, in LoaderReclaimable memory (note 0003).
         let mods = unsafe {
@@ -162,14 +163,27 @@ pub fn kernel_main(boot_info: u64, direct_map_base: u64) -> ! {
                 (info.modules.len / 64) as usize,
             )
         };
-        if let Some(m) = mods.iter().find(|m| m.name() == Some("startup")) {
-            // SAFETY: the module's contents, in memory the loader set aside (note 0003).
-            let bytes = unsafe {
-                core::slice::from_raw_parts(mem::phys_ptr::<u8>(m.data.base), m.data.len as usize)
-            };
-            startup = Some(bytes.to_vec());
-        }
+        let copy = |name: &str| {
+            mods.iter().find(|m| m.name() == Some(name)).map(|m| {
+                // SAFETY: the module's contents, in memory the loader set aside (note 0003).
+                let b = unsafe {
+                    core::slice::from_raw_parts(
+                        mem::phys_ptr::<u8>(m.data.base),
+                        m.data.len as usize,
+                    )
+                };
+                b.to_vec()
+            })
+        };
+        startup = copy("startup");
+        microcode = copy("microcode");
     }
+    // The processor's microcode update, as soon as the heap can hold it and before anything
+    // depends on how the processor behaves (note 0027, section 1e). The file isn't kept.
+    #[cfg(target_arch = "x86_64")]
+    arch::microcode::load(microcode.as_deref());
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = microcode;
     BOOT.set(Boot {
         map: map.to_vec(),
         command_line,
@@ -285,6 +299,8 @@ fn report(boot: &Boot) {
     let mut cpu = Text::<160>::new();
     let _ = arch::describe(&mut cpu);
     kprintln!("Processor:     {}", cpu.as_str());
+    #[cfg(target_arch = "x86_64")]
+    arch::microcode::report();
     kprintln!(
         "Cores:         {} found, {} running",
         percpu::count(),

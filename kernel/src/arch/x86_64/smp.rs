@@ -152,6 +152,7 @@ pub fn start_other_cores(m: &hw::Machine) -> usize {
     }
     vm::identity_unmap(page, mem::PAGE);
     pmm::free(page, 1);
+    super::microcode::every_core_loaded();
     let _ = m;
     started
 }
@@ -172,6 +173,7 @@ fn tsc_disagrees(id: u32) {
 extern "C" fn ap_main(cpu: u64) -> ! {
     // SAFETY: the boot core passed this core's PerCpu, which lives for ever.
     let cpu: &'static PerCpu = unsafe { &*(cpu as *const PerCpu) };
+    super::microcode::load_this_core();
     percpu::install(cpu);
     cpu::init_this_core(cpu);
     apic::enable_this_core();

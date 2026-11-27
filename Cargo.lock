@@ -51,6 +51,7 @@ version = "0.0.0"
 dependencies = [
  "pbr-boot-common",
  "pbr-bootinfo",
+ "pbr-microcode",
 ]
 
 [[package]]
@@ -357,6 +358,7 @@ dependencies = [
  "pbr-captree",
  "pbr-elf",
  "pbr-font",
+ "pbr-microcode",
  "pbr-platform",
  "pbr-ranges",
 ]
@@ -375,6 +377,10 @@ version = "0.0.0"
 dependencies = [
  "pbr-filetree",
 ]
+
+[[package]]
+name = "pbr-microcode"
+version = "0.0.0"
 
 [[package]]
 name = "pbr-notepad"
@@ -748,6 +754,7 @@ dependencies = [
  "pbr-fs",
  "pbr-interface-compiler",
  "pbr-manifest",
+ "pbr-microcode",
  "pbr-partition",
  "pbr-rockfs",
  "pbr-testpng",

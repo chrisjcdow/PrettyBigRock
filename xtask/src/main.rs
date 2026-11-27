@@ -12,6 +12,7 @@
 //! cargo xtask test                            unit tests that run on this computer
 //! cargo xtask ci                              all of the above, as GitHub Actions runs it
 //! cargo xtask classic                         build and test PrettyBigRock 1.x (classic/)
+//! cargo xtask microcode                       fetch Intel's microcode updates (note 0027)
 //! cargo xtask doctor                          explain how the Rust toolchain was found
 //! ```
 //!
@@ -28,6 +29,7 @@ mod datadisk;
 mod desktop;
 mod elf;
 mod image;
+mod microcode;
 mod pictures;
 mod qemu;
 mod symbols;
@@ -228,6 +230,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-interfaces",
     "pbr-keymap",
     "pbr-manifest",
+    "pbr-microcode",
     "pbr-supervise",
     "pbr-terminal",
     "pbr-test-gallery",
@@ -291,6 +294,7 @@ fn run(args: &[String]) -> Result {
     let opts = Options::parse(rest)?;
     match command {
         "build" => build_all(&root, &Toolchain::find(&root)?, opts.release).map(|_| ()),
+        "microcode" => microcode::fetch(&root),
         "run" => {
             let imgs = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
             let img = if opts.selftest { imgs.selftest } else { imgs.normal };
@@ -345,6 +349,7 @@ const HELP: &str = "
 PrettyBigRock build tool
 
   cargo xtask build [--release]          build everything, and the boot disk image
+                                         (PBR_MICROCODE=<folder> adds Intel's microcode)
   cargo xtask run [--arch NAME] [--bios] [--el2] [--selftest] [--two-screens] [--cores N]
                   [--release]
                                          start PrettyBigRock in QEMU, in a window
@@ -357,6 +362,8 @@ PrettyBigRock build tool
   cargo xtask interfaces                 print the code generated from interfaces/
   cargo xtask classic                    build and test PrettyBigRock 1.x
   cargo xtask classic-disk               make tests/data/classic-1.3.img.gz with 1.3 itself
+  cargo xtask microcode                  fetch Intel's microcode updates, checked, into
+                                         build/microcode/intel-ucode
   cargo xtask doctor                     show how the Rust toolchain was found
 
 Architectures: x86_64 (the default for `run`), aarch64
@@ -721,6 +728,10 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
     let extra = env::var("PBR_CMDLINE").unwrap_or_default();
     let version = pbr_manifest::VERSION;
     let system_volume = datadisk::volume(image::SYSTEM_SECTORS * 512)?;
+    let ucode = microcode::from_env(root)?;
+    if let Some(m) = &ucode {
+        println!("microcode: {} of Intel's files on every image", m.files.len());
+    }
     fs::create_dir_all(root.join(format!("build/{profile}"))).map_err(|e| e.to_string())?;
     let mut paths = Vec::new();
     for (name, base, stick) in [
@@ -738,7 +749,8 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         // The archive follows the test words only: extra words such as `console=` don't make
         // an image a test image.
         let archive = |i: usize| archives[i].for_cmdline(base.as_bytes());
-        let (mbr, bios) = bios_loader(root, tc, release, &kernels[0], archive(0), cmdline)?;
+        let (mbr, bios) =
+            bios_loader(root, tc, release, &kernels[0], archive(0), cmdline, ucode.as_ref())?;
         let mut files: Vec<(String, &[u8])> = Vec::new();
         for (i, arch) in ARCHES.iter().enumerate() {
             files.push((format!("EFI/BOOT/{}", arch.uefi_file), &loaders[i]));
@@ -746,6 +758,9 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
             files.push((format!("PBR/{}/startup.arc", arch.name), archive(i)));
         }
         files.push(("PBR/cmdline.txt".to_string(), cmdline));
+        if let Some(m) = &ucode {
+            files.extend(microcode::esp_files(m));
+        }
         let refs: Vec<(&str, &[u8])> = files.iter().map(|(p, d)| (p.as_str(), *d)).collect();
         let img = image::build(&image::Contents {
             mbr_code: &mbr,
@@ -800,6 +815,7 @@ fn bios_loader(
     kernel: &[u8],
     archive: &[u8],
     cmdline: &[u8],
+    ucode: Option<&microcode::Microcode>,
 ) -> Result<(Vec<u8>, Vec<u8>)> {
     // The BIOS loader lives at low addresses, so it needs the "small" code model rather than
     // the kernel target's default. It builds in its own target folder so the different flags
@@ -837,11 +853,12 @@ fn bios_loader(
 
     let mut part = rest.to_vec();
     part.resize(sectors * 512, 0);
-    part.extend_from_slice(&payload(&[
-        ("kernel.elf", kernel),
-        ("cmdline.txt", cmdline),
-        ("startup.arc", archive),
-    ]));
+    let mut p =
+        payload(&[("kernel.elf", kernel), ("cmdline.txt", cmdline), ("startup.arc", archive)]);
+    if let Some(m) = ucode {
+        microcode::append_to_payload(&mut p, m);
+    }
+    part.extend_from_slice(&p);
     Ok((mbr, part))
 }
 

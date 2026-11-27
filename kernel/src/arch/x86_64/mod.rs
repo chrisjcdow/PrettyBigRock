@@ -9,6 +9,7 @@ mod context;
 mod cpu;
 mod interrupts;
 pub mod irqchip;
+pub mod microcode;
 mod power;
 mod serial;
 mod smp;

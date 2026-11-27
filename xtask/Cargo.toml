@@ -22,6 +22,7 @@ pbr-desktop = { path = "../lib/desktop" }
 pbr-draw = { path = "../lib/draw" }
 pbr-fs = { path = "../lib/fs" }
 pbr-manifest = { path = "../lib/manifest" }
+pbr-microcode = { path = "../lib/microcode" }
 pbr-rockfs = { path = "../lib/rockfs" }
 
 [dev-dependencies]
