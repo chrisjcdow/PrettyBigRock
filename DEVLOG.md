@@ -1476,3 +1476,11 @@ order for every spin lock came from recording which locks were held when each wa
 self-test boots of each configuration, then reading the code: the reaper's wait took a plain
 lock inside a wait queue's interrupt-masking one (now an atomic count), and the one pair of
 address spaces held at once goes through `SpinLock::lock_pair`.
+
+The first Stress run for 1b (46011402118) failed once, on the BIOS configuration's dana boot:
+under emulation with KPTI the desktop took more than 20 seconds to open the start menu, so the
+runner's retry pressed the key a second time and closed the menu the slow first press had
+opened, then clicked the bare desktop. The kernel was fine (the clock went on ticking). The
+runner now goes on only when the menu is open at that moment and still open a second later
+(`8fd296d`). Results: CI passed on `8fd296d`; Stress 46038702997 passed, 30 rounds, with no
+start-menu retries needed in any of them.

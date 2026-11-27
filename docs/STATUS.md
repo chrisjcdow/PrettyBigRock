@@ -74,9 +74,10 @@ on Impala, release builds):
 
 Working notes: build Roxy's images with `PBR_MICROCODE=build/microcode/intel-ucode` after
 `cargo xtask microcode`; KVM's Intel processor on Impala reports microcode 0xf8 with no newer
-update, so the update itself is only seen working on Roxy. Stress for 1b is still to run.
+update, so the update itself is only seen working on Roxy. CI passed on `8fd296d` and Stress
+46038702997 passed (30 rounds, every configuration).
 
-**Next**: finish stage 1b (CI, Stress, the report to Chris), then stage 2 (ACPI, note 0028);
+**Next**: stage 2 (ACPI, note 0028);
 a Roxy visit when the serial cable and adapter arrive, to see the microcode update, KPTI's
 cost and COM2's log.
 
