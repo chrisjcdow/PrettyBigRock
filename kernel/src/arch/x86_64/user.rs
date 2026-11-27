@@ -7,7 +7,8 @@
 //!
 //! On entry from a program the kernel swaps `GS` (`swapgs`) so the per-core data is reachable;
 //! the program's own `GS` base waits in `IA32_KERNEL_GS_BASE` until it returns. Programs always
-//! return through `iretq`, never `sysret`, which avoids `sysret`'s known pitfalls.
+//! return through `iretq`, never `sysret`, which avoids `sysret`'s known pitfalls. The entry and
+//! exit code itself is in the entry area (`entry.rs`, note 0027, section 1b).
 
 use super::cpu::{rdmsr, wrmsr};
 use super::interrupts::{self, Frame};
@@ -25,8 +26,8 @@ const IA32_FS_BASE: u32 = 0xC000_0100;
 const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
 
 /// The user-mode code and data selectors (GDT entries 4 and 3, privilege level 3).
-const USER_CS: u64 = 0x20 | 3;
-const USER_SS: u64 = 0x18 | 3;
+pub(super) const USER_CS: u64 = 0x20 | 3;
+pub(super) const USER_SS: u64 = 0x18 | 3;
 
 /// x86-64 shares one page-table tree between the kernel and a program.
 pub const SHARES_TOP_LEVEL: bool = true;
@@ -82,7 +83,7 @@ pub fn init_this_core() {
         wrmsr(IA32_EFER, rdmsr(IA32_EFER) | 1); // SCE: allow `syscall`
         // Kernel CS 0x08 (SS 0x10); for `sysret` (unused) CS 0x20 and SS 0x18.
         wrmsr(IA32_STAR, (0x10u64 << 48) | (0x08u64 << 32));
-        wrmsr(IA32_LSTAR, pbr_syscall_entry as *const () as u64);
+        wrmsr(IA32_LSTAR, super::entry::syscall_entry());
         // Mask TF, IF, DF, NT and AC on entry.
         wrmsr(IA32_FMASK, (1 << 8) | (1 << 9) | (1 << 10) | (1 << 14) | (1 << 18));
     }
@@ -104,7 +105,7 @@ pub fn describe_protections() -> (&'static str, bool, bool) {
 pub fn set_kernel_stack(top: u64) {
     let cpu = percpu::this();
     cpu.kernel_sp.store(top, Ordering::Relaxed);
-    super::cpu::set_tss_rsp0(cpu, top);
+    super::entry::set_kernel_stack(cpu.arch.slot(), top);
 }
 
 // ------------------------------------------------------------------------------------------
@@ -198,59 +199,8 @@ pub fn set_thread_pointer(r: &UserRegs, value: u64) {
 // ------------------------------------------------------------------------------------------
 // Entering the kernel from a program, and leaving it
 
-core::arch::global_asm!(
-    ".section .text.pbr_syscall, \"ax\"",
-    ".global pbr_syscall_entry",
-    "pbr_syscall_entry:",
-    "swapgs",
-    "mov gs:[{user_sp}], rsp",
-    "mov rsp, gs:[{kernel_sp}]",
-    // The same frame an interrupt from user mode makes.
-    "push {ss}",
-    "push qword ptr gs:[{user_sp}]",
-    "push r11",
-    "push {cs}",
-    "push rcx",
-    "push 0",
-    "push 0x100",
-    "push rax",
-    "push rbx",
-    "push rcx",
-    "push rdx",
-    "push rsi",
-    "push rdi",
-    "push rbp",
-    "push r8",
-    "push r9",
-    "push r10",
-    "push r11",
-    "push r12",
-    "push r13",
-    "push r14",
-    "push r15",
-    "mov rdi, rsp",
-    "cld",
-    "call {dispatch}",
-    "jmp pbr_isr_exit",
-    // pbr_enter_user(frame = rdi): starts a program with the registers in a frame built on
-    // this stack.
-    ".global pbr_enter_user",
-    "pbr_enter_user:",
-    "mov rsp, rdi",
-    "jmp pbr_isr_exit",
-    user_sp = const percpu::OFFSET_USER_SP,
-    kernel_sp = const percpu::OFFSET_KERNEL_SP,
-    ss = const USER_SS,
-    cs = const USER_CS,
-    dispatch = sym syscall_dispatch,
-);
-
-unsafe extern "C" {
-    fn pbr_syscall_entry();
-    fn pbr_enter_user(frame: *const Frame) -> !;
-}
-
-extern "C" fn syscall_dispatch(f: &mut Frame) {
+/// Where the system call entry (`entry.rs`) goes, with the program's registers in `f`.
+pub(super) extern "C" fn syscall_dispatch(f: &mut Frame) {
     super::irq_enable();
     let (status, r1, r2) = crate::syscall::handle(f.rax, [f.rdi, f.rsi, f.rdx, f.r10, f.r8, f.r9]);
     f.rax = status;
@@ -275,10 +225,18 @@ pub fn enter_user(pc: u64, sp: u64, arg: u64, sys: u64, msg: u64) -> ! {
     // The frame goes at the top of the kernel stack, as an entry from the program would put it.
     let frame = (top - core::mem::size_of::<Frame>() as u64) as *mut Frame;
     // SAFETY: the top of this thread's own kernel stack, which nothing else uses: this
-    // function's own frame is further down.
+    // function's own frame is further down. The way out restores the frame's registers and
+    // returns to the program; it runs in the entry area, since the kernel isn't mapped once
+    // the program's page tables are loaded.
     unsafe {
         frame.write(Frame::user(pc, sp, USER_CS, USER_SS, 0x202, [arg, sys, msg]));
-        pbr_enter_user(frame)
+        core::arch::asm!(
+            "mov rsp, {frame}",
+            "jmp {exit}",
+            frame = in(reg) frame,
+            exit = in(reg) super::entry::isr_exit(),
+            options(noreturn)
+        )
     }
 }
 
@@ -292,7 +250,8 @@ pub fn activate_space(root: u64) {
     unsafe { core::arch::asm!("mov cr3, {}", in(reg) r, options(nostack)) };
 }
 
-static SHOOTDOWN: crate::sync::SpinLock<()> = crate::sync::SpinLock::new(());
+static SHOOTDOWN: crate::sync::SpinLock<()> =
+    crate::sync::SpinLock::new(());
 static PENDING: AtomicU32 = AtomicU32::new(0);
 
 /// Called by the shootdown interrupt: forgets every program translation on this core.

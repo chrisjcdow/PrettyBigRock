@@ -49,6 +49,7 @@ Both architectures use the same layout in the upper half (48-bit addresses):
 | `0xFFFF_8000_0000_0000` | `0xFFFF_C000_0000_0000` | The direct map of physical memory (64 TiB) |
 | `0xFFFF_C000_0000_0000` | `0xFFFF_C800_0000_0000` | Kernel stacks, each with an unmapped guard page below it |
 | `0xFFFF_C800_0000_0000` | `0xFFFF_D000_0000_0000` | Device registers (mapped uncached on request) |
+| `0xFFFF_D000_0000_0000` | `0xFFFF_D000_4000_0000` | x86-64 only: the entry area (note 0027, section 1b): the entry code, the IDT, and each core's GDT, TSS, entry and IST stacks and entry block; the only part of the kernel a program's own page tables map |
 | `0xFFFF_FFFF_8000_0000` | top | The kernel image |
 
 The lower half belongs to programs (from M3). The kernel's lower-half page tables are empty,
@@ -289,3 +290,5 @@ run it with 4 cores on every configuration. It checks:
     passes.
   - Debug builds check that a thread is never switched to while it's on another core, never
     freed while on a core, and always arrives on its own stack.
+- 27 November 2026, M7 stage 1b (note 0027): the x86-64 entry area joins the address space
+  (section 2).

@@ -3,10 +3,9 @@
 
 //! Each core's GDT and TSS, model-specific registers, and loading the IDT.
 
-use super::interrupts;
-use crate::mem::vm;
+use super::{entry, interrupts};
 use crate::percpu::PerCpu;
-use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Reads a model-specific register.
 ///
@@ -44,27 +43,26 @@ struct Tss {
     iomap: u16,
 }
 
-/// What x86-64 keeps per core: its GDT and TSS.
+/// What x86-64 keeps per core: where its slot in the entry area is, which holds its GDT, TSS,
+/// stacks for entering the kernel, and entry block (`entry.rs`).
 pub struct CpuArch {
-    gdt: UnsafeCell<[u64; 7]>,
-    tss: UnsafeCell<Tss>,
+    slot: AtomicU64,
 }
 
 impl CpuArch {
-    /// Empty, filled in by [`init_this_core`].
+    /// Empty: the slot is made when the core is described (`set_core_info`).
     pub fn new() -> Self {
-        Self {
-            gdt: UnsafeCell::new([0; 7]),
-            tss: UnsafeCell::new(Tss {
-                reserved0: 0,
-                rsp: [0; 3],
-                reserved1: 0,
-                ist: [0; 7],
-                reserved2: 0,
-                reserved3: 0,
-                iomap: 104,
-            }),
-        }
+        Self { slot: AtomicU64::new(0) }
+    }
+
+    /// The core's slot in the entry area.
+    pub fn slot(&self) -> u64 {
+        self.slot.load(Ordering::Relaxed)
+    }
+
+    /// Records the core's slot.
+    pub fn set_slot(&self, slot: u64) {
+        self.slot.store(slot, Ordering::Relaxed);
     }
 }
 
@@ -92,16 +90,28 @@ fn init_pat() {
     }
 }
 
-/// Loads this core's GDT (with its TSS) and the shared IDT.
+/// Loads this core's GDT (with its TSS) and the shared IDT, all in the entry area.
 pub fn init_this_core(cpu: &PerCpu) {
     init_pat();
-    // Separate stacks for double faults, NMIs and machine checks (IST 1 to 3).
-    // SAFETY: only this core touches its own GDT and TSS, before loading them.
-    let (gdt, tss) = unsafe { (&mut *cpu.arch.gdt.get(), &mut *cpu.arch.tss.get()) };
-    for i in 0..3 {
-        tss.ist[i] = vm::alloc_stack(4).expect("out of memory for interrupt stacks");
-    }
-    let base = tss as *const Tss as u64;
+    let slot = cpu.arch.slot();
+    assert!(entry::is_slot(slot), "a core without a slot in the entry area");
+    let (gdt_at, tss_at) = entry::gdt_and_tss(slot);
+    // SAFETY: the slot's first page is mapped writable, holds room for both at these offsets,
+    // and only this core touches its own, before loading them.
+    let (gdt, tss) = unsafe { (&mut *(gdt_at as *mut [u64; 7]), &mut *(tss_at as *mut Tss)) };
+    // Entries from a program arrive on the entry stack; double faults, NMIs and machine checks
+    // on their own stacks (IST 1 to 3).
+    let (entry_top, ist) = entry::stack_tops(slot);
+    *tss = Tss {
+        reserved0: 0,
+        rsp: [entry_top, 0, 0],
+        reserved1: 0,
+        ist: [ist[0], ist[1], ist[2], 0, 0, 0, 0],
+        reserved2: 0,
+        reserved3: 0,
+        iomap: 104,
+    };
+    let base = tss_at;
     let limit = (core::mem::size_of::<Tss>() - 1) as u64;
     gdt[0] = 0;
     gdt[1] = 0x00AF_9A00_0000_FFFF; // 0x08: kernel code
@@ -138,14 +148,4 @@ pub fn init_this_core(cpu: &PerCpu) {
         );
     }
     super::user::init_this_core();
-}
-
-/// Sets where the processor switches stacks to when an interrupt arrives from a program.
-pub fn set_tss_rsp0(cpu: &PerCpu, top: u64) {
-    // SAFETY: only this core touches its own TSS; a 64-bit store to a packed field is done
-    // unaligned-safely.
-    unsafe {
-        let tss = cpu.arch.tss.get();
-        core::ptr::addr_of_mut!((*tss).rsp).cast::<u64>().write_unaligned(top);
-    }
 }

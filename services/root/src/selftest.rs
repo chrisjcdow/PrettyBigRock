@@ -104,6 +104,7 @@ fn all(
         crate::kernel13::run(f, &echo_ep, start.peek(granite::process::role::POWER)),
     )?;
     done.push("receiver watches and the machine capability");
+    call_cost();
     let files = crate::filestest::run(archive);
     if let Ok(summary) = &files {
         granite::println!("Files self-test passed: {summary}");
@@ -207,6 +208,24 @@ fn all(
 
 fn step(name: &str, r: Outcome) -> Outcome {
     r.map_err(|e| format!("{name}: {e}"))
+}
+
+/// What a system call costs (note 0027, section 9): 100,000 of the cheapest, `handle_info` on a
+/// handle that doesn't exist, timed. With KPTI each one switches page tables twice, so this is
+/// how we decide whether PCID is worth having. It's reported, not checked.
+fn call_cost() {
+    const CALLS: u64 = 100_000;
+    let bad = granite::Handle::from_raw(0x00FF_FFFF);
+    let start = granite::time::now();
+    for _ in 0..CALLS {
+        let _ = bad.info();
+    }
+    let ns = granite::time::now().saturating_sub(start);
+    granite::println!(
+        "System calls: {CALLS} in {} ms, {} ns each (see the kernel's Meltdown and MDS lines)",
+        ns / 1_000_000,
+        ns / CALLS
+    );
 }
 
 pub(crate) fn spawn(

@@ -41,11 +41,43 @@ pub fn run() -> Result<String, String> {
     breakpoint()?;
     let slept = sleep()?;
     let (switches, cores_used) = threads()?;
+    #[cfg(target_arch = "x86_64")]
+    let kpti = separate_tables()?;
+    #[cfg(not(target_arch = "x86_64"))]
+    let kpti = "";
     sched::WATCHDOG.store(0, Ordering::Relaxed);
     Ok(format!(
-        "heap, pages, exceptions, a 50 ms sleep ({} ms), and {THREADS} threads on {cores_used} cores ({switches} context switches)",
+        "heap, pages, exceptions, a 50 ms sleep ({} ms), and {THREADS} threads on {cores_used} cores ({switches} context switches){kpti}",
         slept / 1_000_000
     ))
+}
+
+/// With KPTI on (note 0027, section 9): a program's own top-level table maps nothing of the
+/// kernel's half but the entry area, and without SMEP the kernel's copy of the program's half
+/// is no-execute. Checked on a new address space with one page mapped.
+#[cfg(target_arch = "x86_64")]
+fn separate_tables() -> Result<&'static str, String> {
+    use crate::mem::object::MemoryObject;
+    use crate::mem::space::{Backing, Mapping, Space, perm};
+    let Some(kernel_nx) = arch::separate_user_tables() else { return Ok("") };
+    let budget = crate::obj::budget::Budget::root(1 << 20);
+    let charge = budget.charge(0).map_err(|e| format!("KPTI: a budget: {e:?}"))?;
+    let mut space = Space::new(charge).map_err(|e| format!("KPTI: an address space: {e:?}"))?;
+    let mem = MemoryObject::new(mem::PAGE, &budget).map_err(|e| format!("KPTI: memory: {e:?}"))?;
+    let all = perm::READ | perm::WRITE | perm::EXECUTE;
+    let m = Mapping {
+        start: 0x4000_0000,
+        len: mem::PAGE,
+        mem: Backing::Memory(mem),
+        offset: 0,
+        perms: all,
+        max: all,
+        node: None,
+    };
+    space.map(m).map_err(|e| format!("KPTI: mapping a page: {e:?}"))?;
+    let user = space.user_root().ok_or("KPTI: the space has no table of the program's own")?;
+    arch::check_user_copy(space.root(), user, !kernel_nx).map_err(|e| format!("KPTI: {e}"))?;
+    Ok(", and a program's page tables without the kernel")
 }
 
 /// The heap gives back everything it lent. Other kernel threads use the heap at the same time

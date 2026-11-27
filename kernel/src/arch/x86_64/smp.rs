@@ -8,7 +8,7 @@ use super::{apic, clock, cpu};
 use crate::mem::{self, pmm, vm};
 use crate::percpu::{self, PerCpu};
 use crate::{hw, sched, time};
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 core::arch::global_asm!(
     ".section .text.pbr_trampoline, \"ax\"",
@@ -98,17 +98,34 @@ unsafe extern "C" {
 
 const STACK_PAGES: u64 = 32;
 
+/// The page below 1 MiB the other cores start in, set aside before anything else takes the
+/// few such pages a UEFI firmware leaves (the entry area's slots, for one).
+static TRAMPOLINE: AtomicU64 = AtomicU64::new(0);
+
+/// Sets the trampoline's page aside. Called on the boot core, early.
+pub fn reserve_trampoline() {
+    if let Some(page) = pmm::alloc(1, 1, 0x10_0000) {
+        TRAMPOLINE.store(page, Ordering::Relaxed);
+    }
+}
+
 /// Starts every core in `m` other than this one. Returns how many came up.
 pub fn start_other_cores(m: &hw::Machine) -> usize {
     let cpus = percpu::all();
     if cpus.len() < 2 {
+        let page = TRAMPOLINE.swap(0, Ordering::Relaxed);
+        if page != 0 {
+            pmm::free(page, 1);
+        }
         return 0;
     }
     let start = &raw const pbr_ap_trampoline as u64;
     let len = &raw const pbr_ap_trampoline_end as u64 - start;
     let off = |s: *const u8| (s as u64 - start) as usize;
-    let page =
-        pmm::alloc(1, 1, 0x10_0000).expect("no memory below 1 MiB for the start-up trampoline");
+    let page = TRAMPOLINE.swap(0, Ordering::Relaxed);
+    if page == 0 {
+        panic!("no memory below 1 MiB for the start-up trampoline");
+    }
     let code = mem::phys_ptr::<u8>(page);
     // SAFETY: the trampoline's bytes, copied into our own fresh page below 1 MiB.
     unsafe { core::ptr::copy_nonoverlapping(start as *const u8, code, len as usize) };

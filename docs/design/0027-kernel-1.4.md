@@ -543,6 +543,22 @@ Note 0028 (section 8) adds call 89, `interrupt_configure`, and the interrupt rig
     processor.
   - **The text console** (section 5) keeps its text in a 256-by-128 grid in the console's
     `static` (128 KiB), and redraws only the cells that change when it scrolls.
+  - **KPTI** (section 1b), `kernel/src/arch/x86_64/entry.rs`: the area holds the entry code at
+    its start, the IDT at +1 MiB and 32-page slots from +2 MiB (the entry block, GDT and TSS
+    in the first page, a two-page entry stack and three four-page IST stacks, each with a
+    guard page). The entry block's first three words are where `PerCpu`'s were, so code
+    reading them through `GS` didn't change. The system call entry uses the stack pointer
+    itself as the scratch register for switching tables. The trampoline that starts the other
+    cores sets its page below 1 MiB aside first, since the slots, made for every core up
+    front, took the few such pages OVMF leaves. A program's own table is made only when KPTI
+    is on. Measured, 100,000 `handle_info` calls: 1.6 µs each under KVM on Impala with KPTI and
+    `verw`; under QEMU's emulation 7.6 µs without KPTI and 35 µs with it, which says little
+    about real hardware. Roxy's figure decides PCID.
+  - **Testing the mitigations** (section 9): QEMU's `SandyBridge` model, the Roxy-like
+    configuration's processor, says `GenuineIntel` and has no `IA32_ARCH_CAPABILITIES`, so
+    `auto` turns all three on there, on GitHub's runners too, as it will on Roxy; that
+    configuration doesn't need `mitigations=on`. Under KVM on Impala the other x86-64
+    configuration gets them too, with `MD_CLEAR`.
 - 25 November 2026: QEMU's q35 needs a line's polarity set from AML (its links say active high),
   so note 0028, section 8, adds call 89, `interrupt_configure`, and the right `CONFIGURE` to
   interface 1.4; section 8's table and the open question change with it.

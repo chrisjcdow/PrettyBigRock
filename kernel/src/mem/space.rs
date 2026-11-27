@@ -129,6 +129,9 @@ impl FrameAlloc for Deferred<'_> {
 /// A program's address space.
 pub struct Space {
     tables: PageTables,
+    /// Its tables have two top-level pages, the kernel's and the program's (x86-64 with KPTI,
+    /// note 0027, section 1b).
+    two_tops: bool,
     maps: BTreeMap<u64, Mapping>,
     charge: Charge,
     dead: bool,
@@ -150,14 +153,38 @@ fn attr(perms: u32, backing: &Backing) -> Attr {
 impl Space {
     /// An empty space, its page tables charged to `charge`'s budget.
     pub fn new(mut charge: Charge) -> Result<Space, Error> {
-        let mut fa = Frames(&mut charge);
-        let mut tables =
-            PageTables::new(&mut fa, arch::PAGE_FORMAT).map_err(|_| Error::OutOfMemory)?;
+        let kpti = arch::separate_user_tables();
+        let mut tables = match kpti {
+            // Two top-level pages, 8 KiB aligned, the kernel's first: the entry code switches
+            // between them with bit 12 of CR3 (note 0027, section 1b). Both are charged.
+            Some(kernel_nx) => {
+                charge.grow(2 * charge::PAGE_TABLE)?;
+                let Some(root) = pmm::alloc(2, 2, u64::MAX) else {
+                    charge.shrink(2 * charge::PAGE_TABLE);
+                    return Err(Error::OutOfMemory);
+                };
+                let mut t = PageTables::from_root(root, arch::PAGE_FORMAT);
+                t.set_user_copy(root + PAGE, kernel_nx);
+                t
+            }
+            None => PageTables::new(&mut Frames(&mut charge), arch::PAGE_FORMAT)
+                .map_err(|_| Error::OutOfMemory)?,
+        };
         if arch::SHARES_TOP_LEVEL {
             // x86-64 has one tree for both halves: share the kernel's upper half.
-            tables.copy_top_entries(&mut fa, super::vm::root(), 256..512);
+            tables.copy_top_entries(&mut Frames(&mut charge), super::vm::root(), 256..512);
         }
-        Ok(Space { tables, maps: BTreeMap::new(), charge, dead: false })
+        if kpti.is_some() {
+            // The program's own table gets the entry area's entry, now the kernel's copy has it.
+            arch::fill_user_copy(tables.root, tables.root + PAGE);
+        }
+        Ok(Space { tables, two_tops: kpti.is_some(), maps: BTreeMap::new(), charge, dead: false })
+    }
+
+    /// The program's own top-level table, if it has one (KPTI), for the kernel's self-test.
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+    pub fn user_root(&self) -> Option<u64> {
+        self.two_tops.then(|| self.tables.root + PAGE)
     }
 
     /// The page tables' root, for loading on a core.
@@ -403,8 +430,9 @@ impl Drop for Space {
             self.clear();
         }
         unload_everywhere(self.tables.root);
-        pmm::free(self.tables.root, 1);
-        self.charge.shrink(charge::PAGE_TABLE);
+        let tops = if self.two_tops { 2 } else { 1 };
+        pmm::free(self.tables.root, tops);
+        self.charge.shrink(tops * charge::PAGE_TABLE);
     }
 }
 

@@ -93,6 +93,9 @@ pub fn init(map: &[MemoryRegion], kernel_phys: u64, kernel_virt: u64) {
     // Programs' page tables (on x86-64) share the kernel's top-level entries, so every one the
     // kernel will ever use must exist before the first program.
     t.ensure_top_entries(&mut fa, STACK_AREA, AREA_END).expect("out of memory for page tables");
+    if let Some((start, end)) = arch::ENTRY_AREA {
+        t.ensure_top_entries(&mut fa, start, end).expect("out of memory for page tables");
+    }
     arch::activate_kernel_tables(t.root);
     *KERNEL.lock() = Some(Kernel {
         tables: t,
@@ -122,6 +125,15 @@ pub fn map_device(phys: u64, len: u64) -> u64 {
         .map(&mut Frames { below: u64::MAX }, virt, base, size, attr)
         .expect("can't map a device");
     virt + (phys - base)
+}
+
+/// Maps `len` bytes at physical `phys` at the kernel address `virt`, which the caller has set
+/// aside (the x86-64 entry area, note 0027, section 1b).
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+pub fn map_at(virt: u64, phys: u64, len: u64, attr: Attr) {
+    let mut g = KERNEL.lock();
+    let k = g.as_mut().expect("kernel page tables not set up");
+    k.tables.map(&mut Frames { below: u64::MAX }, virt, phys, len, attr).expect("can't map");
 }
 
 /// A kernel stack: `pages` pages, with an unmapped guard page below. Returns the address just

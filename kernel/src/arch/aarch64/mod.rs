@@ -175,6 +175,18 @@ impl Default for CpuArch {
 }
 
 /// Records what the firmware said about a core.
+/// Programs never need their own top-level table on ARM64 (note 0027, section 1a): the
+/// processors PrettyBigRock runs on aren't affected by Meltdown.
+pub fn separate_user_tables() -> Option<bool> {
+    None
+}
+
+/// Not needed on ARM64; see [`separate_user_tables`].
+pub fn fill_user_copy(_kernel: u64, _user: u64) {}
+
+/// No entry area on ARM64: its exception vectors are in the kernel image.
+pub const ENTRY_AREA: Option<(u64, u64)> = None;
+
 pub fn set_core_info(cpu: &percpu::PerCpu, core: &hw::Core) {
     cpu.arch.gic_interface.store(core.gic_interface, Ordering::Relaxed);
 }

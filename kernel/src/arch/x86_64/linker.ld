@@ -22,7 +22,18 @@ SECTIONS
     . = KERNEL_BASE;
     __kernel_start = .;
 
-    .text : ALIGN(4K) { __text_start = .; *(.text._start) *(.text .text.*) } :text
+    /* The entry code (note 0027, section 1b) on pages of its own, so it can be mapped a second
+     * time in the entry area without anything else beside it. */
+    .text : ALIGN(4K) {
+        __text_start = .;
+        *(.text._start)
+        . = ALIGN(4K);
+        __entry_start = .;
+        *(.text.pbr_entry)
+        . = ALIGN(4K);
+        __entry_end = .;
+        *(.text .text.*)
+    } :text
     . = ALIGN(4K);
     __text_end = .;
 

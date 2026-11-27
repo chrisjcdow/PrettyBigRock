@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! The IDT, the entry stubs for all 256 vectors, and the handler they share.
+//! The IDT and the handler every interrupt and exception shares. The stubs that reach it are
+//! in the entry area (`entry.rs`, note 0027, section 1b).
 
 use super::{apic, cpu};
 use crate::{kprintln, percpu, sched};
@@ -20,80 +21,6 @@ pub const SPURIOUS: u8 = 0xFF;
 
 /// Breakpoints taken (the self-test checks this).
 pub static BREAKPOINTS: AtomicU64 = AtomicU64::new(0);
-
-// Each vector's stub is 16 bytes long, so the IDT can be filled in from one base address. Stubs
-// for exceptions without an error code push a zero in its place, so every frame looks alike.
-core::arch::global_asm!(
-    ".section .text.pbr_isr, \"ax\"",
-    ".balign 16",
-    ".global pbr_isr_stubs",
-    "pbr_isr_stubs:",
-    ".set vec, 0",
-    ".rept 256",
-    ".balign 16",
-    ".if (vec == 8) || (vec == 10) || (vec == 11) || (vec == 12) || (vec == 13) || (vec == 14) || (vec == 17) || (vec == 21) || (vec == 29) || (vec == 30)",
-    ".else",
-    "push 0",
-    ".endif",
-    ".byte 0x68", // push imm32 (always the long form, so 128-255 aren't sign-extended)
-    ".long vec",
-    "jmp pbr_isr_common",
-    ".set vec, vec + 1",
-    ".endr",
-    "pbr_isr_common:",
-    // From a program (the saved CS has privilege 3): switch to the kernel's GS base.
-    "test byte ptr [rsp + 24], 3",
-    "jz 2f",
-    "swapgs",
-    "2:",
-    "push rax",
-    "push rbx",
-    "push rcx",
-    "push rdx",
-    "push rsi",
-    "push rdi",
-    "push rbp",
-    "push r8",
-    "push r9",
-    "push r10",
-    "push r11",
-    "push r12",
-    "push r13",
-    "push r14",
-    "push r15",
-    "mov rdi, rsp",
-    "cld",
-    "call {dispatch}",
-    // Where every return from the kernel, to the kernel or to a program, goes.
-    ".global pbr_isr_exit",
-    "pbr_isr_exit:",
-    "pop r15",
-    "pop r14",
-    "pop r13",
-    "pop r12",
-    "pop r11",
-    "pop r10",
-    "pop r9",
-    "pop r8",
-    "pop rbp",
-    "pop rdi",
-    "pop rsi",
-    "pop rdx",
-    "pop rcx",
-    "pop rbx",
-    "pop rax",
-    "add rsp, 16",
-    "test byte ptr [rsp + 8], 3",
-    "jz 3f",
-    "swapgs",
-    "3:",
-    "iretq",
-    dispatch = sym dispatch,
-);
-
-unsafe extern "C" {
-    static pbr_isr_stubs: u8;
-}
 
 /// What the entry stub saves (and the system call entry, which makes the same frame).
 #[repr(C)]
@@ -157,19 +84,10 @@ impl Frame {
     }
 }
 
-#[repr(C, align(16))]
-struct Idt([[u64; 2]; 256]);
-
-static mut IDT: Idt = Idt([[0; 2]; 256]);
-
-/// Fills in the IDT. Called once, on the boot core.
+/// Fills in the IDT, in the entry area. Called once, on the boot core.
 pub fn build_idt() {
-    let base = &raw const pbr_isr_stubs as u64;
-    // Start-up runs on one core, before any core has loaded the IDT.
-    let idt: *mut Idt = &raw mut IDT;
-    // SAFETY: as above; nothing else refers to the IDT yet.
-    let entries = unsafe { &mut (*idt).0 };
-    for (v, e) in entries.iter_mut().enumerate() {
+    let base = super::entry::isr_stubs();
+    for (v, e) in super::entry::idt_entries().iter_mut().enumerate() {
         let addr = base + 16 * v as u64;
         let ist: u64 = match v {
             8 => 1,  // double fault
@@ -189,7 +107,7 @@ pub fn build_idt() {
 
 /// The IDT's address, for loading it.
 pub fn idt_address() -> u64 {
-    &raw const IDT as u64
+    super::entry::IDT
 }
 
 const NAMES: [&str; 22] = [
@@ -217,7 +135,7 @@ const NAMES: [&str; 22] = [
     "control protection",
 ];
 
-extern "C" fn dispatch(f: &mut Frame) {
+pub(super) extern "C" fn dispatch(f: &mut Frame) {
     let v = f.vector as u8;
     let user = f.is_from_user();
     match v {

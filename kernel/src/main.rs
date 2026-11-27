@@ -104,6 +104,12 @@ pub fn boot_description() -> (&'static [Framebuffer], u64) {
     (&b.framebuffers, b.acpi_rsdp)
 }
 
+/// The kernel's command line.
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+pub fn command_line() -> &'static str {
+    &BOOT.get().expect("boot information copied").command_line
+}
+
 /// The unique GUID of the partition the loader read the kernel from, or all zero if it didn't
 /// say (note 0027, section 4).
 pub fn boot_partition() -> [u8; 16] {
@@ -300,7 +306,10 @@ fn report(boot: &Boot) {
     let _ = arch::describe(&mut cpu);
     kprintln!("Processor:     {}", cpu.as_str());
     #[cfg(target_arch = "x86_64")]
-    arch::microcode::report();
+    {
+        arch::microcode::report();
+        arch::mitigations::report();
+    }
     kprintln!(
         "Cores:         {} found, {} running",
         percpu::count(),

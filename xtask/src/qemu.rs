@@ -65,6 +65,8 @@ pub const TESTS: &[Config] = &[
         expect: &[
             "on x86-64, started by UEFI.",
             "XSAVE, SMEP, SMAP",
+            "Meltdown:      ",
+            "System calls: 100000 in",
             "Cores:         4 found, 4 running",
             "Screens:       0",
             "Randomness:    seeded",
@@ -93,10 +95,18 @@ pub const TESTS: &[Config] = &[
         bios: true,
         el2: false,
         cores: 4,
-        cpu: None,
+        // Roxy's processor (note 0031, section 3): affected by Meltdown, MDS and L1TF, with
+        // XSAVE but neither SMEP nor SMAP, and without the microcode that clears buffers.
+        cpu: Some("SandyBridge"),
         expect: &[
             "on x86-64, started by BIOS.",
-            "FXSAVE",
+            "GenuineIntel",
+            ", XSAVE",
+            "Meltdown:      separate page tables (KPTI)",
+            "MDS:           affected, but the microcode can't clear buffers",
+            "L1TF:          not-present entries are empty",
+            "and a program's page tables without the kernel",
+            "System calls: 100000 in",
             "Cores:         4 found, 4 running",
             "Screens:       1 (",
             "Time:          2",

@@ -7,9 +7,11 @@ mod apic;
 mod clock;
 mod context;
 mod cpu;
+mod entry;
 mod interrupts;
 pub mod irqchip;
 pub mod microcode;
+pub mod mitigations;
 mod power;
 mod serial;
 mod smp;
@@ -132,10 +134,17 @@ pub fn wait_for_interrupt() {
 
 const IA32_GS_BASE: u32 = 0xC000_0101;
 
-/// Points this core's `GS` at its per-core data.
+/// Points this core's `GS` at its per-core data: its entry block, whose first word is the
+/// address of its `PerCpu` (note 0027, section 1b). 0 clears it.
 pub fn set_percpu(p: u64) {
+    let base = if p == 0 {
+        0
+    } else {
+        // SAFETY: `p` is a leaked, so 'static, PerCpu (`percpu::install`).
+        unsafe { &*(p as *const percpu::PerCpu) }.arch.slot()
+    };
     // SAFETY: GS isn't otherwise used by the kernel.
-    unsafe { cpu::wrmsr(IA32_GS_BASE, p) };
+    unsafe { cpu::wrmsr(IA32_GS_BASE, base) };
 }
 
 /// Clears the `GS` base, so [`get_percpu`] means "not set" until it's set. The firmware may
@@ -144,15 +153,54 @@ pub fn zero_percpu() {
     set_percpu(0);
 }
 
-/// Records what the firmware said about a core (nothing extra is needed on x86-64).
-pub fn set_core_info(_cpu: &percpu::PerCpu, _core: &hw::Core) {}
+/// Records what the firmware said about a core, and makes its slot in the entry area. The boot
+/// core's comes first: then the protections against Meltdown and MDS are decided, for every
+/// core, and the entry area's code and IDT are mapped.
+pub fn set_core_info(cpu: &percpu::PerCpu, _core: &hw::Core) {
+    if cpu.index == 0 {
+        smp::reserve_trampoline();
+        mitigations::decide(crate::command_line());
+        entry::init();
+    }
+    let mut flags = 0;
+    if mitigations::kpti() {
+        flags |= entry::FLAG_KPTI;
+    }
+    if mitigations::mds() {
+        flags |= entry::FLAG_MDS;
+    }
+    cpu.arch.set_slot(entry::make_slot(cpu.index, cpu, flags));
+}
 
 /// This core's per-core data pointer, or 0 if not set yet.
 pub fn get_percpu() -> u64 {
     // GS's base is read with RDMSR rather than through GS, so it's safe before it's set.
     // SAFETY: reading the GS base MSR has no side effects.
-    unsafe { cpu::rdmsr(IA32_GS_BASE) }
+    let base = unsafe { cpu::rdmsr(IA32_GS_BASE) };
+    // Only a kernel address is an entry block; a program's value can be there for an instant
+    // while a core enters or leaves the kernel.
+    if base < 0xFFFF_8000_0000_0000 {
+        return 0;
+    }
+    // SAFETY: a kernel-half GS base is only ever set by `set_percpu`, to an entry block, which
+    // stays mapped; its first word is the PerCpu's address.
+    unsafe { core::ptr::read_volatile(base as *const u64) }
 }
+
+/// Programs get their own top-level page table (KPTI): `Some`, saying whether the kernel's
+/// copy should mark the program's half no-execute (on processors without SMEP), or `None`.
+pub fn separate_user_tables() -> Option<bool> {
+    mitigations::kpti().then(|| !user::describe_protections().1)
+}
+
+/// Fills in a program's own top-level table from the kernel's copy (note 0027, section 1b).
+pub use entry::fill_user_copy;
+
+/// The self-test's check of a program's two top-level tables.
+pub use entry::check_user_copy;
+
+/// The entry area: (start, end), for the kernel's page tables to make its top-level entry.
+pub const ENTRY_AREA: Option<(u64, u64)> = Some((entry::AREA, entry::AREA_END));
 
 /// Switches to the kernel's page tables.
 pub fn activate_kernel_tables(root: u64) {

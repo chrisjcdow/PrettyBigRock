@@ -123,7 +123,7 @@ The four configurations stay four, with two boots each (note 0026, section 6). T
 | AHCI | none | **q35's own controller at 00:1f.2, with the foreign disk** | `ich9-ahci`, the system volume's disk | none |
 | Keyboard and mouse in the desktop boot | virtio and PS/2, as now | **USB only** (PS/2 is there but sent nothing) | virtio, as now | virtio, as now |
 | Processor | `max` | **`SandyBridge`** (Roxy's: no SMEP or SMAP) | Cortex-A72 | `max` |
-| `cmdline.txt` | as now | **`mitigations=on`** (note 0027, section 9) | as now | as now |
+| `cmdline.txt` | as now | as now: `auto` turns everything on for its `SandyBridge` processor (note 0027, Changes) | as now | as now |
 | Power off in the desktop boot | **the power button** (`system_powerdown`, note 0028) | the menu's Turn off | the menu | the menu |
 
 The existing virtio test disks (the 2048-sector raw disk, the MBR and GPT test disks, the empty
@@ -337,3 +337,9 @@ Chris tries is the one the release will be.
   and through UEFI from the boot menu (F7). Section 1's steps 2 and 3 aren't needed: no active
   mark, no hybrid MBR. Through UEFI the screen is smaller, because the UEFI loader keeps the mode
   the firmware set, where the BIOS loader picks the largest up to 1920x1080.
+- 27 November 2026, stage 1b: the Roxy-like configuration runs `SandyBridge` without
+  `mitigations=on`. QEMU's model says `GenuineIntel` and has no `IA32_ARCH_CAPABILITIES`, so
+  `auto` already turns KPTI, `verw` and the L1TF rule on, on GitHub's runners as on Roxy;
+  `on` would have needed a command line for one configuration only, which the shared test
+  images don't have. The microcode folder on the EFI system partition is `PBR/x86_64/ucode/`
+  (8.3 names), and the release pins Intel's `microcode-20261110`.
