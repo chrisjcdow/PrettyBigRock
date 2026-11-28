@@ -7,6 +7,7 @@
 
 use crate::mem::DirectMapped;
 use alloc::vec::Vec;
+use pbr_platform::PhysMemory;
 use pbr_platform::acpi::{self, MadtEntry};
 
 /// One core the firmware listed.
@@ -110,4 +111,47 @@ pub fn discover(rsdp: u64, boot_hw_id: u64) -> Machine {
         m.cores.insert(0, Core { hw_id: boot_hw_id, gic_interface: 0 });
     }
     m
+}
+
+/// With `acpidump` on the command line, writes every ACPI table the root table lists, and the
+/// DSDT, to the log in hexadecimal, for `cargo xtask acpidump` to save as the AML
+/// interpreter's test data (docs/design/0028-acpi.md, section 10). Each line is
+/// `acpidump: SIGN offset: bytes`, 32 bytes to a line; `acpidump: done` ends it.
+pub fn dump_tables(rsdp: u64) {
+    let mem = DirectMapped;
+    if rsdp == 0 || !acpi::rsdp_valid(&mem, rsdp) {
+        crate::kprintln!("acpidump: no tables");
+        crate::kprintln!("acpidump: done");
+        return;
+    }
+    let mut tables = Vec::new();
+    acpi::each_listed_table(&mem, rsdp, |t, sig| {
+        tables.push((t, sig));
+        if &sig == b"FACP"
+            && let Some(dsdt) = acpi::fadt_dsdt(&mem, t)
+        {
+            tables.push((dsdt, *b"DSDT"));
+        }
+    });
+    for (t, sig) in tables {
+        let name = core::str::from_utf8(&sig).unwrap_or("????");
+        // Nothing the firmware wrote is trusted: a table is dumped only up to 1 MiB.
+        let len = acpi::table_length(&mem, t).unwrap_or(0).min(1 << 20) as u64;
+        let mut line = [0u8; 32];
+        let mut at = 0;
+        while at < len {
+            let n = (len - at).min(32) as usize;
+            if !mem.read(t + at, &mut line[..n]) {
+                break;
+            }
+            let mut text = alloc::string::String::new();
+            for b in &line[..n] {
+                use core::fmt::Write;
+                let _ = write!(text, "{b:02x}");
+            }
+            crate::kprintln!("acpidump: {name} {at:05x}: {text}");
+            at += 32;
+        }
+    }
+    crate::kprintln!("acpidump: done");
 }

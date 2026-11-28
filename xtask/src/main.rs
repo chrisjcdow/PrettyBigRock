@@ -13,6 +13,7 @@
 //! cargo xtask ci                              all of the above, as GitHub Actions runs it
 //! cargo xtask classic                         build and test PrettyBigRock 1.x (classic/)
 //! cargo xtask microcode                       fetch Intel's microcode updates (note 0027)
+//! cargo xtask acpidump                        save QEMU's ACPI tables for the AML tests (note 0028)
 //! cargo xtask doctor                          explain how the Rust toolchain was found
 //! ```
 //!
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Duration;
 
+mod acpidump;
 mod classicdisk;
 mod datadisk;
 mod desktop;
@@ -294,10 +296,16 @@ fn run(args: &[String]) -> Result {
     let (command, rest) = args.split_first().map(|(c, r)| (c.as_str(), r)).unwrap_or(("help", &[]));
     let opts = Options::parse(rest)?;
     match command {
-        "build" => build_all(&root, &Toolchain::find(&root)?, opts.release).map(|_| ()),
+        "build" => {
+            build_all(&root, &Toolchain::find(&root)?, opts.release, &cmdline_words()).map(|_| ())
+        }
         "microcode" => microcode::fetch(&root),
+        "acpidump" => {
+            let imgs = build_all(&root, &Toolchain::find(&root)?, false, "acpidump")?;
+            acpidump::run(&root, &imgs.stick, &work_dir(&root)?)
+        }
         "run" => {
-            let imgs = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
+            let imgs = build_all(&root, &Toolchain::find(&root)?, opts.release, &cmdline_words())?;
             let img = if opts.selftest { imgs.selftest } else { imgs.normal };
             let want = opts.arch.as_deref().unwrap_or("x86_64");
             let arch = ARCHES.iter().map(|a| a.name).find(|n| *n == want).unwrap_or("x86_64");
@@ -319,7 +327,7 @@ fn run(args: &[String]) -> Result {
             qemu::run(&cfg, &img, &work_dir(&root)?)
         }
         "qemu-test" => {
-            let imgs = build_all(&root, &Toolchain::find(&root)?, opts.release)?;
+            let imgs = build_all(&root, &Toolchain::find(&root)?, opts.release, &cmdline_words())?;
             qemu_test(&root, &imgs)
         }
         "check" => check(&root, &Toolchain::find(&root)?),
@@ -328,8 +336,8 @@ fn run(args: &[String]) -> Result {
             let tc = Toolchain::find(&root)?;
             check(&root, &tc)?;
             test(&root)?;
-            build_all(&root, &tc, true)?;
-            let imgs = build_all(&root, &tc, false)?;
+            build_all(&root, &tc, true, &cmdline_words())?;
+            let imgs = build_all(&root, &tc, false, &cmdline_words())?;
             qemu_test(&root, &imgs)?;
             println!("ci: all passed");
             Ok(())
@@ -365,6 +373,8 @@ PrettyBigRock build tool
   cargo xtask classic-disk               make tests/data/classic-1.3.img.gz with 1.3 itself
   cargo xtask microcode                  fetch Intel's microcode updates, checked, into
                                          build/microcode/intel-ucode
+  cargo xtask acpidump                   boot QEMU's machines and save their ACPI tables in
+                                         tests/data/acpi (for lib/aml's tests)
   cargo xtask doctor                     show how the Rust toolchain was found
 
 Architectures: x86_64 (the default for `run`), aarch64
@@ -697,7 +707,7 @@ fn write_out(root: &Path, rel: &str, bytes: &[u8]) -> Result<PathBuf> {
 
 /// Builds the kernels and loaders for every architecture, and the boot disk image
 /// (docs/design/0004-loaders-and-boot-disk.md). Returns the image's path.
-fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
+fn build_all(root: &Path, tc: &Toolchain, release: bool, extra: &str) -> Result<Images> {
     let profile = if release { "release" } else { "debug" };
     let mut kernels = Vec::new();
     let mut loaders = Vec::new();
@@ -726,7 +736,7 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
     // section 1): the ordinary image with the system volume as a third partition, and the same
     // with the self-test, both with the words in `PBR_CMDLINE` added to their command lines
     // (for Roxy, `console=0x2f8`), since `cmdline.txt` can't be edited on a stick from Windows.
-    let extra = env::var("PBR_CMDLINE").unwrap_or_default();
+    // They come from `PBR_CMDLINE`, or from the command (`acpidump` gives its own word).
     let version = pbr_manifest::VERSION;
     let system_volume = datadisk::volume(image::SYSTEM_SECTORS * 512)?;
     let ucode = microcode::from_env(root)?;
@@ -783,6 +793,7 @@ fn build_all(root: &Path, tc: &Toolchain, release: bool) -> Result<Images> {
         selftest: paths.remove(0),
         desktop: paths.remove(0),
         text: paths.remove(0),
+        stick: paths.remove(0),
     })
 }
 
@@ -796,6 +807,13 @@ struct Images {
     desktop: PathBuf,
     /// The same, with `text desktoptest`.
     text: PathBuf,
+    /// The USB stick image, with the extra command-line words.
+    stick: PathBuf,
+}
+
+/// The words `PBR_CMDLINE` adds to the stick images' command lines.
+fn cmdline_words() -> String {
+    env::var("PBR_CMDLINE").unwrap_or_default()
 }
 
 /// Compiler flags that keep the folder the repository is in out of what's built, so the same

@@ -224,6 +224,9 @@ extern "C" fn continue_start_up() -> ! {
     }
 
     MACHINE.set(hw::discover(boot.acpi_rsdp, arch::this_core_hw_id()));
+    if command_line().split_whitespace().any(|w| w == "acpidump") {
+        hw::dump_tables(boot.acpi_rsdp);
+    }
     let m = hw_machine();
     let ids: Vec<u64> = m.cores.iter().map(|c| c.hw_id).collect();
     percpu::create(&ids);

@@ -465,19 +465,19 @@ impl Rng {
     }
 }
 
-/// Every real table, corrupted at random (bytes changed, cut short, stretches repeated), with
+/// Every real machine's tables, corrupted at random (bytes changed, cut short, stretches repeated), with
 /// its checksum put right so it is read: loading, starting up, listing devices and routing
 /// must each end, within the limits, without a panic (note 0028, section 10).
 #[test]
 fn corrupted_tables_fail_cleanly() {
     small_stack(|| {
-        let originals = tables("roxy-h61mx");
+        let machines = ["roxy-h61mx", "qemu-q35", "qemu-virt"].map(tables);
         let mut rng = Rng(0x5EED_AC91);
         for round in 0..3000 {
-            let mut set = originals.clone();
+            let mut set = machines[round % 3].clone();
             let which = rng.below(set.len());
             let t = &mut set[which];
-            match round % 3 {
+            match (round / 3) % 3 {
                 0 => {
                     for _ in 0..1 + rng.below(20) {
                         let i = 36 + rng.below(t.len() - 36);
@@ -513,4 +513,72 @@ fn corrupted_tables_fail_cleanly() {
             let _ = aml.sleep_type(5);
         }
     });
+}
+
+/// A machine's namespace started as the ACPI service starts it.
+fn started(name: &str) -> Aml<Fake> {
+    let mut aml = machine(name, Fake::default());
+    if aml.find(None, "\\_PIC").is_some() {
+        aml.evaluate("\\_PIC", &[Value::Integer(1)]).unwrap();
+    }
+    let report = aml.initialise();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    aml
+}
+
+/// A device's resources, by its path.
+fn resources_of(aml: &mut Aml<Fake>, path: &str) -> Vec<Resource> {
+    let devices = aml.devices();
+    devices.into_iter().find(|d| d.path == path).unwrap_or_else(|| panic!("no {path}")).resources
+}
+
+fn edge(number: u32) -> Resource {
+    Resource::Interrupt(Line { number, level: false, active_low: false, shared: false })
+}
+
+#[test]
+fn q35_legacy_devices() {
+    // QEMU's q35, as the boot tests have it: two serial ports, the keyboard controller and
+    // its mouse port, each on its ISA line.
+    let mut aml = started("qemu-q35");
+    let io = |first, count| Resource::Io { first, count };
+    assert_eq!(resources_of(&mut aml, "\\_SB.PCI0.SF8.COM1"), [io(0x3F8, 8), edge(4)]);
+    assert_eq!(resources_of(&mut aml, "\\_SB.PCI0.SF8.COM2"), [io(0x2F8, 8), edge(3)]);
+    assert_eq!(resources_of(&mut aml, "\\_SB.PCI0.SF8.KBD"), [io(0x60, 1), io(0x64, 1), edge(1)]);
+    assert_eq!(resources_of(&mut aml, "\\_SB.PCI0.SF8.MOU"), [edge(12)]);
+    let ids: Vec<String> = aml.devices().into_iter().map(|d| d.hid).collect();
+    for id in ["PNP0501", "PNP0303", "PNP0F13", "PNP0A08"] {
+        assert!(ids.iter().any(|h| h == id), "no {id}");
+    }
+}
+
+#[test]
+fn q35_routes_through_links() {
+    // q35's `_PRT` names link devices (`GSIA` to `GSIH`) whose `_CRS` says level-triggered
+    // and active high (note 0028, section 8): device 1's INTA is GSIF, line 21; device 31's
+    // (the chipset's) GSIA, line 16.
+    let mut aml = started("qemu-q35");
+    let line = |number| Line { number, level: true, active_low: false, shared: true };
+    assert_eq!(aml.route(0, 0, 1, 1), Ok(line(21)));
+    assert_eq!(aml.route(0, 0, 4, 1), Ok(line(20)));
+    assert_eq!(aml.route(0, 0, 31, 1), Ok(line(16)));
+    // No bus 9, and no pin 5.
+    assert_eq!(aml.route(0, 9, 1, 1), Err(crate::Route::NotFound));
+    assert_eq!(aml.route(0, 0, 1, 5), Err(crate::Route::NotFound));
+    assert_eq!(aml.sleep_type(5).unwrap(), crate::SleepType { a: 0, b: 0 });
+}
+
+#[test]
+fn virt_devices_and_routes() {
+    // ARM64's virt: the PL011 serial port at 0x09000000 on GIC interrupt 33, the PCI links on
+    // 35 to 38, no `\_S5` (it is turned off through the firmware, PSCI).
+    let mut aml = started("qemu-virt");
+    let level = Line { number: 33, level: true, active_low: false, shared: false };
+    assert_eq!(
+        resources_of(&mut aml, "\\_SB.COM0"),
+        [Resource::Memory { base: 0x0900_0000, length: 0x1000 }, Resource::Interrupt(level)]
+    );
+    let line = aml.route(0, 0, 1, 1).unwrap();
+    assert!((35..=38).contains(&line.number) && line.level && !line.active_low, "{line:?}");
+    assert!(aml.sleep_type(5).is_err());
 }

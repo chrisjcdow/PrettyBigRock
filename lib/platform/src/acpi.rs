@@ -78,18 +78,30 @@ pub fn each_table(
     sig: &[u8; 4],
     mut f: impl FnMut(u64),
 ) -> usize {
+    let mut count = 0;
+    each_listed_table(mem, rsdp, |t, s| {
+        if &s == sig {
+            f(t);
+            count += 1;
+        }
+    });
+    count
+}
+
+/// Calls `f` with the address and signature of every table the XSDT (or RSDT) lists, in its
+/// order, at most 256 of them.
+pub fn each_listed_table(mem: &impl PhysMemory, rsdp: u64, mut f: impl FnMut(u64, [u8; 4])) {
     let mut b = [0u8; 36];
     if !mem.read(rsdp, &mut b[..20]) {
-        return 0;
+        return;
     }
     let (root, entry) = if b[15] >= 2 && mem.read(rsdp, &mut b) {
         (u64::from_le_bytes(b[24..32].try_into().unwrap_or_default()), 8)
     } else {
         (u64::from(u32::from_le_bytes(b[16..20].try_into().unwrap_or_default())), 4)
     };
-    let Some(len) = root.checked_add(4).and_then(|a| mem.read_u32(a)) else { return 0 };
+    let Some(len) = root.checked_add(4).and_then(|a| mem.read_u32(a)) else { return };
     let end = root.saturating_add(u64::from(len));
-    let mut count = 0;
     let mut a = root.saturating_add(36);
     for _ in 0..256 {
         if a.saturating_add(entry) > end {
@@ -99,14 +111,11 @@ pub fn each_table(
         let mut s = [0u8; 4];
         if let Some(t) = t
             && mem.read(t, &mut s)
-            && &s == sig
         {
-            f(t);
-            count += 1;
+            f(t, s);
         }
         a += entry;
     }
-    count
 }
 
 /// A table's length in bytes, from its header.
@@ -319,6 +328,108 @@ pub fn fadt_iapc_flags(mem: &impl PhysMemory, fadt: u64) -> Option<u16> {
     mem.read_u16(fadt + 109)
 }
 
+/// What the ACPI service needs from the FADT for the machine's fixed hardware (x86-64; ARM64's
+/// "hardware-reduced" FADT has none of it): where the power-management registers are, the
+/// interrupt they raise, and how to switch the firmware into ACPI mode
+/// (docs/design/0028-acpi.md, sections 3 to 6). Zero for a register the machine hasn't got.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FadtFixed {
+    /// The SCI, the interrupt power-management events raise: an ISA line number on a PC.
+    pub sci: u16,
+    /// The port that calls the firmware's hidden handler (system management mode).
+    pub smi_command: u32,
+    /// The value that, written to `smi_command`, switches the firmware into ACPI mode.
+    pub acpi_enable: u8,
+    /// The PM1a event block, an I/O port: a status register, then an enable register, each
+    /// half of `pm1_event_length`.
+    pub pm1a_event: u16,
+    /// The PM1b event block, if there is a second one.
+    pub pm1b_event: u16,
+    /// The length of each PM1 event block, in bytes.
+    pub pm1_event_length: u8,
+    /// The PM1a control register (sleep type, sleep enable, `SCI_EN`).
+    pub pm1a_control: u16,
+    /// The PM1b control register, if there is one.
+    pub pm1b_control: u16,
+    /// The first general-purpose event block: status registers, then as many enable
+    /// registers.
+    pub gpe0: u16,
+    /// Its length in bytes.
+    pub gpe0_length: u8,
+    /// The second general-purpose event block.
+    pub gpe1: u16,
+    /// Its length in bytes.
+    pub gpe1_length: u8,
+    /// The fixed feature flags (bit 4: the power button is a control-method one; bit 20:
+    /// hardware-reduced).
+    pub flags: u32,
+    /// The FACS's physical address (where the global lock is), or 0.
+    pub facs: u64,
+}
+
+impl FadtFixed {
+    /// True if the power button is a fixed one (its status and enable bits in PM1).
+    pub fn fixed_power_button(&self) -> bool {
+        self.flags & (1 << 4) == 0 && self.pm1a_event != 0
+    }
+    /// True for ARM64's kind of machine, without any of this hardware.
+    pub fn hardware_reduced(&self) -> bool {
+        self.flags & (1 << 20) != 0
+    }
+}
+
+/// Reads [`FadtFixed`]. The 32-bit port fields are used; where one is zero and the table has
+/// the 64-bit form (a "generic address" naming an I/O port), that is used instead.
+pub fn fadt_fixed(mem: &impl PhysMemory, fadt: u64) -> Option<FadtFixed> {
+    let len = u64::from(table_length(mem, fadt)?);
+    if len < 116 {
+        return None;
+    }
+    let u8_at = |o: u64| -> Option<u8> {
+        let mut b = [0u8];
+        mem.read(fadt + o, &mut b).then_some(b[0])
+    };
+    let u16_at = |o: u64| -> Option<u16> {
+        let mut b = [0u8; 2];
+        mem.read(fadt + o, &mut b).then_some(u16::from_le_bytes(b))
+    };
+    // A port: the 32-bit field at `old`, or the generic address at `new` (12 bytes: space 1
+    // is I/O, the address at byte 4).
+    let port = |old: u64, new: u64| -> Option<u16> {
+        let p = mem.read_u32(fadt + old)?;
+        if p != 0 {
+            return u16::try_from(p).ok();
+        }
+        if len >= new + 12 && u8_at(new)? == 1 {
+            return u16::try_from(mem.read_u64(fadt + new + 4)?).ok();
+        }
+        Some(0)
+    };
+    let mut facs = u64::from(mem.read_u32(fadt + 36)?);
+    if len >= 140 {
+        let x = mem.read_u64(fadt + 132)?;
+        if x != 0 {
+            facs = x;
+        }
+    }
+    Some(FadtFixed {
+        sci: u16_at(46)?,
+        smi_command: mem.read_u32(fadt + 48)?,
+        acpi_enable: u8_at(52)?,
+        pm1a_event: port(56, 148)?,
+        pm1b_event: port(60, 160)?,
+        pm1_event_length: u8_at(88)?,
+        pm1a_control: port(64, 172)?,
+        pm1b_control: port(68, 184)?,
+        gpe0: port(80, 220)?,
+        gpe0_length: u8_at(92)?,
+        gpe1: port(84, 232)?,
+        gpe1_length: u8_at(93)?,
+        flags: mem.read_u32(fadt + 112)?,
+        facs,
+    })
+}
+
 /// The FADT's reset register (ACPI 2.0 and later): writing `value` to it restarts the machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResetRegister {
@@ -423,6 +534,31 @@ pub(crate) mod tests {
             }
             true
         }
+    }
+
+    /// A real machine's FADT, read from `tests/data/acpi/`.
+    fn real_fadt(machine: &str) -> FakeMem {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/data/acpi");
+        let mut m = FakeMem::default();
+        m.put(0x1000, &std::fs::read(dir.join(machine).join("FACP")).unwrap());
+        m
+    }
+
+    #[test]
+    fn fixed_hardware_from_real_fadts() {
+        // Roxy (as Linux's `dmesg` and the FADT's disassembly give it): the SCI on line 9, the
+        // SMI command port 0xB2, PM1 at 0x400 and its control at 0x404, GPE0 at 0x420.
+        let f = fadt_fixed(&real_fadt("roxy-h61mx"), 0x1000).unwrap();
+        assert_eq!((f.sci, f.smi_command, f.pm1a_event, f.pm1a_control), (9, 0xB2, 0x400, 0x404));
+        assert_eq!((f.pm1_event_length, f.gpe0, f.gpe0_length), (4, 0x420, 16));
+        assert!(f.fixed_power_button() && !f.hardware_reduced() && f.facs != 0);
+        // QEMU's q35: already in ACPI mode, its own blocks.
+        let q = fadt_fixed(&real_fadt("qemu-q35"), 0x1000).unwrap();
+        assert_eq!((q.sci, q.pm1a_event, q.pm1a_control), (9, 0x600, 0x604));
+        assert!(q.fixed_power_button());
+        // ARM64's virt: hardware-reduced, none of it.
+        let v = fadt_fixed(&real_fadt("qemu-virt"), 0x1000).unwrap();
+        assert!(v.hardware_reduced() && v.pm1a_event == 0);
     }
 
     fn fix_checksum(b: &mut [u8], at: usize) {
