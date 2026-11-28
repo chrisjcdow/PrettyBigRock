@@ -582,3 +582,260 @@ fn virt_devices_and_routes() {
     assert!((35..=38).contains(&line.number) && line.level && !line.active_low, "{line:?}");
     assert!(aml.sleep_type(5).is_err());
 }
+
+/// The cross-check against ACPICA (note 0028, section 10): each machine's tables are loaded by
+/// ACPICA's `acpiexec` and by this interpreter, and the same objects evaluated in the same
+/// order by both, on the same blank machine (memory and registers reading back what was
+/// written, zero otherwise): every device's `_STA`, `_HID`, `_CID`, `_UID`, `_CRS` and `_PRT`,
+/// and `\_S5`. The answers must agree. Skipped, saying so, without `acpiexec` (Ubuntu's
+/// `acpica-tools`); a stage isn't finished until it has run, and CI installs it.
+mod acpica {
+    use super::*;
+    use std::process::Command;
+    use std::string::ToString;
+
+    /// A value as `acpiexec` prints one.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Seen {
+        Integer(u64),
+        String(String),
+        Buffer(Vec<u8>),
+        Package(Vec<Seen>),
+        /// A reference to a named object: its last name segment.
+        Reference(String),
+        /// Anything else, as printed.
+        Other(String),
+    }
+
+    /// What our interpreter gives, in the same form.
+    pub fn seen(v: &Value, aml: &Aml<Fake>) -> Seen {
+        use crate::value::{Ref, Reference};
+        match v {
+            Value::Integer(i) => Seen::Integer(*i),
+            Value::String(s) => Seen::String(s.clone()),
+            Value::Buffer(b) => Seen::Buffer(b.borrow().clone()),
+            Value::Package(p) => Seen::Package(p.borrow().0.iter().map(|e| seen(e, aml)).collect()),
+            Value::Reference(Reference(Ref::Node(n))) => Seen::Reference(
+                aml.path(*n).rsplit('.').next().unwrap_or("").trim_start_matches('\\').to_string(),
+            ),
+            Value::Reference(Reference(Ref::Name(_, name))) => {
+                Seen::Reference(name.to_string().rsplit('.').next().unwrap_or("").to_string())
+            }
+            other => Seen::Other(std::format!("{other:?}")),
+        }
+    }
+
+    /// Reads one printed value starting at `lines[*i]`.
+    fn value(lines: &[&str], i: &mut usize) -> Option<Seen> {
+        let line = lines.get(*i)?.trim();
+        *i += 1;
+        if let Some(hex) = line.strip_prefix("[Integer] = ") {
+            return u64::from_str_radix(hex.trim(), 16).ok().map(Seen::Integer);
+        }
+        if let Some(rest) = line.strip_prefix("[String] Length ") {
+            let s = rest.split_once(" = \"")?.1.strip_suffix('"')?;
+            return Some(Seen::String(s.to_string()));
+        }
+        if let Some(rest) = line.strip_prefix("[Buffer] Length ") {
+            let (len, rest) = rest.split_once(" =")?;
+            let len = usize::from_str_radix(len.trim(), 16).ok()?;
+            let mut bytes = Vec::new();
+            let take = |text: &str, bytes: &mut Vec<u8>| {
+                let hex = text.split("//").next().unwrap_or("");
+                let Some((_, hex)) = hex.split_once(": ") else { return };
+                for b in hex.split_whitespace() {
+                    if bytes.len() < len {
+                        bytes.extend(u8::from_str_radix(b, 16).ok());
+                    }
+                }
+            };
+            take(rest, &mut bytes);
+            while bytes.len() < len && *i < lines.len() {
+                take(lines[*i], &mut bytes);
+                *i += 1;
+            }
+            return Some(Seen::Buffer(bytes));
+        }
+        if let Some(rest) = line.strip_prefix("[Package] Contains ") {
+            let n: usize = rest.split_whitespace().next()?.parse().ok()?;
+            let mut out = Vec::new();
+            for _ in 0..n {
+                out.push(value(lines, i)?);
+            }
+            return Some(Seen::Package(out));
+        }
+        if line.starts_with("[Object Reference]") {
+            let name = line.split(" Name ").nth(1)?.split_whitespace().next()?;
+            return Some(Seen::Reference(name.trim_end_matches('_').to_string()));
+        }
+        Some(Seen::Other(line.to_string()))
+    }
+
+    /// Runs `acpiexec` on a machine's tables with these evaluations; each one's answer, or its
+    /// failure status. `None` if `acpiexec` can't be run.
+    pub fn run(machine: &str, paths: &[String]) -> Option<BTreeMap<String, Result<Seen, String>>> {
+        let dir = super::data(machine);
+        let mut tables = alloc::vec![dir.join("DSDT")];
+        for i in 1.. {
+            let p = dir.join(std::format!("SSDT{i}"));
+            if !p.exists() {
+                break;
+            }
+            tables.push(p);
+        }
+        run_tables(&tables, paths)
+    }
+
+    /// The same for one table in a file.
+    pub fn run_file(
+        table: &std::path::Path,
+        paths: &[String],
+    ) -> Option<BTreeMap<String, Result<Seen, String>>> {
+        run_tables(&[table.to_path_buf()], paths)
+    }
+
+    fn run_tables(
+        tables: &[PathBuf],
+        paths: &[String],
+    ) -> Option<BTreeMap<String, Result<Seen, String>>> {
+        // The commands go in on standard input: `-b` ignores a batch longer than about 1000
+        // characters.
+        use std::io::Write;
+        let mut script: String = paths.iter().map(|p| std::format!("evaluate {p}\n")).collect();
+        script.push_str("quit\n");
+        let mut child = Command::new("acpiexec")
+            .args(tables)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .ok()?;
+        child.stdin.take()?.write_all(script.as_bytes()).ok()?;
+        let out = child.wait_with_output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
+        let lines: Vec<&str> = text.lines().collect();
+        let mut answers = BTreeMap::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i];
+            i += 1;
+            let Some(rest) = line.strip_prefix("Evaluation of ") else { continue };
+            let Some((path, how)) = rest.split_once(' ') else { continue };
+            let answer = if how.starts_with("returned object") {
+                match value(&lines, &mut i) {
+                    Some(v) => Ok(v),
+                    None => Err("unreadable".to_string()),
+                }
+            } else if let Some(status) = how.strip_prefix("failed with status ") {
+                Err(status.trim().to_string())
+            } else {
+                Err(how.to_string())
+            };
+            answers.insert(path.to_string(), answer);
+        }
+        Some(answers)
+    }
+}
+
+/// See [`acpica`].
+#[test]
+fn agrees_with_acpica() {
+    if std::process::Command::new("acpiexec").arg("-v").output().is_err() {
+        std::println!("agrees_with_acpica: skipped, acpiexec isn't installed (acpica-tools)");
+        return;
+    }
+    for name in ["roxy-h61mx", "qemu-q35", "qemu-virt"] {
+        let mut aml = machine(name, Fake::default());
+        let report = aml.initialise();
+        assert!(report.failed.is_empty(), "{name}: {:?}", report.failed);
+        // Every device's methods that exist, and \_S5, in namespace order.
+        let mut paths = Vec::new();
+        for (path, kind) in aml.listing() {
+            if kind == 6 {
+                for m in ["_STA", "_HID", "_CID", "_UID", "_CRS", "_PRT"] {
+                    let p = std::format!("{path}.{m}");
+                    if aml.find(None, &p).is_some() {
+                        paths.push(p);
+                    }
+                }
+            }
+        }
+        if aml.find(None, "\\_S5").is_some() {
+            paths.push(String::from("\\_S5"));
+        }
+        let theirs = acpica::run(name, &paths).expect("acpiexec ran");
+        let mut compared = 0;
+        let mut differ = Vec::new();
+        for p in &paths {
+            let ours = aml.evaluate(p, &[]).map(|v| acpica::seen(&v, &aml));
+            match (theirs.get(p), &ours) {
+                // ACPICA's debugger can't print an answer bigger than its buffer.
+                (Some(Err(status)), _) if status.contains("BUFFER_OVERFLOW") => continue,
+                (Some(Ok(t)), Ok(o)) if t == o => compared += 1,
+                (Some(Err(_)), Err(_)) => compared += 1,
+                (t, o) => differ.push(std::format!("{p}: ACPICA {t:?}, ours {o:?}")),
+            }
+        }
+        std::println!("{name}: {compared} of {} evaluations agree with ACPICA", paths.len());
+        assert!(differ.is_empty(), "{name}: {} differ:\n{}", differ.len(), differ.join("\n"));
+        assert!(compared > 50, "{name}: only {compared} compared");
+    }
+}
+
+/// The small programs in `lib/aml/tests/asl/` (note 0028, section 10): ASL sources, each with
+/// its AML beside it, compiled by `iasl -of` (constant folding off, so the arithmetic is left
+/// for the interpreter). Every method named `T` and three digits checks one part of the
+/// language and returns 0, or the number of the check that failed; each must return 0 here,
+/// and give what ACPICA gives when `acpiexec` is installed.
+#[test]
+fn small_programs() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/asl");
+    let mut names: Vec<PathBuf> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "aml"))
+        .collect();
+    names.sort();
+    assert!(names.len() >= 4, "the programs: {names:?}");
+    let acpiexec = std::process::Command::new("acpiexec").arg("-v").output().is_ok();
+    let mut checked = 0;
+    for path in &names {
+        let t = fs::read(path).unwrap();
+        let mut aml = Aml::new(Fake::default());
+        let report = aml.load(&[&t]);
+        assert!(report.skipped.is_empty(), "{path:?}: {:?}", report.skipped);
+        let tests: Vec<String> = aml
+            .listing()
+            .into_iter()
+            .map(|(p, _)| p)
+            .filter(|p| {
+                p.len() == 5 && p.starts_with("\\T") && p[2..].bytes().all(|b| b.is_ascii_digit())
+            })
+            .collect();
+        assert!(!tests.is_empty(), "{path:?} has no tests");
+        let mut ours = Vec::new();
+        for t in &tests {
+            let r = aml.evaluate(t, &[]);
+            assert_eq!(r.as_ref().ok().and_then(Value::as_integer), Some(0), "{path:?} {t}: {r:?}");
+            ours.push(r.map(|v| acpica::seen(&v, &aml)));
+            checked += 1;
+        }
+        if acpiexec {
+            let answers = acpica::run_file(path, &tests).expect("acpiexec ran");
+            for (t, o) in tests.iter().zip(&ours) {
+                let theirs = answers.get(t).cloned();
+                assert_eq!(
+                    theirs,
+                    Some(o.clone().map_err(|e| std::format!("{e}"))),
+                    "{path:?} {t}: ACPICA disagrees"
+                );
+            }
+        }
+    }
+    std::println!(
+        "small programs: {checked} tests in {} files{}",
+        names.len(),
+        if acpiexec { ", as ACPICA" } else { "" }
+    );
+}

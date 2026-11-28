@@ -484,7 +484,7 @@ impl<H: Host> Aml<H> {
         if f.bit.checked_add(f.bits).is_none_or(|end| end > b.len() * 8) {
             return Err(Error::OutOfRange);
         }
-        if f.bits <= if self.wide { 64 } else { 32 } {
+        if !f.always_buffer && f.bits <= if self.wide { 64 } else { 32 } {
             return Ok(Value::Integer(get_bits(&b, f.bit as u64, f.bits as u64)));
         }
         let mut out = vec![0u8; f.bits.div_ceil(8)];

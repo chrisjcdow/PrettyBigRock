@@ -312,6 +312,13 @@ impl<H: Host> Aml<H> {
                             Value::Reference(Reference(Ref::Node(n))) => {
                                 self.ns.object(n).map(Object::kind).unwrap_or(0)
                             }
+                            // A name in a package, looked up now.
+                            Value::Reference(Reference(Ref::Name(scope, name))) => self
+                                .ns
+                                .lookup(scope, &name)
+                                .and_then(|n| self.ns.object(n))
+                                .map(Object::kind)
+                                .unwrap_or(0),
                             v => v.kind(),
                         }
                     }
@@ -344,7 +351,7 @@ impl<H: Host> Aml<H> {
             op::DEREF_OF => {
                 let v = self.term_arg(code, frame)?;
                 match v {
-                    Value::Reference(Reference(r)) => self.read_ref(&r),
+                    Value::Reference(Reference(r)) => self.deref_value(&r),
                     Value::String(s) => {
                         let name = crate::AmlName::parse(&s)
                             .ok_or(Error::WrongType("DerefOf a string that isn't a name"))?;
@@ -435,6 +442,25 @@ impl<H: Host> Aml<H> {
             op::LOAD_TABLE => Err(Error::NotSupported("LoadTable")),
             _ => Err(Error::Malformed("unknown opcode")),
         }
+    }
+
+    /// `DerefOf` a reference, as ACPICA does it: a package element that names an object is
+    /// followed to that object's value; and an object that isn't data (a device, a method) is
+    /// no value at all.
+    fn deref_value(&mut self, r: &Ref) -> Result<Value> {
+        let mut v = self.read_ref(r)?;
+        if let (
+            Ref::Element(..),
+            Value::Reference(Reference(named @ (Ref::Node(_) | Ref::Name(..)))),
+        ) = (r, &v)
+        {
+            let named = named.clone();
+            v = self.read_ref(&named)?;
+        }
+        if matches!(v, Value::Reference(Reference(Ref::Node(_)))) {
+            return Err(Error::WrongType("DerefOf of an object that isn't data"));
+        }
+        Ok(v)
     }
 
     /// True or false as AML writes them: all ones, or zero.

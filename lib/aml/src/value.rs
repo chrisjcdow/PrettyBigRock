@@ -92,6 +92,9 @@ pub(crate) struct BufferField {
     pub buffer: Rc<RefCell<Vec<u8>>>,
     pub bit: usize,
     pub bits: usize,
+    /// Made by `CreateField` (not `CreateByteField` and its kin): read as a buffer whatever its
+    /// length, as ACPICA and Windows do.
+    pub always_buffer: bool,
 }
 
 impl Value {
@@ -328,6 +331,10 @@ impl<H: Host> Aml<H> {
         match v {
             Value::Integer(i) if how == ToText::Decimal => {
                 let _ = write!(s, "{i}");
+            }
+            // `ToHexString` writes `0x` and no leading zeros, as ACPICA does.
+            Value::Integer(i) if how == ToText::Hex => {
+                let _ = write!(s, "0x{:X}", i & self.ones());
             }
             Value::Integer(i) => {
                 let digits = if self.wide { 16 } else { 8 };

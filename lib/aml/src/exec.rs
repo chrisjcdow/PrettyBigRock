@@ -634,7 +634,16 @@ impl<H: Host> Aml<H> {
                 {
                     return Err(Error::OutOfRange);
                 }
-                self.create(frame, &name, Object::BufferField(BufferField { buffer, bit, bits }))?;
+                self.create(
+                    frame,
+                    &name,
+                    Object::BufferField(BufferField {
+                        buffer,
+                        bit,
+                        bits,
+                        always_buffer: opc == op::CREATE_FIELD,
+                    }),
+                )?;
             }
             _ => return Err(Error::Malformed("unknown named object")),
         }

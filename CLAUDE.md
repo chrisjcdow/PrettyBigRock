@@ -104,9 +104,10 @@ let node = self.objects.get(badge)?;
 Impala (Ubuntu, 4 cores / 8 threads, 32 GB) has Rust, QEMU and the other tools installed, so
 the pinned toolchain (`rust-toolchain.toml`) and `cargo xtask build` just work. The packages,
 should they need installing again: `qemu-system-x86 qemu-system-arm qemu-efi-aarch64 ovmf`;
-for the classic system, `nasm gcc-multilib`; for the FAT32 tests, `dosfstools mtools` (tests
-that need them say so and are skipped without them, but a stage isn't finished until they've
-run).
+for the classic system, `nasm gcc-multilib`; for the FAT32 tests, `dosfstools mtools`; for the
+AML interpreter's cross-check against ACPICA and to compile its small programs,
+`acpica-tools` (tests that need them say so and are skipped without them, but a stage isn't
+finished until they've run).
 
 Keep test runs small: host tests for what changed, and the boot configurations that matter
 (`PBR_QEMU_ONLY`, `PBR_QEMU_BOOT`), in the background. **Use `PBR_QEMU_KVM=1` for x86-64 boot
