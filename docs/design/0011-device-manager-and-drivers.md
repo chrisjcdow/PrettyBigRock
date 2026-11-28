@@ -434,3 +434,16 @@ are later milestones (M7 to M11).
   `CONTROL`, which the device manager gives the driver at role 1050, so the driver can take the
   screen from the kernel when a client first asks for it (note 0010, Changes). `lib/devices`'
   `keys` gained `us`, the US layout, which the console uses to turn key codes into characters.
+- 28 November 2026, M7 stage 2 (note 0028, section 7): **the built-in list of legacy devices is
+  gone.** The device manager asks the ACPI service for the devices the firmware's tables
+  describe, and driver manifests gained `match acpi ID`, tried against a device's `_HID` and
+  then its `_CID`s; `match legacy` keeps only `framebuffer`. `drivers/serial16550` matches
+  `PNP0501` and `drivers/ps2` `PNP0303`; the PS/2 driver is given the mouse port's line too
+  (`PNP0F13` or `PNP0F03`) when the firmware lists one, and runs with the keyboard's alone
+  when it doesn't. A device is given the port ranges and lines its `_CRS` lists; one whose
+  ports the kernel keeps (its console) is logged and skipped. COM2's loopback check went with
+  the list: the firmware says whether a port is there. The machine description's PS/2 flag is
+  no longer read. Without the ACPI service only PCI devices with MSI are found. Wired lines
+  for PCI functions without MSI (`route`, then `interrupt_configure`) come with the first
+  devices that need them, Roxy's EHCI controllers, in stage 4.
+

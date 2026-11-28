@@ -54,7 +54,9 @@ fn main(mut start: granite::Start) -> i32 {
 }
 
 fn run(mut dev: Device) -> Result<core::convert::Infallible, &'static str> {
-    if dev.record.kind != Kind::Legacy || dev.irqs.len() != 2 {
+    // The keyboard port's line, and the mouse port's if the firmware lists a mouse port
+    // (note 0028, section 7: the device manager adds it).
+    if dev.record.kind != Kind::Legacy || !(1..=2).contains(&dev.irqs.len()) {
         return Err("not a PS/2 controller");
     }
     let ports = dev.ports.take().ok_or("no data port")?;

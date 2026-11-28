@@ -37,9 +37,10 @@ use granite::sys::{kind, perm, rights};
 use granite::thread;
 use pbr_archive::Archive;
 use pbr_devices::machine::Machine;
-use pbr_devices::manifest::{Class, Legacy, Manifest, Target, choose};
+use pbr_devices::manifest::{AcpiId, Class, Legacy, Manifest, Target, choose};
 use pbr_devices::pci;
 use pbr_driver::{ConfigPage, Mmio, Service, serve};
+use pbr_interfaces::pbr_acpi as acpi_if;
 use pbr_interfaces::pbr_devices::{self as devices, DeviceInfo, DeviceState, DevicesError};
 use pbr_interfaces::pbr_devices_debug::{self as devices_debug, DebugError};
 use pbr_interfaces::pbr_driver_host::{self as host, HostError};
@@ -262,42 +263,31 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
         add(d, i, label, plan, &host_ep, id, selftest);
     }
 
-    // The devices that aren't on PCI (note 0011, section 4).
-    if let (Some(io), Some(lines)) = (&io_ports, &lines) {
-        let com2 = com2_present(io);
-        if com2 == Some(true) {
-            legacy(
-                &drivers,
-                &manifests,
-                Legacy::Com2,
-                drivers::COM2,
-                io,
-                lines,
-                &host_ep,
-                &mut next_id,
-                selftest,
-            );
-        } else if com2 == Some(false) {
-            granite::println!("devmgr: com2: not present.");
-        } else {
-            // The kernel refuses to slice its own console's ports (note 0027, section 3).
-            granite::println!("devmgr: com2: the kernel's console.");
+    // The devices the firmware's ACPI tables describe (note 0028, section 7): the ACPI service
+    // lists them, and a driver whose manifest matches one of a device's IDs is started for it.
+    // Without the service, only what needs no AML is found: PCI devices with MSI.
+    match keeper.as_ref().map(acpi_devices) {
+        Some(Ok(listed)) => {
+            if let (Some(io), Some(lines)) = (&io_ports, &lines) {
+                for d in &listed {
+                    acpi_device(
+                        d,
+                        &listed,
+                        &drivers,
+                        &manifests,
+                        io,
+                        lines,
+                        &host_ep,
+                        &mut next_id,
+                        selftest,
+                    );
+                }
+            }
         }
-        if machine.flags & pbr_devices::machine::flags::PS2 != 0 {
-            legacy(
-                &drivers,
-                &manifests,
-                Legacy::Ps2,
-                drivers::PS2,
-                io,
-                lines,
-                &host_ep,
-                &mut next_id,
-                selftest,
-            );
-        } else {
-            granite::println!("devmgr: ps2: no controller.");
-        }
+        Some(Err(e)) => granite::println!(
+            "devmgr: the ACPI service can't be asked ({e}): only PCI devices with MSI are found."
+        ),
+        None => granite::println!("devmgr: no supervisor to find the ACPI service through."),
     }
     // The firmware's screen. One is served; more would need a way to pick between them. If
     // it is drawn by a PCI device that has a display driver of its own, that driver has it:
@@ -377,61 +367,78 @@ fn add(
     });
 }
 
-/// Finds a driver for a legacy device and starts it.
+/// Every device the ACPI service lists.
+fn acpi_devices(keeper: &supervisor::Client) -> Result<Vec<acpi_if::Device>, String> {
+    let ep = keeper.lookup("acpi").map_err(|e| alloc::format!("{e}"))?;
+    let mut c = acpi_if::Client::new(Endpoint(ep));
+    c.set_timeout_ms(30_000);
+    let mut out = Vec::new();
+    let mut first = 0;
+    loop {
+        let r = c.devices(first).map_err(|e| alloc::format!("{e}"))?;
+        out.extend(r.devices);
+        match r.next {
+            Some(n) if n > first && out.len() < 1024 => first = n,
+            _ => return Ok(out),
+        }
+    }
+}
+
+/// IDs the PS/2 controller's mouse port goes by: it has its own namespace device, but the
+/// keyboard port's driver serves both, so it is given that device's line too.
+const MOUSE_PORTS: [&str; 2] = ["PNP0F13", "PNP0F03"];
+
+/// Finds a driver for a device the ACPI service listed, by its `_HID` and then its `_CID`s,
+/// and starts it.
 #[allow(clippy::too_many_arguments)]
-fn legacy(
+fn acpi_device(
+    d: &acpi_if::Device,
+    all: &[acpi_if::Device],
     drivers: &[drivers::Driver<'_>],
     manifests: &[Manifest],
-    which: Legacy,
-    spec: drivers::LegacySpec,
     io: &IoPorts,
     lines: &Interrupts,
     host_ep: &Endpoint,
     next_id: &mut u32,
     selftest: bool,
 ) {
-    let label = match which {
-        Legacy::Com2 => "com2",
-        Legacy::Ps2 => "ps2",
-        Legacy::Framebuffer => "framebuffer",
-    };
-    let Some(i) = choose(manifests, &Target::Legacy(which)) else {
-        granite::println!("devmgr: {label}: no driver.");
+    let ids = || core::iter::once(&d.hid).chain(d.compatible.iter());
+    let Some(i) = ids()
+        .filter_map(|id| AcpiId::parse(id))
+        .find_map(|id| choose(manifests, &Target::Acpi(id)))
+    else {
         return;
     };
-    granite::println!("devmgr: {label}: {}.", drivers[i].name);
-    let id = *next_id;
-    *next_id += 1;
-    let plan = drivers::plan_legacy(spec, io, lines).map_err(|e| e.0);
-    add(&drivers[i], i, String::from(label), plan, host_ep, id, selftest);
-}
-
-/// Whether the second serial port exists: a byte written with the chip in loopback mode comes
-/// back from the receive register. (Nothing at the ports reads as 0xFF, so it can't.) `None`
-/// when its ports can't be had, which means the kernel uses it as its console: the root
-/// program's ports are all the others.
-fn com2_present(io: &IoPorts) -> Option<bool> {
-    let p = io.slice(drivers::COM2.port, drivers::COM2.ports, rights::ALL).ok()?;
-    const MCR: u64 = 4;
-    const LOOPBACK: u64 = 0x10;
-    let ok = (|| -> granite::Result<bool> {
-        p.write(MCR, 1, LOOPBACK | 0x0F)?;
-        let mut ok = true;
-        for byte in [0xAEu64, 0x51] {
-            p.write(0, 1, byte)?;
-            let mut got = None;
-            for _ in 0..1000 {
-                if p.read(5, 1)? & 1 != 0 {
-                    got = Some(p.read(0, 1)?);
-                    break;
-                }
-            }
-            ok &= got == Some(byte);
+    // The label: the device's own name in the namespace, as `com2` for `\_SB.PCI0.SF8.COM2`.
+    let label = d.path.rsplit('.').next().unwrap_or(&d.path).to_ascii_lowercase();
+    let mut spec = drivers::LegacySpec {
+        ranges: d.ports.iter().map(|p| (u64::from(p.first), u64::from(p.count))).collect(),
+        irqs: d.lines.iter().map(|l| u64::from(l.number)).collect(),
+    };
+    if ids().any(|id| id == "PNP0303") {
+        let mouse = all.iter().find(|m| {
+            core::iter::once(&m.hid)
+                .chain(m.compatible.iter())
+                .any(|id| MOUSE_PORTS.contains(&id.as_str()))
+        });
+        spec.irqs
+            .extend(mouse.into_iter().flat_map(|m| m.lines.iter().map(|l| u64::from(l.number))));
+    }
+    match drivers::plan_legacy(&spec, io, lines) {
+        Err(drivers::LegacyError::KernelsPorts) => {
+            granite::println!("devmgr: {label} ({}): the kernel's console.", d.path);
         }
-        p.write(MCR, 1, 0)?;
-        Ok(ok)
-    })();
-    Some(ok.unwrap_or(false))
+        plan => {
+            granite::println!("devmgr: {label} ({}, {}): {}.", d.path, d.hid, drivers[i].name);
+            let id = *next_id;
+            *next_id += 1;
+            let plan = plan.map_err(|e| match e {
+                drivers::LegacyError::Other(e) => e.0,
+                drivers::LegacyError::KernelsPorts => String::from("the kernel's ports"),
+            });
+            add(&drivers[i], i, label, plan, host_ep, id, selftest);
+        }
+    }
 }
 
 /// Reports a failed answer (the caller may have gone).

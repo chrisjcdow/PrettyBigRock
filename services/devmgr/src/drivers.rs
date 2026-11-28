@@ -252,52 +252,58 @@ fn write_record(record: &Record) -> Result<Memory, PlanError> {
     Ok(rec)
 }
 
-/// The legacy devices and what each is given (note 0011, section 4): I/O ports, and wired
-/// interrupt lines numbered as the ISA numbered them.
-#[derive(Clone, Copy)]
+/// What a device the firmware's ACPI tables describe is given (note 0028, section 7): the I/O
+/// port ranges its `_CRS` lists (a driver gets up to two), and its interrupt lines, numbered as
+/// the firmware numbers them (an ISA line below 16, a global system interrupt above).
+#[derive(Clone, Debug, Default)]
 pub struct LegacySpec {
-    /// First port.
-    pub port: u64,
-    /// How many ports.
-    pub ports: u64,
-    /// A second range (first port, how many), for a device whose ports aren't together.
-    pub more: Option<(u64, u64)>,
+    /// (first port, how many), in the order `_CRS` lists them.
+    pub ranges: Vec<(u64, u64)>,
     /// The interrupt lines.
-    pub irqs: &'static [u64],
+    pub irqs: Vec<u64>,
 }
 
-/// The second serial port.
-pub const COM2: LegacySpec = LegacySpec { port: 0x2F8, ports: 8, more: None, irqs: &[3] };
-/// The 8042: the data port 0x60 and the command and status port 0x64 (one capability each:
-/// the ports between are not all the controller's, and the kernel keeps 0x61), the keyboard on
-/// line 1 and the mouse on line 12.
-pub const PS2: LegacySpec =
-    LegacySpec { port: 0x60, ports: 1, more: Some((0x64, 1)), irqs: &[1, 12] };
+/// Why a legacy plan couldn't be made: the kernel refused the ports (it keeps its console's,
+/// note 0027, section 3), or something else went wrong.
+pub enum LegacyError {
+    KernelsPorts,
+    Other(PlanError),
+}
 
 /// Makes the plan for a legacy device from the root capabilities.
 pub fn plan_legacy(
-    spec: LegacySpec,
+    spec: &LegacySpec,
     ports: &IoPorts,
     lines: &Interrupts,
-) -> Result<Plan, PlanError> {
+) -> Result<Plan, LegacyError> {
     let mut record = Record::new(Kind::Legacy);
-    let slice = ports.slice(spec.port, spec.ports, rights::ALL).map_err(err("slicing ports"))?;
-    let (_, _, first) = lines.info().map_err(err("reading the interrupt range"))?;
+    let mut slices = Vec::new();
+    for &(first, count) in spec.ranges.iter().take(2) {
+        match ports.slice(first, count, rights::ALL) {
+            Ok(s) => slices.push(s),
+            Err(granite::Error::NoRight | granite::Error::InvalidArgument) if slices.is_empty() => {
+                return Err(LegacyError::KernelsPorts);
+            }
+            Err(e) => return Err(LegacyError::Other(PlanError(format!("slicing ports: {e}")))),
+        }
+    }
+    let mut slices = slices.into_iter();
+    let slice = slices.next().ok_or(LegacyError::Other(PlanError("no ports".into())))?;
+    let ports2 = slices.next();
+    let other = |e: PlanError| LegacyError::Other(e);
+    let (_, _, first) = lines.info().map_err(err("reading the interrupt range")).map_err(other)?;
     let mut irqs = Vec::new();
-    for (i, line) in spec.irqs.iter().enumerate() {
-        let one = lines.slice(first + line, 1, rights::ALL).map_err(err("slicing a line"))?;
+    for (i, line) in spec.irqs.iter().take(record.interrupts.len()).enumerate() {
+        let one = lines
+            .slice(first + line, 1, rights::ALL)
+            .map_err(err("slicing a line"))
+            .map_err(other)?;
         record.interrupts[i] = Message { address: 0, data: (first + line) as u32 };
         irqs.push(one);
     }
     record.interrupt_count = irqs.len() as u8;
-    let ports2 = match spec.more {
-        Some((first, count)) => {
-            Some(ports.slice(first, count, rights::ALL).map_err(err("slicing more ports"))?)
-        }
-        None => None,
-    };
     Ok(Plan {
-        record: write_record(&record)?,
+        record: write_record(&record).map_err(other)?,
         kind: Kind::Legacy,
         pci: None,
         bars: Vec::new(),

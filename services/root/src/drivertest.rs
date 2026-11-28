@@ -55,9 +55,10 @@ const WAIT_MS: u64 = 30_000;
 /// An event is 16 bytes.
 const EVENT: usize = input::EVENT_SIZE as usize;
 
-/// What the machine description says (note 0011, section 2).
+/// What the machine description says (note 0011, section 2). (Its PS/2 flag, from the FADT,
+/// isn't used: the ACPI service says whether there is a PS/2 controller, note 0028, section
+/// 7, and every x86-64 test machine has one.)
 struct Machine {
-    ps2: bool,
     screen: Option<(u32, u32, u32)>,
 }
 
@@ -66,7 +67,7 @@ fn machine(m: &Memory) -> Result<Machine, String> {
     m.read(0, &mut page).map_err(|e| format!("reading the machine description: {e}"))?;
     let u32_at = |o: usize| u32::from_le_bytes([page[o], page[o + 1], page[o + 2], page[o + 3]]);
     let screen = (u32_at(44) > 0).then(|| (u32_at(64 + 16), u32_at(64 + 20), u32_at(64 + 24)));
-    Ok(Machine { ps2: u32_at(12) & 1 != 0, screen })
+    Ok(Machine { screen })
 }
 
 /// Runs the device self-test. Returns a short summary.
@@ -135,7 +136,7 @@ pub fn run(d: &Devmgr, inputs: &Inputs) -> Result<String, String> {
     pads[mouse].lost(sent)?;
     done.push("a full ring");
 
-    if m.ps2 {
+    if cfg!(target_arch = "x86_64") {
         let ps2 = pads.iter().position(|p| !p.virtio).ok_or("no PS/2 controller")?;
         granite::println!("Device self-test: inject ps2");
         keyboard_events(&mut pads[ps2], "the PS/2 keyboard")?;
@@ -186,7 +187,7 @@ fn scan(d: &Devmgr, m: &Machine) -> Result<Vec<DeviceInfo>, String> {
         // x86-64 that is an AHCI disk).
         ("virtio disks", count(DeviceClass::Block, "virtio-blk"), if x86 { 5 } else { 6 }),
         ("virtio input devices", count(DeviceClass::Input, "virtio-input"), 2 + tablets),
-        ("PS/2 controllers", count(DeviceClass::Input, "ps2"), usize::from(x86 && m.ps2)),
+        ("PS/2 controllers", count(DeviceClass::Input, "ps2"), usize::from(x86)),
         ("serial ports", count(DeviceClass::Serial, "serial16550"), usize::from(x86)),
         // A test machine has the firmware's screen or a virtio-gpu, never both (note 0026).
         (

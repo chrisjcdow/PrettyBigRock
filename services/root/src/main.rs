@@ -18,6 +18,7 @@
 extern crate alloc;
 
 mod acpicaps;
+mod acpitest;
 mod blocktest;
 mod classictest;
 mod crashtest;

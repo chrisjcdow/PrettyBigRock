@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Christopher Cameron-Dow
 
-//! Reading the ACPI tables (for the power service), which are in physical memory the kernel
-//! doesn't manage: through the device memory capability, one page at a time. (The same as the
-//! device manager's `phys.rs`: two small copies, rather than a library for one struct.)
+//! Reading the ACPI tables (to find the SCI for the ACPI service, `acpicaps.rs`), which are in
+//! physical memory the kernel doesn't manage: through the device memory capability, one page
+//! at a time. (The same as the device manager's `phys.rs`: two small copies, rather than a
+//! library for one struct; the ACPI service has its own, which also writes.)
 
 use alloc::collections::BTreeMap;
 use core::cell::RefCell;

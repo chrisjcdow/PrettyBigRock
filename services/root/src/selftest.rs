@@ -118,6 +118,12 @@ fn all(
     let (caps, args) = crate::acpicaps::caps(start);
     sup.set_acpi(caps, args);
     sup.start(Kind::Acpi, "")?;
+    let acpi = crate::acpitest::run(&sup);
+    if let Ok(summary) = &acpi {
+        granite::println!("ACPI self-test passed: {summary}");
+    }
+    step("the ACPI service", acpi.as_ref().map(|_| ()).map_err(Clone::clone))?;
+    done.push("the ACPI service");
     sup.start(Kind::Devmgr, "")?;
     let devmgr = crate::blocktest::connect(&sup)?;
     let copies = crate::drivertest::copy_inputs(start)?;

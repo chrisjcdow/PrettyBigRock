@@ -50,15 +50,33 @@ pub enum Class {
     Display,
 }
 
-/// The devices that aren't on PCI.
+/// The devices that are neither on PCI nor described by ACPI: only the firmware's framebuffer
+/// now. (The serial port and the PS/2 controller were built in until the ACPI service could
+/// find them, note 0028, section 7.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Legacy {
-    /// The second serial port.
-    Com2,
-    /// The 8042 keyboard and mouse controller.
-    Ps2,
     /// The firmware's framebuffer.
     Framebuffer,
+}
+
+/// An ACPI hardware ID (`_HID` or `_CID`), such as `PNP0501` or `ACPI0013`: up to eight
+/// characters, letters, digits and `_`, kept in a fixed array (padded with zeros) so a
+/// [`Match`] and a [`Target`] can be copied freely.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AcpiId([u8; 8]);
+
+impl AcpiId {
+    /// The ID written as `text`, if it is one.
+    pub fn parse(text: &str) -> Option<AcpiId> {
+        let b = text.as_bytes();
+        if b.is_empty() || b.len() > 8 || !b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
+        {
+            return None;
+        }
+        let mut id = [0u8; 8];
+        id[..b.len()].copy_from_slice(b);
+        Some(AcpiId(id))
+    }
 }
 
 /// One `match` line.
@@ -82,6 +100,9 @@ pub enum Match {
     },
     /// `match legacy NAME`
     Legacy(Legacy),
+    /// `match acpi ID`: a device the ACPI service lists whose `_HID` or one of whose `_CID`s
+    /// is `ID` (note 0028, section 7).
+    Acpi(AcpiId),
 }
 
 /// A parsed manifest.
@@ -169,11 +190,10 @@ fn parse_match(rest: &str) -> Result<Match, Error> {
             Match::Pci { vendor: hex(v, 0xFFFF)? as u16, device: hex(d, 0xFFFF)? as u16 }
         }
         "legacy" => Match::Legacy(match a {
-            "com2" => Legacy::Com2,
-            "ps2" => Legacy::Ps2,
             "framebuffer" => Legacy::Framebuffer,
             _ => return Err(Error::BadValue),
         }),
+        "acpi" => Match::Acpi(AcpiId::parse(a).ok_or(Error::BadValue)?),
         _ => return Err(Error::BadValue),
     };
     if w.next().is_some() {
@@ -309,6 +329,9 @@ pub enum Target {
     },
     /// A built-in legacy device.
     Legacy(Legacy),
+    /// A device the ACPI service lists, by one of its IDs: the device manager tries its
+    /// `_HID`, then each `_CID`.
+    Acpi(AcpiId),
 }
 
 /// How well a match fits: an exact vendor and device beats a class.
@@ -328,6 +351,7 @@ fn fit(m: &Match, t: &Target) -> Option<Fit> {
             Target::Pci { class: c, subclass: s, prog_if: p, .. },
         ) => (class == c && subclass == s && prog_if.is_none_or(|x| x == *p)).then_some(Fit::Class),
         (Match::Legacy(l), Target::Legacy(k)) => (l == k).then_some(Fit::Exact),
+        (Match::Acpi(a), Target::Acpi(b)) => (a == b).then_some(Fit::Exact),
         _ => None,
     }
 }
@@ -369,7 +393,7 @@ mod tests {
         assert_eq!((m.budget, m.dma, m.irqs), (8 << 20, 1 << 20, 1));
         assert_eq!(m.args, "--quiet");
         let k =
-            Manifest::parse(b"class input\nmatch legacy ps2\nmatch pci class 3:0\nbudget 64K\n")
+            Manifest::parse(b"class input\nmatch acpi PNP0303\nmatch pci class 3:0\nbudget 64K\n")
                 .unwrap();
         assert_eq!(k.matches[1], Match::PciClass { class: 3, subclass: 0, prog_if: None });
         assert_eq!((k.dma, k.irqs), (0, 0));
@@ -445,7 +469,7 @@ mod tests {
         let drivers = vec![
             m("class block\nmatch pci class 1:0\nbudget 1M\n"), // any SCSI-class device
             m("class block\nmatch pci 1af4:1042\nbudget 1M\n"),
-            m("class input\nmatch legacy ps2\nbudget 1M\n"),
+            m("class input\nmatch acpi PNP0303\nbudget 1M\n"),
             m("class block\nmatch pci class 1:0\nbudget 2M\n"), // a second class match: loses to the first
         ];
         let virtio =
@@ -455,8 +479,16 @@ mod tests {
         assert_eq!(choose(&drivers, &other), Some(0), "the first class match wins");
         let none = Target::Pci { vendor: 0x8086, device: 1, class: 2, subclass: 0, prog_if: 0 };
         assert_eq!(choose(&drivers, &none), None);
-        assert_eq!(choose(&drivers, &Target::Legacy(Legacy::Ps2)), Some(2));
-        assert_eq!(choose(&drivers, &Target::Legacy(Legacy::Com2)), None);
+        let acpi = |id| Target::Acpi(AcpiId::parse(id).unwrap());
+        assert_eq!(choose(&drivers, &acpi("PNP0303")), Some(2));
+        assert_eq!(choose(&drivers, &acpi("PNP0501")), None);
+        assert_eq!(choose(&drivers, &Target::Legacy(Legacy::Framebuffer)), None);
+        // IDs: up to eight letters, digits and `_`.
+        assert!(AcpiId::parse("ACPI0013").is_some());
+        assert!(AcpiId::parse("").is_none() && AcpiId::parse("PNP0501X9").is_none());
+        assert!(AcpiId::parse("PNP-0501").is_none());
+        let spaced = Manifest::parse(b"class serial\nmatch acpi PNP 0501\nbudget 1M\n");
+        assert_eq!(spaced, Err(Error::BadValue));
         // A programming interface in a class match has to agree.
         let usb = vec![m("class input\nmatch pci class c:3:30\nbudget 1M\n")];
         let t = |p| Target::Pci { vendor: 1, device: 1, class: 0xc, subclass: 3, prog_if: p };

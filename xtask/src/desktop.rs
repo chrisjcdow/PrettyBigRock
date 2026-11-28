@@ -898,7 +898,8 @@ impl Run<'_> {
     }
 
     /// The third boot on the same disks: dana, made in the second, is logged in (not chris),
-    /// isn't welcomed again, and the start menu's Shut down turns the machine off.
+    /// isn't welcomed again, and the start menu's Shut down turns the machine off (on x86-64
+    /// UEFI, the power button does).
     fn dana(&mut self) -> Result<(), String> {
         // Dana has no `screens.txt`: the screens are as the display server first puts them.
         self.desktop_up(1)?;
@@ -944,6 +945,15 @@ impl Run<'_> {
         let closed = self.count("desktop: start menu closed");
         self.chord(&["meta_l"])?;
         self.lines("desktop: start menu closed", closed + 1)?;
+        // On x86-64 UEFI the power button turns it off (note 0031, section 3): QEMU's
+        // `system_powerdown` presses it, the ACPI service sees the SCI, and the users service
+        // does what Shut down does. Elsewhere the menu's is used.
+        if self.cfg.arch == "x86_64" && !self.cfg.bios {
+            self.qmp.command(r#"{"execute": "system_powerdown"}"#)?;
+            self.line("acpi: the power button was pressed.")?;
+            self.line("users: the power button asked to turn the computer off")?;
+            return self.stopped("guest-shutdown");
+        }
         // And asked again, its button says yes.
         self.choose_from_start_menu("Shut down", 3)?;
         self.lines("desktop: asking: Shut down?", 2)?;

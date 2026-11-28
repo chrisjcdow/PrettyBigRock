@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Christopher Cameron-Dow
 
-# The second serial port, a 16550 (docs/design/0011-device-manager-and-drivers.md).
+# A serial port, a 16550, as the firmware's ACPI tables describe it (PNP0501, "16550A-compatible
+# COM port"; docs/design/0028-acpi.md, section 7). The one the kernel uses as its console is
+# skipped: the kernel won't share its ports.
 class serial
-match legacy com2
+match acpi PNP0501
 budget 1M

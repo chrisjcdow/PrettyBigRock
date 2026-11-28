@@ -18,7 +18,6 @@ bench = false
 [dependencies]
 pbr-granite = { path = "../../lib/granite" }
 pbr-interfaces = { path = "../../lib/interfaces" }
-pbr-platform = { path = "../../lib/platform" }
 
 [lints]
 workspace = true

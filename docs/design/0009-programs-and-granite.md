@@ -332,3 +332,7 @@ Actions.
   adds M5's tests after M4's.
 - 10 November 2026, M6: start-up role 13, the machine capability (note 0019); `granite::machine`
   and `Endpoint::watch_receiver`.
+- 28 November 2026, M7 stage 2: `granite::stack_size!(BYTES)` writes the note's stack size
+  (type 2), which the loader already honoured; the ACPI service asks for 4 MiB, since its AML
+  interpreter recurses (note 0028, Changes).
+

@@ -336,6 +336,14 @@ The sandbox manager itself gets the session's display capability at its own role
 - Desktop icons for files and folders, not only apps.
 
 ## Changes
+- 28 November 2026 (M7 stage 2, note 0028, section 7): the power service no longer finds the
+  sleep type itself. On x86-64 it asks the ACPI service to turn the computer off
+  (`pbr.acpi.off`), so the root program gives it only the machine capability, and
+  `lib/platform`'s `s5.rs` stopgap is gone. `pbr.power` gained `watch_button`, for the users
+  service: the ACPI service signals the power service when the power button is pressed, the
+  power service signals the users service, and the users service does what Turn off does
+  (logged as "the power button asked to turn the computer off"). Where the button can't be
+  seen (ARM64; a control-method button) `watch_button` answers `NotSupported`.
 - 22 November 2026 (M6 stage 10b, before the release), with Chris: **the Welcome window**
   (section 6a), the `users welcome` manifest key (section 3), the `welcome` setting (section 5),
   and the desktop launching it at start (section 6). Chris tried the alpha's draft, saved a

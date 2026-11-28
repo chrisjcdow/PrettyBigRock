@@ -2,19 +2,16 @@
 // Copyright (C) 2026 Christopher Cameron-Dow
 
 //! The power service (docs/design/0024-the-session-desktop.md, section 7): it turns the
-//! computer off and restarts it, for the users service alone, which has saved everything first.
+//! computer off and restarts it, for the users service alone, which has saved everything first;
+//! and it tells the users service when the power button is pressed
+//! (docs/design/0028-acpi.md, section 7).
 //!
-//! The root program starts it with:
-//! - the machine capability ([`role::POWER`]; note 0019), which lets the kernel restart the
-//!   computer on both architectures, and turn it off on ARM64 (through the firmware, PSCI);
-//! - on x86-64 only: the two I/O ports where the sleep type is written to turn a PC off (the
-//!   FADT's PM1a and PM1b control registers), and the ACPI tables that say which sleep type that
-//!   is (the DSDT and SSDTs), read only. An I/O port is a numbered register a device answers
-//!   on, separate from memory; these slices are just the few it needs.
-//!
-//! Turning a PC off properly needs an ACPI interpreter (M7). Until then the sleep type is found
-//! by scanning the tables' bytes, as 1.3 did: `pbr_platform::s5`, **a stopgap** in a file of
-//! its own, to be removed whole.
+//! The root program starts it with the machine capability ([`role::POWER`]; note 0019), which
+//! lets the kernel restart the computer on both architectures, and turn it off on ARM64
+//! (through the firmware, PSCI). A PC is turned off through ACPI: the firmware's `\_S5` says
+//! what to write to the power-management registers, and only the ACPI service can run the
+//! firmware's AML to find out, so on x86-64 this service asks it (`pbr.acpi.off`). The ACPI
+//! service also watches the power button, and signals this service, which passes it on.
 //!
 //! It serves `pbr.power` on one endpoint; only calls with the users service's badge (the root
 //! program's lookup table gives a capability for it to nobody else) are answered.
@@ -28,35 +25,35 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use granite::endpoint::{Endpoint, Event};
+use granite::interface::CallError;
 use granite::machine::{Machine, Power};
+use granite::notification::Notification;
 use granite::process::role;
+use granite::sys::rights;
 use granite::time;
+use pbr_interfaces::pbr_acpi::{self as acpi_if, AcpiError};
 use pbr_interfaces::pbr_power::{self as power_if, PowerError};
+use pbr_interfaces::pbr_supervisor as supervisor;
 
 granite::main!(main);
 
 /// The badge of the users service's capability (the root program's `POWER_USERS`).
 const USERS: u64 = 1;
-
-/// Where the root program gives the x86 parts (`services/root` uses the same numbers): the
-/// PM1a and PM1b control ports, and the ACPI tables from this role on (their offsets and
-/// lengths within each slice are in the arguments, `table=ROLE,OFFSET,LENGTH`).
-#[cfg(target_arch = "x86_64")]
-mod x86 {
-    pub const PM1A: u32 = 1001;
-    pub const PM1B: u32 = 1002;
-
-    /// The sleep-enable bit of a PM1 control register, and where the sleep type goes.
-    pub const SLEEP_ENABLE: u64 = 1 << 13;
-    pub const SLEEP_TYPE_SHIFT: u32 = 10;
-}
+/// The bit the ACPI service signals on this service's notification for the power button.
+const BUTTON: u64 = 1;
 
 struct Service {
     machine: Option<Machine>,
-    /// x86-64: the PM1a and PM1b control ports, and the sleep types for them, if `_S5_` was
-    /// found.
-    #[cfg(target_arch = "x86_64")]
-    off: Option<(granite::device::IoPorts, Option<granite::device::IoPorts>, (u16, u16))>,
+    /// The ACPI service, if it could be found.
+    #[cfg_attr(
+        not(target_arch = "x86_64"),
+        expect(dead_code, reason = "ARM64 is turned off through the kernel, not ACPI")
+    )]
+    acpi: Option<acpi_if::Client>,
+    /// Whether the ACPI service watches the power button for this service.
+    watching: bool,
+    /// Whom to tell when the power button is pressed: the users service's notification.
+    button: Option<(Notification, u64)>,
 }
 
 fn main(mut start: granite::Start) -> i32 {
@@ -75,11 +72,13 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     if machine.is_none() {
         granite::println!("power: started without the machine capability.");
     }
-    let mut s = Service {
-        machine,
-        #[cfg(target_arch = "x86_64")]
-        off: find_off(start),
+    let pressed = Notification::create().map_err(|e| format!("a notification: {e}"))?;
+    endpoint.bind(&pressed).map_err(|e| format!("binding the endpoint: {e}"))?;
+    let (acpi, watching) = match start.take(role::PARENT) {
+        Some(h) => find_acpi(Endpoint(h), &pressed),
+        None => (None, false),
     };
+    let mut s = Service { machine, acpi, watching, button: None };
     let mut buffer = vec![0u8; 256];
     loop {
         match endpoint.receive(&mut buffer, time::FOREVER) {
@@ -95,6 +94,12 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
                     refuse(msg, reply);
                 }
             }
+            Ok(Event::Signal(bits)) if bits & BUTTON != 0 => {
+                granite::println!("power: the power button was pressed.");
+                if let Some((n, b)) = &s.button {
+                    let _ = n.signal(*b);
+                }
+            }
             Ok(_) => {}
             Err(e) => {
                 granite::println!("power: receive failed: {e}");
@@ -102,6 +107,38 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
             }
         }
     }
+}
+
+/// The ACPI service, through the supervisor (`None` if it isn't there); and it is asked to
+/// signal `pressed` when the power button is pressed (true if it will).
+fn find_acpi(parent: Endpoint, pressed: &Notification) -> (Option<acpi_if::Client>, bool) {
+    let mut p = supervisor::Client::new(parent);
+    p.set_timeout_ms(10_000);
+    let ep = match p.lookup("acpi") {
+        Ok(h) => Endpoint(h),
+        Err(e) => {
+            granite::println!("power: no ACPI service ({e}).");
+            return (None, false);
+        }
+    };
+    let mut acpi = acpi_if::Client::new(ep);
+    // Turning off waits 3 seconds to see whether it worked.
+    acpi.set_timeout_ms(10_000);
+    let watching = match pressed.0.duplicate(rights::SIGNAL | rights::TRANSFER) {
+        Ok(h) => match acpi.watch_button(Notification(h), BUTTON) {
+            Ok(()) => true,
+            Err(CallError::Service(AcpiError::NotSupported)) => false,
+            Err(e) => {
+                granite::println!("power: watching the power button: {e}");
+                false
+            }
+        },
+        Err(e) => {
+            granite::println!("power: can't copy its notification: {e}");
+            false
+        }
+    };
+    (Some(acpi), watching)
 }
 
 /// Answers a call that may not be made: `NotAllowed` for `pbr.power`'s own operations, and
@@ -113,6 +150,14 @@ fn refuse(msg: granite::message::Incoming, reply: granite::endpoint::ReplyCap) {
             answered(reply.err(PowerError::NotAllowed));
         }
         fn restart(&mut self, reply: power_if::restart::Reply) {
+            answered(reply.err(PowerError::NotAllowed));
+        }
+        fn watch_button(
+            &mut self,
+            _note: Notification,
+            _bits: u64,
+            reply: power_if::watch_button::Reply,
+        ) {
             answered(reply.err(PowerError::NotAllowed));
         }
     }
@@ -129,60 +174,19 @@ fn answered(r: granite::Result<()>) {
     }
 }
 
-/// x86-64: the PM1 ports and the sleep types to write to them, from what the root program gave.
-#[cfg(target_arch = "x86_64")]
-fn find_off(
-    start: &mut granite::Start,
-) -> Option<(granite::device::IoPorts, Option<granite::device::IoPorts>, (u16, u16))> {
-    use granite::device::{DeviceMemory, IoPorts};
-    use granite::sys::perm;
-    let pm1a = IoPorts(start.take(x86::PM1A)?);
-    let pm1b = start.take(x86::PM1B).map(IoPorts);
-    let args = String::from(start.args());
-    for word in args.split_whitespace() {
-        let Some(t) = word.strip_prefix("table=") else { continue };
-        let mut n = t.split(',').map(|v| v.parse::<u64>().ok());
-        let (Some(Some(r)), Some(Some(offset)), Some(Some(len))) = (n.next(), n.next(), n.next())
-        else {
-            continue;
-        };
-        let Some(h) = u32::try_from(r).ok().and_then(|r| start.take(r)) else { continue };
-        let memory = DeviceMemory(h);
-        let Some(end) = offset.checked_add(len) else { continue };
-        let Ok(mapping) = memory.map(0, end.next_multiple_of(4096), perm::READ) else {
-            granite::println!("power: can't map an ACPI table.");
-            continue;
-        };
-        // SAFETY: the mapping is readable for `end` bytes (rounded up to a page), nothing writes
-        // to it here, and the slice is used only while `mapping` is alive (this block).
-        let bytes = unsafe {
-            core::slice::from_raw_parts(mapping.as_ptr().add(offset as usize), len as usize)
-        };
-        if let Some(types) = pbr_platform::s5::sleep_types(bytes) {
-            granite::println!("power: sleep type for off: {}, {}.", types.0, types.1);
-            return Some((pm1a, pm1b, types));
-        }
-    }
-    granite::println!("power: no _S5_ in the ACPI tables: this computer can't be turned off.");
-    None
-}
-
 impl power_if::Server for Service {
     fn off(&mut self, reply: power_if::off::Reply) {
         granite::println!("power: turning the computer off.");
         #[cfg(target_arch = "x86_64")]
         {
-            // Writing the sleep type with the sleep-enable bit turns the computer off at once
-            // (1.3's `acpi_poweroff`). If it is still running a moment later, it can't.
-            let Some((pm1a, pm1b, (a, b))) = &self.off else {
+            // The ACPI service turns it off; it answers only if it couldn't.
+            let Some(acpi) = &self.acpi else {
                 return answered(reply.err(PowerError::NotSupported));
             };
-            let value = |t: u16| (u64::from(t) << x86::SLEEP_TYPE_SHIFT) | x86::SLEEP_ENABLE;
-            let _ = pm1a.write(0, 2, value(*a));
-            if let Some(p) = pm1b {
-                let _ = p.write(0, 2, value(*b));
+            match acpi.off() {
+                Ok(()) => {}
+                Err(e) => granite::println!("power: the ACPI service couldn't turn it off: {e}"),
             }
-            time::sleep_ms(1_000);
             answered(reply.err(PowerError::NotSupported));
         }
         #[cfg(not(target_arch = "x86_64"))]
@@ -204,5 +208,19 @@ impl power_if::Server for Service {
         };
         granite::println!("power: the kernel couldn't restart it: {}", format!("{e}"));
         answered(reply.err(PowerError::NotSupported));
+    }
+
+    fn watch_button(
+        &mut self,
+        note: Notification,
+        bits: u64,
+        reply: power_if::watch_button::Reply,
+    ) {
+        // The button is only seen through the ACPI service, on a PC whose button is a fixed one.
+        if !self.watching {
+            return answered(reply.err(PowerError::NotSupported));
+        }
+        self.button = Some((note, bits));
+        answered(reply.ok());
     }
 }

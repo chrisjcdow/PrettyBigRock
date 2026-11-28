@@ -148,7 +148,10 @@ const CHECK_TIMEOUT_MS: u64 = 5_000;
 const INPUT_GONE: u64 = 1 << 63;
 const FRONT_GONE: u64 = 1 << 62;
 const VOLUME_GONE: u64 = 1 << 61;
-const WATCHED: u64 = INPUT_GONE | FRONT_GONE | VOLUME_GONE;
+/// The power service signals this bit when the power button is pressed (note 0028, section
+/// 7): the computer is then turned off as when someone chooses Turn off.
+const POWER_BUTTON: u64 = 1 << 60;
+const WATCHED: u64 = INPUT_GONE | FRONT_GONE | VOLUME_GONE | POWER_BUTTON;
 
 /// Where the users are kept.
 struct System {
@@ -283,6 +286,7 @@ fn run(start: &mut granite::Start) -> Result<(), String> {
     };
     s.watch(s.storage.endpoint(), VOLUME_GONE);
     s.watch(s.system.root.endpoint(), VOLUME_GONE);
+    s.watch_power_button();
     s.find_front();
     // At start, a session for the first administrator (M5 has no login yet; note 0017,
     // section 3).
@@ -1071,6 +1075,10 @@ fn serve(s: &mut Service) {
                 }
             }
             Ok(Event::Signal(bits)) => {
+                if bits & POWER_BUTTON != 0 && !s.shut_down {
+                    // As if Turn off were chosen; it returns only if the computer can't be.
+                    let _ = s.power("the power button", false);
+                }
                 if bits & INPUT_GONE != 0 {
                     s.input_gone();
                     check_at = Some(time::now());
@@ -1099,21 +1107,46 @@ fn serve(s: &mut Service) {
 }
 
 impl Service {
+    /// The power service, found through the supervisor the first time it is needed.
+    fn power_client(&mut self) -> Option<&power_if::Client> {
+        if self.power.is_none() {
+            let mut c = power_if::Client::new(look_up(&self.parent, "power")?);
+            c.set_timeout_ms(CALL_MS);
+            self.power = Some(c);
+        }
+        self.power.as_ref()
+    }
+
+    /// Asks the power service to signal [`POWER_BUTTON`] when the power button is pressed.
+    /// Where it can't be seen (ARM64; a PC whose button the firmware's methods handle), the
+    /// menu's Turn off is the only way.
+    fn watch_power_button(&mut self) {
+        let note = match self.ended.0.duplicate(rights::SIGNAL | rights::TRANSFER) {
+            Ok(h) => Notification(h),
+            Err(e) => {
+                granite::println!("users: can't copy its notification: {e}");
+                return;
+            }
+        };
+        let Some(power) = self.power_client() else {
+            granite::println!("users: no power service to watch the power button through.");
+            return;
+        };
+        match power.watch_button(note, POWER_BUTTON) {
+            Ok(()) => granite::println!("users: the power button turns the computer off."),
+            Err(CallError::Service(PowerError::NotSupported)) => {}
+            Err(e) => granite::println!("users: watching the power button: {e}"),
+        }
+    }
+
     /// Turns the computer off or restarts it (note 0024, section 7), for `who`: the
     /// shutting-down screen, every session's apps stopped, every volume saved, then the power
     /// service. Returns only if that last step can't be done.
     fn power(&mut self, who: &str, restart: bool) -> Result<(), UsersError> {
         let what = if restart { "restart" } else { "turn the computer off" };
-        if self.power.is_none() {
-            let ep = look_up(&self.parent, "power").ok_or_else(|| {
-                granite::println!(
-                    "users: {who} asked to {what}, but the power service isn't there."
-                );
-                UsersError::NotReady
-            })?;
-            let mut c = power_if::Client::new(ep);
-            c.set_timeout_ms(CALL_MS);
-            self.power = Some(c);
+        if self.power_client().is_none() {
+            granite::println!("users: {who} asked to {what}, but the power service isn't there.");
+            return Err(UsersError::NotReady);
         }
         granite::println!("users: {who} asked to {what}; saving every volume.");
         if let Some(d) = &self.display
