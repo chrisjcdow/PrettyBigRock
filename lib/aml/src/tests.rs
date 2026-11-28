@@ -607,6 +607,15 @@ mod acpica {
         Other(String),
     }
 
+    /// The installed `acpiexec`'s version, such as 20251212; `None` if it can't be run.
+    pub fn version() -> Option<u32> {
+        let out = Command::new("acpiexec").arg("-v").output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
+        let after = text.split("version ").nth(1)?;
+        after.split_whitespace().next()?.parse().ok()
+    }
+
     /// What our interpreter gives, in the same form.
     pub fn seen(v: &Value, aml: &Aml<Fake>) -> Seen {
         use crate::value::{Ref, Reference};
@@ -798,7 +807,14 @@ fn small_programs() {
         .collect();
     names.sort();
     assert!(names.len() >= 4, "the programs: {names:?}");
-    let acpiexec = std::process::Command::new("acpiexec").arg("-v").output().is_ok();
+    // ACPICA's answers changed over the years (`ToHexString` of an integer, for one), so the
+    // programs' answers are compared only with a version at least as new as the one they were
+    // checked against: 20251212. (The real machines' tables are compared with any version.)
+    let version = acpica::version();
+    let acpiexec = version.is_some_and(|v| v >= 20251212);
+    if let Some(v) = version.filter(|_| !acpiexec) {
+        std::println!("small programs: not compared with ACPICA {v}, older than 20251212");
+    }
     let mut checked = 0;
     for path in &names {
         let t = fs::read(path).unwrap();
