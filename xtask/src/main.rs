@@ -212,6 +212,7 @@ const HOST_CRATES: &[&str] = &[
     "pbr-bootinfo",
     "pbr-boot-common",
     "pbr-calc",
+    "pbr-aml",
     "pbr-calculator",
     "pbr-captree",
     "pbr-compositor",

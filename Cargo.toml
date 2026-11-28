@@ -29,6 +29,7 @@ members = [
     "drivers/virtio-gpu",
     "drivers/virtio-input",
     "kernel",
+    "lib/aml",
     "lib/archive",
     "lib/blockcache",
     "lib/bmp",
@@ -133,6 +134,13 @@ opt-level = 2
 # Sandstone builds, lays out and compares every window's view after each event, and its text
 # editor and lists walk long texts: emulated and unoptimised, that is too slow to test with.
 [profile.dev.package.pbr-sandstone]
+opt-level = 2
+
+# The AML interpreter runs firmware bytecode by recursive descent. Unoptimised, every local of
+# its large `match`es gets its own stack slot, and one level of an expression took over 20 KiB
+# of stack; optimised, the slots are shared. Its nesting limit is measured with this setting
+# (lib/aml's `deep_expressions_stop` test runs it on a 2 MiB stack).
+[profile.dev.package.pbr-aml]
 opt-level = 2
 
 # The desktop's wallpaper is worked out pixel by pixel, at each screen's full size.

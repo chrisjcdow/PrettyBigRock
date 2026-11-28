@@ -183,8 +183,8 @@ and runs the desktop with a USB keyboard and mouse.
 
 Progress (stages in note 0031, section 5): stage 1a (the stick image, Roxy's first start)
 done 26 November 2026; stage 1b (kernel interface 1.4: KPTI, MDS and L1TF, microcode, shared
-lines, the boot partition, `console=`, the lock-order checker) built 27 November, CI and
-Stress to come.
+lines, the boot partition, `console=`, the lock-order checker) done 27 November; stage 2
+(ACPI) under way.
 
 ## M8: Networking
 - Network drivers: virtio-net (for QEMU) and Roxy's RTL8168.

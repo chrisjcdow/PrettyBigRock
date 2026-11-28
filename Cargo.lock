@@ -16,6 +16,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-aml"
+version = "0.0.0"
+
+[[package]]
 name = "pbr-archive"
 version = "0.0.0"
 
