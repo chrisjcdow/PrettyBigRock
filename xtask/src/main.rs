@@ -78,6 +78,7 @@ const ARCHES: &[Arch] = &[
 /// first (docs/design/0009-programs-and-granite.md).
 const PROGRAMS: &[(&str, &str, &str)] = &[
     ("pbr-root", "root", "root"),
+    ("pbr-acpi", "acpi", "acpi"),
     ("pbr-devmgr", "devmgr", "devmgr"),
     ("pbr-storage", "storage", "storage"),
     ("pbr-input", "input", "input"),
@@ -151,6 +152,8 @@ const ARCHIVE_FILES: &[(&str, &str)] = &[
 
 /// Crates built for the programs' targets, checked with Clippy there.
 const PROGRAM_CRATES: &[&str] = &[
+    "pbr-acpi",
+    "pbr-aml",
     "pbr-compositor",
     "pbr-desktop",
     "pbr-devmgr",

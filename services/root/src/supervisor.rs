@@ -59,9 +59,11 @@ pub enum Kind {
     Display,
     /// The power service (note 0024, section 7).
     Power,
+    /// The ACPI service (note 0028).
+    Acpi,
 }
 
-const KINDS: [Kind; 7] = [
+const KINDS: [Kind; 8] = [
     Kind::Devmgr,
     Kind::Storage,
     Kind::Users,
@@ -69,6 +71,7 @@ const KINDS: [Kind; 7] = [
     Kind::Input,
     Kind::Display,
     Kind::Power,
+    Kind::Acpi,
 ];
 
 impl Kind {
@@ -82,6 +85,7 @@ impl Kind {
             Kind::Input => "input",
             Kind::Display => "display",
             Kind::Power => "power",
+            Kind::Acpi => "acpi",
         }
     }
 
@@ -94,6 +98,7 @@ impl Kind {
             Kind::Input => 4,
             Kind::Display => 5,
             Kind::Power => 6,
+            Kind::Acpi => 7,
         }
     }
 
@@ -108,7 +113,9 @@ impl Kind {
     /// The input service's holds its layouts, a thread for each device and the consumer's
     /// ring. The display server's holds every window's buffers (96 MiB a session, note 0022,
     /// section 3), the clipboard (16 MiB) and its own; a screen's buffers are its driver's.
-    /// The power service's is next to nothing.
+    /// The power service's is next to nothing. The ACPI service's holds the tables, the
+    /// namespace and what one evaluation may create (16 MiB, note 0028, section 2), and its 4 MiB
+    /// stack.
     fn budget(self) -> u64 {
         const MIB: u64 = 1024 * 1024;
         match self {
@@ -119,6 +126,7 @@ impl Kind {
             Kind::Input => 8 * MIB,
             Kind::Display => 160 * MIB,
             Kind::Power => MIB,
+            Kind::Acpi => 24 * MIB,
         }
     }
 }
@@ -151,6 +159,11 @@ pub const DISPLAY_SESSIONS: u64 = 1;
 /// The badge of the users service's capability for the power service (`services/power`'s
 /// `USERS`): the only one there is (note 0024, section 7).
 pub const POWER_USERS: u64 = 1;
+/// The badges of the ACPI service's capabilities (`services/acpi`'s `DEVICES` and `POWER`): the
+/// device manager's, for `devices` and `route`, and the power service's, for `off` and
+/// `watch_button` (note 0028, section 6).
+pub const ACPI_DEVICES: u64 = 1;
+pub const ACPI_POWER: u64 = 2;
 
 /// Who may look up what (note 0018, section 2; the input service: note 0021, section 1; the
 /// display server: note 0024, section 1): the service, and the badge the capability carries
@@ -175,6 +188,8 @@ pub(crate) fn rule(child: Kind, name: &str) -> Option<(Kind, u64)> {
         (Kind::Display, "input") => Some((Kind::Input, SEAT_CONSUMER)),
         (Kind::Users, "display") => Some((Kind::Display, DISPLAY_SESSIONS)),
         (Kind::Users, "power") => Some((Kind::Power, POWER_USERS)),
+        (Kind::Devmgr, "acpi") => Some((Kind::Acpi, ACPI_DEVICES)),
+        (Kind::Power, "acpi") => Some((Kind::Acpi, ACPI_POWER)),
         _ => None,
     }
 }
@@ -228,6 +243,9 @@ struct Inner {
     /// (`power::caps`).
     power: Vec<(u32, Handle, u32)>,
     power_args: String,
+    /// What the ACPI service is started with (`acpicaps::caps`), and its arguments.
+    acpi: Vec<(u32, Handle, u32)>,
+    acpi_args: String,
     /// Whether the console is started when the display server is given up on (note 0024,
     /// section 8): in every boot but the self-test, which tests supervision on its own terms.
     fallback: bool,
@@ -284,6 +302,8 @@ impl Supervisor {
             devices,
             power: Vec::new(),
             power_args: String::new(),
+            acpi: Vec::new(),
+            acpi_args: String::new(),
             fallback: !selftest,
             fallback_args: String::new(),
             selftest,
@@ -313,6 +333,13 @@ impl Supervisor {
         let mut g = self.0.lock();
         g.power = caps;
         g.power_args = args;
+    }
+
+    /// What the ACPI service is to be started with.
+    pub fn set_acpi(&self, caps: Vec<(u32, Handle, u32)>, args: String) {
+        let mut g = self.0.lock();
+        g.acpi = caps;
+        g.acpi_args = args;
     }
 
     /// The thread: serves `pbr.supervisor`, notices children ending, and restarts them.
@@ -500,8 +527,8 @@ impl Inner {
             Kind::Input => (rights::ALL, Some(rights::READ | rights::MAP)),
             // The display server starts no programs and reads nothing from the archive.
             Kind::Display => (rights::ALL, None),
-            // Nor does the power service.
-            Kind::Power => (rights::ALL, None),
+            // Nor do the power and ACPI services.
+            Kind::Power | Kind::Acpi => (rights::ALL, None),
         };
         let mut caps = vec![
             (role::OWN, own.0.into_raw(), own_rights, true),
@@ -529,8 +556,20 @@ impl Inner {
                 caps.push((*r, h.raw(), *mask, false));
             }
         }
+        if kind == Kind::Acpi {
+            for (r, h, mask) in &self.acpi {
+                caps.push((*r, h.raw(), *mask, false));
+            }
+        }
         let c = &mut self.children[i];
         let mut args = c.args.clone();
+        if kind == Kind::Acpi && !self.acpi_args.is_empty() {
+            args = if args.is_empty() {
+                self.acpi_args.clone()
+            } else {
+                format!("{args} {}", self.acpi_args)
+            };
+        }
         if kind == Kind::Power && !self.power_args.is_empty() {
             args = if args.is_empty() {
                 self.power_args.clone()

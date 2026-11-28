@@ -56,6 +56,41 @@ macro_rules! main {
     };
 }
 
+/// Gives the program's main thread a stack of `bytes` (a multiple of 4096, at most the
+/// kernel's limit) instead of the default 256 KiB: `granite::stack_size!(4 << 20);`. It adds
+/// the stack size to the PrettyBigRock note the loader reads (note 0009, section 2).
+#[macro_export]
+macro_rules! stack_size {
+    ($bytes:expr) => {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::global_asm!(
+            ".section .note.prettybigrock, \"aR\", @note",
+            ".balign 4",
+            ".long 14",
+            ".long 8",
+            ".long 2",
+            ".ascii \"PrettyBigRock\\0\"",
+            ".balign 4",
+            ".quad {size}",
+            ".text",
+            size = const $bytes,
+        );
+        #[cfg(target_arch = "aarch64")]
+        core::arch::global_asm!(
+            ".section .note.prettybigrock, \"aR\", %note",
+            ".balign 4",
+            ".long 14",
+            ".long 8",
+            ".long 2",
+            ".ascii \"PrettyBigRock\\0\"",
+            ".balign 4",
+            ".quad {size}",
+            ".text",
+            size = const $bytes,
+        );
+    };
+}
+
 unsafe extern "Rust" {
     fn __granite_main(start: Start) -> i32;
 }

@@ -115,6 +115,9 @@ fn all(
     // first, for every device manager it starts; the device tests then take the root program's
     // own.
     let sup = Supervisor::new(*archive, archive_mem, start, true)?;
+    let (caps, args) = crate::acpicaps::caps(start);
+    sup.set_acpi(caps, args);
+    sup.start(Kind::Acpi, "")?;
     sup.start(Kind::Devmgr, "")?;
     let devmgr = crate::blocktest::connect(&sup)?;
     let copies = crate::drivertest::copy_inputs(start)?;

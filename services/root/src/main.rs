@@ -17,6 +17,7 @@
 
 extern crate alloc;
 
+mod acpicaps;
 mod blocktest;
 mod classictest;
 mod crashtest;
@@ -122,12 +123,17 @@ pub fn start_system(
     let sup = supervisor::Supervisor::new(*archive, archive_mem, start, false)?;
     let (caps, args) = power::caps(start);
     sup.set_power(caps, args);
+    let (caps, args) = acpicaps::caps(start);
+    sup.set_acpi(caps, args);
     if test {
         sup.set_fallback_args("selftest");
     }
     let screen = if text { Kind::Console } else { Kind::Display };
     let (describe, users) = if test { ("describe", "desktoptest") } else { ("", "") };
     for (kind, args) in [
+        // The ACPI service first: the device manager asks it which legacy devices there are
+        // and how PCI interrupt pins are wired (note 0028, section 7).
+        (Kind::Acpi, ""),
         (Kind::Devmgr, ""),
         (Kind::Storage, ""),
         (Kind::Input, ""),

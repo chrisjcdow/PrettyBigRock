@@ -16,6 +16,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbr-acpi"
+version = "0.0.0"
+dependencies = [
+ "pbr-aml",
+ "pbr-devices",
+ "pbr-granite",
+ "pbr-interfaces",
+ "pbr-platform",
+]
+
+[[package]]
 name = "pbr-aml"
 version = "0.0.0"
 

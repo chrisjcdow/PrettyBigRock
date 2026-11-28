@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "pbr-acpi"
+description = "The ACPI service: the firmware's AML, run by our own interpreter, for the device manager and the power service (note 0028)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "acpi"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pbr-aml = { path = "../../lib/aml" }
+pbr-devices = { path = "../../lib/devices" }
+pbr-granite = { path = "../../lib/granite" }
+pbr-interfaces = { path = "../../lib/interfaces" }
+pbr-platform = { path = "../../lib/platform" }
+
+[lints]
+workspace = true

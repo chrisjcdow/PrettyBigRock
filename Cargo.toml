@@ -70,6 +70,7 @@ members = [
     "lib/testpng",
     "lib/virtio",
     "lib/window",
+    "services/acpi",
     "services/console",
     "services/devmgr",
     "services/display",
