@@ -4,7 +4,7 @@ Read this first in every session, and update it at the end of every stage (and w
 something here stops being true). Until 16 November 2026 it was kept in the claude.ai Project
 as `claude/status.md`; the repository's copy is now the one that counts.
 
-Updated 27 November 2026 (M7 stage 1b). Earlier, 23 November 2026 (session 26): **M6 is done: `2.0.0-alpha.1` is released** (a
+Updated 28 November 2026 (M7 stage 2). Earlier, 23 November 2026 (session 26): **M6 is done: `2.0.0-alpha.1` is released** (a
 pre-release on GitHub, tag `v2.0.0-alpha.1`, `m6` merged into `main`). The last part of stage
 10b gave the release a ready-made system disk and a **Welcome** window (note 0024, section 6a)
 after Chris's first try on Harriet lost a file kept in memory. CI passed; Stress (5 runs × 6
@@ -77,9 +77,31 @@ Working notes: build Roxy's images with `PBR_MICROCODE=build/microcode/intel-uco
 update, so the update itself is only seen working on Roxy. CI passed on `8fd296d` and Stress
 46038702997 passed (30 rounds, every configuration).
 
-**Next**: stage 2 (ACPI, note 0028);
-a Roxy visit when the serial cable and adapter arrive, to see the microcode update, KPTI's
-cost and COM2's log.
+**Stage 2 (ACPI, note 0028), 28 November**, built; CI passed on `48a9345`, Stress running:
+- `810af91` `lib/aml`, our own AML interpreter (two-pass loading, every region and field
+  kind, resource templates, `_PRT`), limited in nesting, operations, time and memory, built
+  optimised even in debug builds (its recursion took 20 KiB a level unoptimised);
+- `a8c1d00` `cargo xtask acpidump` (the kernel prints every table with `acpidump` on its
+  command line) and QEMU's q35 and virt tables beside Roxy's in `tests/data/acpi/`;
+- `12a3b3e` `services/acpi`, started first by the root program (24 MiB, a 4 MiB stack through
+  the new `granite::stack_size!`), serving `pbr.acpi`;
+- `00233d7` the device manager's built-in list replaced by `match acpi ID`, the power service
+  turning off through `pbr.acpi.off` (the `\_S5` scan gone), the power button through to the
+  users service (the x86-64 UEFI desktop boot ends with `system_powerdown`), the ACPI
+  self-test;
+- `450cc05`, `48a9345` the small ASL programs and the cross-check against ACPICA's `acpiexec`
+  (389 evaluations agree; three differences found and fixed).
+
+Working notes: `acpica-tools` is needed for the cross-check (`iasl -of` compiles the small
+programs, `lib/aml/tests/asl/README.md`); CI's is older (20230628), so there only the real
+tables are compared. Rebuild QEMU's tables with `cargo xtask acpidump` after changing how the
+boot tests start QEMU. Wired lines for PCI functions without MSI (the device manager's `route`
+then `interrupt_configure`) come with EHCI in stage 4.
+
+**Next**: Stress for stage 2 and the report to Chris, then stage 3 (AHCI and which disks are
+written, note 0030) or stage 4; a Roxy visit when the serial cable and adapter arrive, to see
+the microcode update, KPTI's cost, COM2's log, the ACPI service's summary against Linux's,
+PS/2 found through AML and the power button turning Roxy off.
 
 ## M6 (the desktop, 2.0 alpha): stages 0 to 9, 10a and the review built
 

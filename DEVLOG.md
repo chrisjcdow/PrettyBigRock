@@ -1484,3 +1484,22 @@ opened, then clicked the bare desktop. The kernel was fine (the clock went on ti
 runner now goes on only when the menu is open at that moment and still open a second later
 (`8fd296d`). Results: CI passed on `8fd296d`; Stress 46038702997 passed, 30 rounds, with no
 start-menu retries needed in any of them.
+
+**Stage 2, 28 November (ACPI, note 0028):** Chris asked to continue with stage 2. `lib/aml`
+was written first and tested on the host: on Roxy's tables it gave Linux's answers at the
+first run once the tests' fake machine imitated Roxy's ITE I/O chip (COM2 at `0x2F8` on line 3,
+EHCI on 16 and 23, `\_S5` 7). Two surprises: unoptimised, its recursion took over 20 KiB of
+stack a level (built optimised now, 1.1 KiB, and the service has a 4 MiB stack through a new
+`granite::stack_size!`); and QEMU writes its tables to fit the machine, so `cargo xtask
+acpidump` boots with the tests' second serial port or q35 has no COM2. The ACPI service worked
+at its first boot (q35: 299 objects, 50 of 51 devices present; AML's one touch of the HPET
+refused and logged). The device manager now finds COM2 and PS/2 through it (COM1 skipped as
+the kernel's console), the PS/2 driver takes one or two lines, and the power button goes from
+the SCI through the power service to the users service. Once Chris installed `acpica-tools`,
+the small ASL programs and the cross-check against `acpiexec` went in: all 389 evaluations of
+the three machines' devices agree, and the programs found three differences from ACPICA
+(`CreateField` reads as a buffer, `ToHexString` of an integer is `"0x1A"`, `DerefOf` follows a
+name in a package), now as ACPICA does them. CI's ACPICA is older (20230628) and still wrote
+16 digits, so the programs are compared only with 20251212 or newer. All eight boots passed
+locally; CI passed on `48a9345`. Wired lines for PCI functions without MSI move to stage 4,
+with EHCI, which first needs and tests them.
